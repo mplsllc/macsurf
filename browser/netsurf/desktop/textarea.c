@@ -56,6 +56,28 @@ struct line_info {
 	int width;			/**< Width in pixels of line */
 	int prefix_max_width;		/**< Max width through this line */
 };
+
+/* Sorted line starts are queried on every caret move/selection update. */
+static int textarea_line_for_offset(const struct line_info *lines,
+		int line_count, unsigned int b_off)
+{
+	unsigned int lo;
+	unsigned int hi;
+	unsigned int mid;
+
+	if (lines == NULL || line_count <= 1)
+		return 0;
+	lo = 0;
+	hi = (unsigned int)line_count;
+	while (lo + 1 < hi) {
+		mid = lo + (hi - lo) / 2;
+		if (lines[mid].b_start <= b_off)
+			lo = mid;
+		else
+			hi = mid;
+	}
+	return (int)lo;
+}
 struct textarea_drag {
 	textarea_drag_type type;
 	union {
@@ -390,10 +412,8 @@ static bool textarea_set_caret_internal(struct textarea *ta, int caret_b)
 		/* Find byte offset of caret position */
 		b_off = caret_b;
 
-		/* Now find line in which byte offset appears */
-		for (i = 0; i < ta->line_count - 1; i++)
-			if (ta->lines[i + 1].b_start > b_off)
-				break;
+		/* Find line containing byte offset in logarithmic time. */
+		i = textarea_line_for_offset(ta->lines, ta->line_count, b_off);
 
 		/* Set new caret pos */
 		ta->caret_pos.line = i;
@@ -573,15 +593,11 @@ static bool textarea_select(struct textarea *ta, int b_start, int b_end,
 			}
 		}
 
-		/* Find redraw start/end lines */
-		for (line_end = 0; line_end < ta->line_count - 1; line_end++)
-			if (ta->lines[line_end + 1].b_start > b_low) {
-				line_start = line_end;
-				break;
-			}
-		for (; line_end < ta->line_count - 1; line_end++)
-			if (ta->lines[line_end + 1].b_start > b_high)
-				break;
+		/* Find redraw start/end lines without scanning from line zero. */
+		line_start = textarea_line_for_offset(ta->lines,
+			ta->line_count, b_low);
+		line_end = textarea_line_for_offset(ta->lines,
+			ta->line_count, b_high);
 
 		/* Set vertical redraw range */
 		msg.data.redraw.y0 = max(ta->border_width,
@@ -920,7 +936,6 @@ static bool textarea_reflow_multiline(struct textarea *ta,
 	char *text;
 	unsigned int len;
 	unsigned int start;
-	unsigned int lo, hi, mid;
 	size_t b_off;
 	size_t b_start_line_end;
 	int x;
@@ -946,19 +961,9 @@ static bool textarea_reflow_multiline(struct textarea *ta,
 		ta->lines_alloc_size = LINE_CHUNK_SIZE;
 	}
 
-	/* Get line containing the start of the change. Line starts are sorted,
-	 * so use upper-bound search instead of walking from line zero on every
-	 * keystroke in a large textarea. */
-	lo = 0;
-	hi = (unsigned int)ta->line_count;
-	while (lo + 1 < hi) {
-		mid = lo + (hi - lo) / 2;
-		if (ta->lines[mid].b_start <= b_start)
-			lo = mid;
-		else
-			hi = mid;
-	}
-	start = lo;
+	/* Get line containing the start of the change. */
+	start = (unsigned int)textarea_line_for_offset(ta->lines,
+		ta->line_count, (unsigned int)b_start);
 
 	/* Find max number of lines before vertical scrollbar is required */
 	scroll_lines = (ta->vis_height - 2 * ta->border_width -
