@@ -1103,6 +1103,7 @@ void
 macsurf_reconv_pos_set(const char *phase, long seq, long node_ix,
 		const char *tag)
 {
+#ifdef MACSURF_VERBOSE_RECONVERT
 	int pos = 0;
 	int cap = (int)sizeof(g_reconv_pos);
 
@@ -1115,6 +1116,12 @@ macsurf_reconv_pos_set(const char *phase, long seq, long node_ix,
 	fmt_append_str(g_reconv_pos, cap, &pos, " tag=");
 	fmt_append_str(g_reconv_pos, cap, &pos, (tag != NULL) ? tag : "");
 	g_reconv_pos[pos] = '\0';
+#else
+	(void)phase;
+	(void)seq;
+	(void)node_ix;
+	(void)tag;
+#endif
 }
 
 #ifdef __MACOS9__

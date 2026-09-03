@@ -2708,8 +2708,10 @@ static void convert_xml_to_box_inner(struct box_construct_ctx *ctx)
 	do {
 		convert_children = true;
 
+#ifdef MACSURF_VERBOSE_RECONVERT
 		if (macsurf_reconvert_in_progress)
 			g_reconv_node_ix++;
+#endif
 
 		assert(ctx->n != NULL);
 
@@ -2740,6 +2742,7 @@ static void convert_xml_to_box_inner(struct box_construct_ctx *ctx)
 		 * cascade/create leaves this node's index+ptr as the last durable
 		 * position. No tag lookup here -- dom_node_get_node_name on a freed node
 		 * would itself crash and hide which node it was. */
+#ifdef MACSURF_VERBOSE_RECONVERT
 		if (macsurf_reconvert_in_progress && g_reconv_node_ix <= 150) {
 			macsurf_debug_log_writef(
 				"WORK reconvert #%ld: elem node=%ld ptr=%p",
@@ -2749,6 +2752,7 @@ static void convert_xml_to_box_inner(struct box_construct_ctx *ctx)
 				(long) macsurf_reconvert_seq, (long) g_reconv_node_ix, "");
 			macsurf_reconv_pos_flush();
 		}
+#endif
 
 		{
 			bool bce_ok = box_construct_element(ctx, &convert_children);
@@ -2809,6 +2813,7 @@ static void convert_xml_to_box_inner(struct box_construct_ctx *ctx)
 				 * Distinguishes a crash in box_construct_text (the
 				 * dom_string read, fixes489 UAF) from one in
 				 * box_construct_element (attr/cascade). */
+#ifdef MACSURF_VERBOSE_RECONVERT
 				if (macsurf_reconvert_in_progress &&
 						g_reconv_node_ix <= 150) {
 					macsurf_debug_log_writef(
@@ -2820,6 +2825,7 @@ static void convert_xml_to_box_inner(struct box_construct_ctx *ctx)
 						(long) g_reconv_node_ix, "");
 					macsurf_reconv_pos_flush();
 				}
+#endif
 				if (box_construct_text(ctx) == false) {
 					ctx->cb(ctx->content, false);
 					dom_node_unref(ctx->n);
