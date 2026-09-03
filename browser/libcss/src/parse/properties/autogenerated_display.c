@@ -211,6 +211,13 @@ css_error css__parse_display(css_language *c,
 				CSS_PROP_DISPLAY,
 				0,DISPLAY_INLINE_GRID);
 
+	} else if ((lwc_string_caseless_isequal(
+			token->idata, c->strings[CONTENTS],
+			&match) == lwc_error_ok && match)) {
+		error = css__stylesheet_style_appendOPV(result,
+				CSS_PROP_DISPLAY,
+				0,DISPLAY_CONTENTS);
+
 	} else {
 		error = CSS_INVALID;
 	}

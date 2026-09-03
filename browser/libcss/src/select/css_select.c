@@ -16,6 +16,7 @@
 #include "bytecode/opcodes.h"
 #include "css_internal_stylesheet.h"
 #include "parse/custom_properties.h"
+#include "parse/propstrings.h"
 #include "select/arena.h"
 #include "select/calc.h"
 #include "select/computed.h"
@@ -60,6 +61,17 @@ typedef struct css_select_sheet {
 	css_mq_query *media;		/**< Applicable media */
 } css_select_sheet;
 
+/* A standalone query owns the parser strings it needs for the lifetime of
+ * its parsed tree. This is deliberately separate from css_select_ctx: DOM
+ * APIs such as matchMedia() need the exact same parser/matcher without a
+ * synthetic stylesheet or selection context. */
+struct css_media_query {
+	css_mq_query *parsed;
+	lwc_string **propstrings;
+	css_select_strings strings;
+	char *text;
+};
+
 /**
  * CSS selection context
  */
@@ -78,6 +90,13 @@ struct css_select_ctx {
 
 	/* Interned default style */
 	css_computed_style *default_style;
+
+	/* fixes1268c (#167) - custom-property inheritance handoff. The
+	 * client sets parent_custom_env before css_select_style and takes
+	 * produced_custom_env after; see select.h for why neither the
+	 * computed style nor libcss_node_data can carry this. */
+	css_cp_env *parent_custom_env;
+	css_cp_env *produced_custom_env;
 };
 
 /**
@@ -141,6 +160,9 @@ static css_error match_detail(css_select_ctx *ctx, void *node,
 		const css_selector_detail *detail, css_select_state *state,
 		bool *match, css_pseudo_element *pseudo_element);
 static css_error cascade_style(const css_style *style, css_select_state *state);
+extern uint32_t css__select_share_adoptions;
+static css_error css_select__resolve_pending_vars(css_select_state *state,
+		css_select_ctx *ctx);
 
 static css_error select_font_faces_from_sheet(
 		const css_stylesheet *sheet,
@@ -190,6 +212,11 @@ static void css__destroy_node_data(struct css_node_data *node_data)
 			css_computed_style_destroy(
 					node_data->partial.styles[i]);
 		}
+	}
+
+	if (node_data->custom_env != NULL) {
+		css__cp_env_unref(node_data->custom_env);
+		node_data->custom_env = NULL;
 	}
 
 	free(node_data);
@@ -247,6 +274,91 @@ css_error css_libcss_node_data_handler(css_select_handler *handler,
 	return CSS_OK;
 }
 
+/* Standalone query support is deliberately independent of a stylesheet
+ * selection context. DOM APIs such as matchMedia() need the exact same
+ * parser/matcher without inventing a stylesheet. */
+css_error css_media_query_create(const char *query,
+		struct css_media_query **result)
+{
+	struct css_media_query *mq;
+	const char *source;
+	css_error error;
+
+	if (result == NULL)
+		return CSS_BADPARM;
+	*result = NULL;
+
+	/* CSSOM View treats an empty query as non-matching. libcss represents
+	 * that recovery as `not all`; use it explicitly for the one input the
+	 * parser properly rejects before its normal recovery path. */
+	source = (query != NULL && query[0] != '\0') ? query : "not all";
+	mq = calloc(1, sizeof(*mq));
+	if (mq == NULL)
+		return CSS_NOMEM;
+
+	error = css__propstrings_get(&mq->propstrings);
+	if (error != CSS_OK)
+		goto cleanup;
+
+	error = css_select_strings_intern(&mq->strings);
+	if (error != CSS_OK)
+		goto cleanup;
+
+	error = css_parse_media_query(mq->propstrings,
+			(const uint8_t *)source, strlen(source), &mq->parsed);
+	if (error != CSS_OK || mq->parsed == NULL) {
+		if (error == CSS_OK)
+			error = CSS_INVALID;
+		goto cleanup;
+	}
+
+	mq->text = strdup(source);
+	if (mq->text == NULL) {
+		error = CSS_NOMEM;
+		goto cleanup;
+	}
+	*result = mq;
+	return CSS_OK;
+
+cleanup:
+	if (mq->parsed != NULL)
+		css__mq_query_destroy(mq->parsed);
+	if (mq->strings.universal != NULL)
+		css_select_strings_unref(&mq->strings);
+	if (mq->propstrings != NULL)
+		css__propstrings_unref();
+	free(mq);
+	return error;
+}
+
+css_error css_media_query_matches(const struct css_media_query *query,
+		const css_unit_ctx *unit_ctx, const css_media *media,
+		bool *matches)
+{
+	if (query == NULL || unit_ctx == NULL || media == NULL ||
+		matches == NULL)
+		return CSS_BADPARM;
+	*matches = mq__list_match(query->parsed, unit_ctx, media,
+			&query->strings);
+	return CSS_OK;
+}
+
+const char *css_media_query_text(const struct css_media_query *query)
+{
+	return (query != NULL && query->text != NULL) ? query->text : "not all";
+}
+
+void css_media_query_destroy(struct css_media_query *query)
+{
+	if (query == NULL)
+		return;
+	css__mq_query_destroy(query->parsed);
+	css_select_strings_unref(&query->strings);
+	css__propstrings_unref();
+	free(query->text);
+	free(query);
+}
+
 /**
  * Create a selection context
  *
@@ -295,6 +407,16 @@ css_error css_select_ctx_destroy(css_select_ctx *ctx)
 		return CSS_BADPARM;
 
 	css_select_strings_unref(&ctx->str);
+
+	/* fixes1268c - drop any environments still parked on the context */
+	if (ctx->parent_custom_env != NULL) {
+		css__cp_env_unref(ctx->parent_custom_env);
+		ctx->parent_custom_env = NULL;
+	}
+	if (ctx->produced_custom_env != NULL) {
+		css__cp_env_unref(ctx->produced_custom_env);
+		ctx->produced_custom_env = NULL;
+	}
 
 	if (ctx->default_style != NULL)
 		css_computed_style_destroy(ctx->default_style);
@@ -724,6 +846,14 @@ static css_error css__set_node_data(void *node, css_select_state *state,
 	}
 	node_data->bloom = bloom;
 
+	/* fixes1268c - record the environment so a sibling matching the
+	 * same rules under the same parent can share it. */
+	if (node_data->custom_env != state->custom_env) {
+		if (node_data->custom_env != NULL)
+			css__cp_env_unref(node_data->custom_env);
+		node_data->custom_env = css__cp_env_ref(state->custom_env);
+	}
+
 	/* Set selection results */
 	results = state->results;
 	for (i = 0; i < CSS_PSEUDO_ELEMENT_COUNT; i++) {
@@ -810,6 +940,30 @@ static css_error css_select_style__get_sharable_node_data_for_candidate(
 #endif
 		return CSS_OK;
 
+	}
+
+	/* fixes1268c (#167) - custom properties inherit, so two nodes may
+	 * match identical rules and still need different environments if
+	 * they sit under different parents (a COUSIN candidate always
+	 * does). Object identity of the inherited environment is the exact
+	 * test: siblings under one parent were seeded from the same object,
+	 * cousins never were. */
+	{
+		struct css_cp_env *cand_inherited =
+			(node_data->custom_env != NULL) ?
+				node_data->custom_env->inherited : NULL;
+		struct css_cp_env *our_inherited =
+			(state->custom_env != NULL) ?
+				state->custom_env->inherited : NULL;
+
+		if (cand_inherited != our_inherited) {
+#ifdef DEBUG_STYLE_SHARING
+			printf("      \t%s\tno share: different inherited "
+					"custom-property environment\n",
+					lwc_string_data(state->element.name));
+#endif
+			return CSS_OK;
+		}
 	}
 
 	/* If the node was affected by attribute or pseudo class rules,
@@ -1055,6 +1209,17 @@ static void css_select__finalise_selection_state(
 	lwc_string_unref(state->id);
 	lwc_string_unref(state->element.ns);
 	lwc_string_unref(state->element.name);
+
+	/* fixes1268d - the queue holds borrowed pointers only. */
+	free(state->pending);
+	state->pending = NULL;
+
+	/* fixes1268b (#167) - bindings borrow their names and tokens from
+	 * the stylesheets, so only the array is ours to free. */
+	if (state->custom_env != NULL) {
+		css__cp_env_unref(state->custom_env);
+		state->custom_env = NULL;
+	}
 
 	if (state->revert != NULL) {
 		{ size_t i;
@@ -1302,6 +1467,19 @@ css_error css_select_style(css_select_ctx *ctx, void *node,
 	if (error != CSS_OK)
 		return error;
 
+	/* fixes1268c (#167) - seed this element's custom-property
+	 * environment from its parent's BEFORE any rule cascades, so a
+	 * local definition naturally overrides an inherited one (own
+	 * bindings shadow the chain in css__cp_env_find). */
+	if (ctx->parent_custom_env != NULL) {
+		error = css__cp_env_set_inherited(&state.custom_env,
+				ctx->parent_custom_env);
+		if (error != CSS_OK) {
+			css_select__finalise_selection_state(&state);
+			return error;
+		}
+	}
+
 	/* So that cascade_style can resolve deferred (var()) declarations
 	 * against custom-property tables in sibling stylesheets. */
 	state.select_ctx = ctx;
@@ -1328,6 +1506,20 @@ css_error css_select_style(css_select_ctx *ctx, void *node,
 		for (i = 0; i < CSS_PSEUDO_ELEMENT_COUNT; i++) {
 			state.results->styles[i] =
 					css__computed_style_ref(styles[i]);
+		}
+		/* fixes1269 (#167) - count real style-sharing adoptions so a
+		 * test can prove it exercised THIS path, rather than passing
+		 * because sharing silently never happened. */
+		css__select_share_adoptions++;
+		/* fixes1268c - sharing skips cascade_style, so adopt the
+		 * candidate's finished environment rather than leaving this
+		 * element with only its inherited bindings. Guarded above to
+		 * candidates whose inherited environment is the same object,
+		 * so the two really are equivalent. */
+		if (share->custom_env != state.custom_env) {
+			if (state.custom_env != NULL)
+				css__cp_env_unref(state.custom_env);
+			state.custom_env = css__cp_env_ref(share->custom_env);
 		}
 #ifdef DEBUG_STYLE_SHARING
 		printf("style:\t%s\tSHARED!\n",
@@ -1433,6 +1625,24 @@ css_error css_select_style(css_select_ctx *ctx, void *node,
 		}
 	}
 
+	/* fixes1268c (#167) - every rule has now contributed, so substitute
+	 * this element's own custom-property definitions, making them the
+	 * COMPUTED values its children will inherit. */
+	error = css__cp_env_finalise(state.custom_env, NULL, ctx,
+			inline_style);
+	if (error != CSS_OK)
+		goto cleanup;
+
+	/* fixes1268d (#167) - only now resolve the var()-referencing
+	 * declarations queued during cascading. Doing this here rather than
+	 * inside cascade_style is what lets a definition from a LATER rule
+	 * reach an earlier consumer. It must also happen before the unset
+	 * fixup and before css__arena_intern_style below, or a style would
+	 * be interned while still missing these properties. */
+	error = css_select__resolve_pending_vars(&state, ctx);
+	if (error != CSS_OK)
+		goto cleanup;
+
 	/* Fix up any remaining unset properties. */
 
 	/* Base element */
@@ -1519,8 +1729,9 @@ css_error css_select_style(css_select_ctx *ctx, void *node,
 		error = css__compute_absolute_values(NULL,
 				state.results->styles[CSS_PSEUDO_ELEMENT_NONE],
 				unit_ctx);
-		if (error != CSS_OK)
+		if (error != CSS_OK) {
 			goto cleanup;
+		}
 	}
 
 	/* Intern the partial computed styles */
@@ -1530,12 +1741,27 @@ css_error css_select_style(css_select_ctx *ctx, void *node,
 			continue;
 
 		error = css__arena_intern_style(&state.results->styles[j]);
-		if (error != CSS_OK) {
+		if (error != CSS_OK)
 			goto cleanup;
-		}
 	}
 
 complete:
+	/* fixes1268c (#167) - the style-sharing path jumps straight here
+	 * without cascading, so finalise for that case. Idempotent, so the
+	 * normal path (finalised above, before the pending var() pass that
+	 * depends on it) is not redone. */
+	error = css__cp_env_finalise(state.custom_env, NULL, ctx,
+			inline_style);
+	if (error != CSS_OK) {
+		goto cleanup;
+	}
+
+	/* Hand the environment to the client, which threads it to this
+	 * element's children. Replaces anything left from a previous call. */
+	if (ctx->produced_custom_env != NULL)
+		css__cp_env_unref(ctx->produced_custom_env);
+	ctx->produced_custom_env = css__cp_env_ref(state.custom_env);
+
 	error = css__set_node_data(node, &state, handler, pw);
 	if (error != CSS_OK) {
 		goto cleanup;
@@ -2823,6 +3049,22 @@ css_error cascade_style(const css_style *style, css_select_state *state)
 {
 	css_style s = *style;
 	css_deferred_decl *dd;
+	css_error cperr;
+
+	/* fixes1268b (#167) - this rule's own "--name" definitions join the
+	 * element's environment BEFORE anything else in the rule runs, so a
+	 * var() in the same rule can see them.
+	 *
+	 * Everything that makes custom-property scoping correct is implicit
+	 * in being here: cascade_style is reached only for a rule that
+	 * MATCHED, and only for one whose enclosing @media applies
+	 * (mq_rule_good_for_media, called during selector matching). The
+	 * per-sheet store this replaces had neither fact available. */
+	cperr = css__cp_env_add_style(&state->custom_env, style,
+			state->current_specificity,
+			(uint8_t) state->current_origin);
+	if (cperr != CSS_OK)
+		return cperr;
 
 	while (s.used > 0) {
 		opcode_t op;
@@ -2838,14 +3080,71 @@ css_error cascade_style(const css_style *style, css_select_state *state)
 			return error;
 	}
 
-	/* Any declarations that were deferred at parse time due to var()
-	 * references get resolved now against the select_ctx-wide custom
-	 * property table and applied through the same prop_dispatch. */
+	/* fixes1268d (#167) - declarations that reference var() are QUEUED
+	 * here, not resolved here. A custom property defined by a rule that
+	 * cascades after this one must still be visible to this rule's
+	 * var(), and resolving inline could never see it. The queue records
+	 * the cascade position so the resolved declaration later competes
+	 * exactly where its own rule sat. */
 	for (dd = style->deferred; dd != NULL; dd = dd->next) {
+		css_pending_var *slot;
+
+		/* fixes1269 (#167) - the deferred list carries two kinds of
+		 * entry. A "--name" one is a custom-property DEFINITION,
+		 * already contributed to the environment above; only
+		 * ordinary declarations referencing var() get queued. */
+		if (css__cp_decl_is_definition(dd))
+			continue;
+
+		if (state->n_pending == state->pending_alloc) {
+			uint32_t newcap = (state->pending_alloc == 0) ?
+					16 : state->pending_alloc * 2;
+			css_pending_var *np = realloc(state->pending,
+					newcap * sizeof(css_pending_var));
+			if (np == NULL)
+				return CSS_NOMEM;
+			state->pending = np;
+			state->pending_alloc = newcap;
+		}
+
+		slot = &state->pending[state->n_pending++];
+		slot->dd = dd;
+		slot->sheet = style->sheet;
+		slot->computed = state->computed;
+		slot->specificity = state->current_specificity;
+		slot->origin = (uint8_t) state->current_origin;
+		slot->pseudo = (uint8_t) state->current_pseudo;
+	}
+
+	return CSS_OK;
+}
+
+/**
+ * fixes1268d (#167) - resolve every queued var() declaration.
+ *
+ * Runs after all rules have cascaded and after the element's
+ * custom-property environment has been finalised, so every definition
+ * that could contribute is in place regardless of rule order. Entries
+ * are replayed in the order they were queued, which is cascade order,
+ * and each restores its own cascade position first so
+ * css__outranks_existing decides exactly as it would have inline.
+ */
+static css_error css_select__resolve_pending_vars(css_select_state *state,
+		css_select_ctx *ctx)
+{
+	uint32_t i;
+
+	for (i = 0; i < state->n_pending; i++) {
+		const css_pending_var *p = &state->pending[i];
 		css_error error;
 
-		error = css__deferred_decl_resolve(dd, style->sheet,
-				state->select_ctx, state);
+		state->current_specificity = p->specificity;
+		state->current_origin = (css_origin) p->origin;
+		state->current_pseudo = (css_pseudo_element) p->pseudo;
+		state->computed = p->computed;
+
+		error = css__deferred_decl_resolve(p->dd, p->sheet, ctx,
+				state);
 		if (error != CSS_OK)
 			return error;
 	}
@@ -2860,6 +3159,52 @@ css_error cascade_style(const css_style *style, css_select_state *state)
 /* code outside the select module reaches it via these hooks rather   */
 /* than by including a private header.                                */
 /* ------------------------------------------------------------------ */
+
+/* fixes1269 (#167) - style-sharing adoption counter; see the increment
+ * site in css_select_style. Diagnostic only. */
+uint32_t css__select_share_adoptions = 0;
+
+uint32_t css_select_share_adoptions(void)
+{
+	return css__select_share_adoptions;
+}
+
+/* fixes1268c (#167) - custom-property inheritance handoff. See select.h. */
+css_error css_select_ctx_set_parent_custom_env(css_select_ctx *ctx,
+		css_custom_env *env)
+{
+	if (ctx == NULL)
+		return CSS_BADPARM;
+
+	if (ctx->parent_custom_env != NULL)
+		css__cp_env_unref(ctx->parent_custom_env);
+	ctx->parent_custom_env = css__cp_env_ref(env);
+
+	return CSS_OK;
+}
+
+css_custom_env *css_select_ctx_take_custom_env(css_select_ctx *ctx)
+{
+	css_cp_env *env;
+
+	if (ctx == NULL)
+		return NULL;
+
+	env = ctx->produced_custom_env;
+	ctx->produced_custom_env = NULL;   /* ownership transfers out */
+
+	return env;
+}
+
+css_custom_env *css_custom_env_ref(css_custom_env *env)
+{
+	return css__cp_env_ref(env);
+}
+
+void css_custom_env_unref(css_custom_env *env)
+{
+	css__cp_env_unref(env);
+}
 
 uint32_t css__select_ctx_count_sheets(const css_select_ctx *ctx)
 {
@@ -3086,4 +3431,3 @@ void dump_chain(const css_selector *selector)
 	} while (detail);
 }
 #endif
-

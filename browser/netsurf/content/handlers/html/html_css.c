@@ -161,6 +161,8 @@ html_stylesheet_from_domnode(html_content *c,
 
 	child.charset = c->encoding;
 	child.quirks = c->base.quirks;
+	child.nav_id = content_get_nav_id(&c->base);	/* MacSurf Trace 1a */
+	child.doc_id = 0;
 
 	exc = dom_node_get_text_content(node, &style);
 	if ((exc != DOM_NO_ERR) || (style == NULL)) {
@@ -307,6 +309,9 @@ static void html_css_process_modified_styles(void *pw)
 	struct html_stylesheet *s;
 	unsigned int i;
 	bool all_done = true;
+	static html_content *retry_content = NULL;
+	static unsigned int retry_count = 0;
+	const unsigned int retry_limit = 8;
 
 	/* fixes518: dead-content guard.  Scheduled callback keyed on the
 	 * html_content; cancelled in html_close/html_destroy, but guard the
@@ -325,7 +330,27 @@ static void html_css_process_modified_styles(void *pw)
 
 	/* If we failed to process any sheet, schedule a retry */
 	if (all_done == false) {
-		guit->misc->schedule(1000, html_css_process_modified_styles, c);
+		if (retry_content != c) {
+			retry_content = c;
+			retry_count = 0;
+		}
+		retry_count++;
+		if (retry_count <= retry_limit) {
+			guit->misc->schedule(1000,
+					html_css_process_modified_styles, c);
+		} else {
+			macsurf_debug_log_writef(
+				"LIFE css modified stylesheet retry cap hit content=%p "
+				"count=%ld",
+				(void *)c, (long) retry_count);
+			for (i = 0, s = c->stylesheets;
+			     i != c->stylesheet_count; i++, s++) {
+				s->modified = false;
+			}
+		}
+	} else if (retry_content == c) {
+		retry_content = NULL;
+		retry_count = 0;
 	}
 }
 
@@ -492,6 +517,8 @@ bool html_css_process_link(html_content *htmlc, dom_node *node)
 	/* start fetch */
 	child.charset = htmlc->encoding;
 	child.quirks = htmlc->base.quirks;
+	child.nav_id = content_get_nav_id(&htmlc->base);	/* MacSurf Trace 1a */
+	child.doc_id = 0;
 
 	ns_error = hlcache_handle_retrieve(joined, 0,
 			content_get_url(&htmlc->base),
@@ -598,6 +625,8 @@ nserror html_css_quirks_stylesheets(html_content *c)
 	if (c->quirks == DOM_DOCUMENT_QUIRKS_MODE_FULL) {
 		child.charset = c->encoding;
 		child.quirks = c->base.quirks;
+		child.nav_id = content_get_nav_id(&c->base);	/* MacSurf Trace 1a */
+		child.doc_id = 0;
 
 		ns_error = hlcache_handle_retrieve(html_quirks_stylesheet_url,
 				0, content_get_url(&c->base), NULL,
@@ -644,6 +673,8 @@ nserror html_css_new_stylesheets(html_content *c)
 
 	child.charset = c->encoding;
 	child.quirks = c->base.quirks;
+	child.nav_id = content_get_nav_id(&c->base);	/* MacSurf Trace 1a */
+	child.doc_id = 0;
 
 	ns_error = hlcache_handle_retrieve(html_default_stylesheet_url, 0,
 			content_get_url(&c->base), NULL,

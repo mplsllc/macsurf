@@ -602,6 +602,7 @@ bool save_as_draw(struct hlcache_handle *h, const char *path)
 	data.scale = 1;
 	data.repeat_x = false;
 	data.repeat_y = false;
+	data.background_blend_mode = 0;
 
 	if (!content_redraw(h, &data, &clip, &ctx)) {
 		pencil_free(ro_save_draw_diagram);

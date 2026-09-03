@@ -28,8 +28,23 @@ css_add_fixed(const css_fixed x, const css_fixed y) {
 	int32_t uy = y;
 	int32_t res = ux + uy;
 
-	/* Calculate overflowed result. (Don't change the sign bit of ux) */
-	ux = (ux >> 31) + INT_MAX;
+	/* Calculate overflowed result. (Don't change the sign bit of ux)
+	 *
+	 * fixes1309 (#167, C0) - this branchless idiom needs ux>>31 to be
+	 * an UNSIGNED (logical) shift, landing on 0 or 1 so the line below
+	 * saturates to INT_MAX or INT_MIN respectively. `ux` is int32_t
+	 * here, so `ux >> 31` on a negative operand is an ARITHMETIC
+	 * (sign-extending) shift -- it lands on -1, not 1, making the
+	 * saturation candidate INT_MAX-1 instead of INT_MIN. That flips
+	 * the overflow test below into a false positive for a whole class
+	 * of perfectly valid negative sums: confirmed directly,
+	 * css_add_fixed(INTTOFIX(-609), INTTOFIX(0)) returned 2147483646
+	 * instead of -623616 -- a real Facebook `margin-bottom:calc(-100vh
+	 * + var(--header-height))` (real ~-609px) corrupted into +21845px,
+	 * the exact hardware symptom this fix closes. Cast through
+	 * uint32_t for the shift only; every other operation here still
+	 * needs ux as signed for the XOR/OR overflow test that follows. */
+	ux = (int32_t)((uint32_t)ux >> 31) + INT_MAX;
 
 	/* Force compiler to use cmovns instruction.
 	 * Split to avoid CW8 internal compiler error on complex expression. */
@@ -49,7 +64,12 @@ css_subtract_fixed(const css_fixed x, const css_fixed y) {
 	int32_t uy = y;
 	int32_t res = ux - uy;
 
-	ux = (ux >> 31) + INT_MAX;
+	/* fixes1309 (#167, C0) - same unsigned-shift correction as
+	 * css_add_fixed above, and the same class of bug: an
+	 * ARITHMETIC shift here corrupts the INT_MIN saturation
+	 * candidate for a negative x into INT_MAX-1, false-positiving
+	 * the overflow test below on valid results. */
+	ux = (int32_t)((uint32_t)ux >> 31) + INT_MAX;
 
 	/* Split to avoid CW8 internal compiler error. */
 	{

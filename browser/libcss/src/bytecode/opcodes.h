@@ -352,7 +352,8 @@ enum op_display {
 	DISPLAY_FLEX			= 0x0010,
 	DISPLAY_INLINE_FLEX		= 0x0011,
 	DISPLAY_GRID			= 0x0012,
-	DISPLAY_INLINE_GRID		= 0x0013
+	DISPLAY_INLINE_GRID		= 0x0013,
+	DISPLAY_CONTENTS		= 0x0014
 };
 
 enum op_elevation {
@@ -649,7 +650,8 @@ enum op_overflow {
 	OVERFLOW_VISIBLE		= 0x0000,
 	OVERFLOW_HIDDEN			= 0x0001,
 	OVERFLOW_SCROLL			= 0x0002,
-	OVERFLOW_AUTO			= 0x0003
+	OVERFLOW_AUTO			= 0x0003,
+	OVERFLOW_CLIP			= 0x0004
 };
 
 enum op_padding {
@@ -956,6 +958,13 @@ enum op_image_rendering {
 enum op_text_decoration_color {
 	TEXT_DECORATION_COLOR_CURRENT_COLOR	= 0x0000,
 	TEXT_DECORATION_COLOR_SET		= 0x0080
+};
+
+/* SVG fill V1 OPV values. */
+enum op_fill {
+	FILL_NONE                  = 0x0000,
+	FILL_CURRENT_COLOR         = 0x0001,
+	FILL_SET                   = 0x0080
 };
 
 /* fixes357 (#44): text-decoration-style OPV values. */

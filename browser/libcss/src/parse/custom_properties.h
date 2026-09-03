@@ -144,11 +144,177 @@ const css_cp_entry *css__sheet_find_custom_property(
  */
 void css__cp_entry_list_destroy(css_cp_entry *head);
 
+/* fixes1269 (#167) - rule-scoped custom-property definitions.
+ *
+ * css__sheet_add_custom_property above stores "--name" definitions in a
+ * single per-STYLESHEET list, discarding the selector and @media context
+ * they were written under. That is wrong: a sheet may define the same
+ * name several times under mutually exclusive scopes (facebook.com's
+ * theme tokens define --web-wash four times, once per theme class, the
+ * last inside @media (prefers-color-scheme: dark)), and last-write-wins
+ * across the whole sheet then hands every consumer the wrong value.
+ *
+ * Definitions are therefore attached to the owning rule, on the css_style
+ * DEFERRED list - the same list var()-referencing declarations already
+ * use. A css_style only cascades when its rule matches, and rules inside
+ * a non-matching @media are already filtered by mq_rule_good_for_media
+ * during selection, so both scoping dimensions come along for free.
+ *
+ * fixes1268a used a separate css_style field for this and had to be
+ * withdrawn: it grew sizeof(css_style), and any translation unit that
+ * allocated or copied one without agreeing on the new size caused the
+ * field to be read past the end of the allocation, yielding adjacent
+ * stylesheet text as a pointer that the first cascade dereferenced.
+ * Sharing the deferred list needs no size change at all.
+ */
 
-/* fixes267 - doc-global inline-extras custom-property table.
- * Public API declared in <libcss/select.h>: css_inline_extras_register_sheet()
- * and css_inline_extras_clear(). */
+/**
+ * Is this deferred entry a custom-property DEFINITION (property name
+ * starts with "--") rather than an ordinary declaration referencing
+ * var()? No ordinary CSS property name can start with two dashes, so the
+ * test is exact.
+ */
+bool css__cp_decl_is_definition(const struct css_deferred_decl *dd);
 
+/* --- Per-element custom-property environment (fixes1268b, #167) --- */
+
+/*
+ * The environment is the set of custom properties in force for ONE
+ * element, built during selection by cascade_style as each matching rule
+ * contributes its rule-scoped definitions. Because a css_style only
+ * cascades when its rule matches, and rules inside a non-matching @media
+ * are already filtered out by mq_rule_good_for_media, both the selector
+ * scoping and the media scoping that the per-sheet store threw away are
+ * restored here for free.
+ *
+ * Bindings BORROW their name and tokens from the stylesheet, which
+ * outlives selection. Destroying an environment frees only its array.
+ */
+
+/**
+ * One custom property in force for the element being selected, with the
+ * cascade metadata needed to decide whether a later definition replaces
+ * it.
+ */
+typedef struct css_cp_binding {
+	css_cp_entry entry;      /**< name/tokens; see owns_tokens */
+	uint32_t specificity;    /**< Specificity of the defining rule */
+	uint8_t origin;          /**< css_origin of the defining sheet */
+	uint8_t important;       /**< Non-zero => !important */
+	/* fixes1268c - before finalisation tokens are borrowed from the
+	 * stylesheet; after it they are a freshly built substituted run
+	 * this binding owns and must free (each idata ref'd). */
+	uint8_t owns_tokens;
+	/* fixes1269 (#167) - the definition could not be resolved: it
+	 * referenced a name nothing defines, or it took part in a var()
+	 * cycle. CSS Variables 1 makes such a custom property invalid at
+	 * computed-value time, so it must read as ABSENT and let consumers
+	 * take their var() fallback. Chrome agrees:
+	 *
+	 *   .cy { --x: var(--y); --y: var(--x); color: var(--x, green) }
+	 *
+	 * paints green, and --x computes to the empty string. Leaving the
+	 * raw tokens in place instead would re-enter the cycle at every
+	 * consumer and drop the declaration entirely, painting black. */
+	uint8_t invalid;
+} css_cp_binding;
+
+struct css_cp_env {
+	css_cp_binding *items;
+	uint32_t used;
+	uint32_t allocated;
+
+	/* fixes1268c (#167) - the parent element's FINALISED environment,
+	 * or NULL at the root. Custom properties inherit, and a chain of
+	 * references costs nothing per element, where copying the parent's
+	 * bindings would cost O(properties x elements) - facebook.com
+	 * defines several hundred tokens on one ancestor.
+	 *
+	 * Reference-counted rather than borrowed: correctness must not
+	 * depend on any particular destruction order between a parent
+	 * style and a child's. */
+	struct css_cp_env *inherited;
+	uint32_t refcount;
+
+	/* Non-zero once css__cp_env_finalise has substituted every own
+	 * binding's var() references, making the bindings COMPUTED values
+	 * that children may inherit directly. Before that the bindings
+	 * hold raw, borrowed token runs. */
+	uint8_t finalised;
+	uint8_t pad2[3];
+};
+typedef struct css_cp_env css_cp_env;
+
+/**
+ * Offer a definition to an element's environment, applying the same
+ * origin / importance / specificity precedence as ordinary properties
+ * (see css__outranks_existing). Creates the environment on first use.
+ *
+ * name and tokens are BORROWED, not owned - they must outlive the
+ * environment, which they do, being owned by the stylesheet.
+ *
+ * \param env  Environment pointer-to-pointer; *env may be NULL.
+ * \return CSS_OK or CSS_NOMEM.
+ */
+css_error css__cp_env_add(css_cp_env **env, lwc_string *name,
+		const css_cp_token *tokens, uint32_t n,
+		uint32_t specificity, uint8_t origin, uint8_t important);
+
+/**
+ * Look up the winning definition of `name` in an element's environment.
+ *
+ * \return Borrowed entry on hit, NULL on miss.
+ */
+const css_cp_entry *css__cp_env_find(const css_cp_env *env,
+		lwc_string *name);
+
+/**
+ * Release a reference to an environment, freeing it (and releasing its
+ * reference to the inherited one) when the last goes.
+ */
+void css__cp_env_unref(css_cp_env *env);
+
+/**
+ * Take an additional reference. Returns env for convenience.
+ */
+css_cp_env *css__cp_env_ref(css_cp_env *env);
+
+/**
+ * Point a (possibly not-yet-created) environment at the parent
+ * element's finalised environment, taking a reference.
+ */
+css_error css__cp_env_set_inherited(css_cp_env **env, css_cp_env *parent);
+
+/**
+ * Substitute every own binding's var() references, turning the
+ * environment's raw token runs into COMPUTED values that children can
+ * inherit directly.
+ *
+ * This is required by CSS Variables 1: the computed value of a custom
+ * property is its specified value with variables substituted, so a
+ * child inheriting "--b: var(--a)" from its parent receives the
+ * PARENT's --a, not its own. Verified against Chrome:
+ *
+ *   .p { --a: red; --b: var(--a) }
+ *   .c { --a: blue; color: var(--b) }   =>  .c color is RED
+ *
+ * Substituting per element rather than per lookup also makes the result
+ * independent of declaration order within a rule, which Chrome also
+ * confirms (".q { --b: var(--a); --a: green }" resolves to green).
+ */
+css_error css__cp_env_finalise(css_cp_env *env,
+		const struct css_stylesheet *origin_sheet,
+		const struct css_select_ctx *ctx,
+		const struct css_stylesheet *inline_sheet);
+
+/**
+ * Contribute every rule-scoped definition attached to `style` to `env`,
+ * in source order, at the given cascade position. Called by cascade_style
+ * for each matching rule.
+ */
+css_error css__cp_env_add_style(css_cp_env **env,
+		const struct css_style *style,
+		uint32_t specificity, uint8_t origin);
 
 /* --- Deferred declaration list (per css_style) --- */
 

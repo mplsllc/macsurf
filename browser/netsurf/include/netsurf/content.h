@@ -63,6 +63,9 @@ struct content_redraw_data {
 	 *  bitmap plotter must skip its smoothing box-filter downscale.
 	 */
 	bool nearest;
+
+	/** CSS background-blend-mode; zero and NORMAL both mean normal paint. */
+	unsigned char background_blend_mode;
 };
 
 /**

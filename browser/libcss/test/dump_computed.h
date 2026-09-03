@@ -1617,6 +1617,9 @@ static void dump_computed_style(const css_computed_style *style, char *buf,
 	case CSS_DISPLAY_INLINE_GRID:
 		wrote = snprintf(ptr, *len, "display: inline-grid\n");
 		break;
+	case CSS_DISPLAY_CONTENTS:
+		wrote = snprintf(ptr, *len, "display: contents\n");
+		break;
 	default:
 		wrote = 0;
 		break;
@@ -2611,6 +2614,9 @@ static void dump_computed_style(const css_computed_style *style, char *buf,
 	case CSS_OVERFLOW_AUTO:
 		wrote = snprintf(ptr, *len, "overflow-x: auto\n");
 		break;
+	case CSS_OVERFLOW_CLIP:
+		wrote = snprintf(ptr, *len, "overflow-x: clip\n");
+		break;
 	default:
 		wrote = 0;
 		break;
@@ -2635,6 +2641,9 @@ static void dump_computed_style(const css_computed_style *style, char *buf,
 		break;
 	case CSS_OVERFLOW_AUTO:
 		wrote = snprintf(ptr, *len, "overflow-y: auto\n");
+		break;
+	case CSS_OVERFLOW_CLIP:
+		wrote = snprintf(ptr, *len, "overflow-y: clip\n");
 		break;
 	default:
 		wrote = 0;
@@ -3254,4 +3263,3 @@ static void dump_computed_style(const css_computed_style *style, char *buf,
 	ptr += wrote;
 	*len -= wrote;
 }
-

@@ -33,6 +33,7 @@
 #include "utils/config.h"
 #include "utils/log.h"
 #include "utils/nsoption.h"
+#include "utils/nsurl.h"
 #include "netsurf/content.h"
 #include "netsurf/misc.h"
 #include "content/hlcache.h"
@@ -49,6 +50,43 @@
 #include "macos9_deathrow.h"
 
 extern int macsurf_ptr_is_heap(const void *);
+
+/* fixes1319 - the one canonical "an image finished loading" report. Lives
+ * here rather than in a fetcher because an image may be fulfilled from the
+ * on-disk cache with no network round trip at all, and this callback sees
+ * every image handler's own resolved MIME + dimensions the same way
+ * regardless (WebP, QuickTime JPEG/PNG/GIF, SVG) - after header parsing,
+ * MIME sniffing, AND decode, not just one stage of the pipeline.
+ *
+ * Replaces today's scattered probes (macos9_webp.c's "WEBP decode" line,
+ * box_special.c's "PICTURE source" line, macos9_tls_fetcher.c's "IMG MIME
+ * net" line, and this function's own earlier "IMG FINAL" line): NONE of
+ * them had "LIFE " anywhere in the message, so per this frontend's own
+ * documented gotcha (macos9/CLAUDE.md, "Diagnostics"), every one of them
+ * was silently dropped by the release build's failures-only filter -
+ * they'd have read as "the code never ran" even while working correctly.
+ * Capped per session so a large page doesn't flood the release log. */
+static long macsurf_final_image_log_count = 0;
+
+static void
+macsurf_log_final_image(hlcache_handle *object)
+{
+	lwc_string *mime;
+	struct nsurl *url;
+
+	if (object == NULL || content_get_type(object) != CONTENT_IMAGE ||
+			macsurf_final_image_log_count >= 80)
+		return;
+	mime = content_get_mime_type(object);
+	url = hlcache_handle_get_url(object);
+	macsurf_final_image_log_count++;
+	macsurf_debug_log_writef("LIFE IMG loaded mime=%s %dx%d url=%s",
+		(mime != NULL) ? lwc_string_data(mime) : "(none)",
+		content_get_width(object), content_get_height(object),
+		(url != NULL) ? nsurl_access(url) : "(no url)");
+	if (mime != NULL)
+		lwc_string_unref(mime);
+}
 
 /* break reference loop */
 static void html_object_refresh(void *p);
@@ -464,7 +502,11 @@ html_object_callback(hlcache_handle *object,
 		break;
 
 	case CONTENT_MSG_DONE:
-		c->base.active--;
+		macsurf_log_final_image(object);
+		if (o->active_counted) {
+			c->base.active--;
+			o->active_counted = false;
+		}
 		NSLOG(netsurf, INFO, "%d fetches active", c->base.active);
 
 		html_object_done(box, object, o->background);
@@ -503,7 +545,10 @@ html_object_callback(hlcache_handle *object,
 		/* fixes515: NULL before release. */
 		safe_hlcache_handle_release(&o->content);
 
-		c->base.active--;
+		if (o->active_counted) {
+			c->base.active--;
+			o->active_counted = false;
+		}
 		NSLOG(netsurf, INFO, "%d fetches active", c->base.active);
 
 		html_object_failed(box, c, o->background);
@@ -881,11 +926,14 @@ static bool html_replace_object(struct content_html_object *object, nsurl *url)
 
 	child.charset = c->encoding;
 	child.quirks = c->base.quirks;
+	child.nav_id = content_get_nav_id(&c->base);	/* MacSurf Trace 1a */
+	child.doc_id = 0;
 
 	if (object->content != NULL) {
 		/* remove existing object */
-		if (content_get_status(object->content) != CONTENT_STATUS_DONE) {
+		if (object->active_counted) {
 			c->base.active--;
+			object->active_counted = false;
 			NSLOG(netsurf, INFO, "%d fetches active",
 			      c->base.active);
 		}
@@ -912,6 +960,7 @@ static bool html_replace_object(struct content_html_object *object, nsurl *url)
 
 		page->base.status = CONTENT_STATUS_READY;
 	}
+	object->active_counted = true;
 
 	return true;
 }
@@ -1006,8 +1055,9 @@ nserror html_object_abort_objects(html_content *htmlc)
 		default:
 			hlcache_handle_abort(object->content);
 			safe_hlcache_handle_release(&object->content); /* fixes515 */
-			if (object->box != NULL) {
+			if (object->active_counted) {
 				htmlc->base.active--;
+				object->active_counted = false;
 				NSLOG(netsurf, INFO, "%d fetches active",
 				      htmlc->base.active);
 			}
@@ -1049,6 +1099,18 @@ nserror html_object_free_objects(html_content *html)
 {
 	while (html->object_list != NULL) {
 		struct content_html_object *victim = html->object_list;
+
+		/* fixes1288 (#167) - an in-flight object normally repays this
+		 * count in html_object_callback(DONE/ERROR).  Reconvert retirement
+		 * releases the handle below, which disarms that callback; settle the
+		 * explicit ledger first or every retired in-flight duplicate leaves
+		 * the parent permanently load-active. */
+		if (victim->active_counted) {
+			html->base.active--;
+			victim->active_counted = false;
+			NSLOG(netsurf, INFO, "%d fetches active",
+			      html->base.active);
+		}
 
 		if (victim->content != NULL) {
 			NSLOG(netsurf, INFO, "object %p", victim->content);
@@ -1143,6 +1205,8 @@ html_fetch_object(html_content *c,
 		}
 	}
 	child.quirks = c->base.quirks;
+	child.nav_id = content_get_nav_id(&c->base);	/* MacSurf Trace 1a */
+	child.doc_id = 0;
 
 	/* fixes975 (lifecycle Stage 1) - CREATION-TIME URL ADOPTION.
 	 *
@@ -1250,7 +1314,7 @@ html_fetch_object(html_content *c,
 			 * html_fetch_object increments exactly when it creates
 			 * an entry WITH a box, so a box-less entry is not
 			 * counted and a boxed one already is. */
-			int was_counted = (dup->box != NULL);
+			int was_counted = dup->active_counted ? 1 : 0;
 
 			if (box == NULL) {
 				/* Redundant speculative fetch. */
@@ -1272,6 +1336,7 @@ html_fetch_object(html_content *c,
 				 * html_object_callback, whose DONE/ERROR arms
 				 * both decrement. Balance it. */
 				c->base.active++;
+				dup->active_counted = true;
 			}
 			if (was_counted) {   /* fixes978 */
 				g_obj_adopt_renode++;
@@ -1334,6 +1399,7 @@ html_fetch_object(html_content *c,
 	c->num_objects++;
 	if (box != NULL) {
 		c->base.active++;
+		object->active_counted = true;
 		NSLOG(netsurf, INFO, "%d fetches active", c->base.active);
 	}
 

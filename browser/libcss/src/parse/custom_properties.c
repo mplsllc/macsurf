@@ -9,6 +9,7 @@
  */
 
 #include <assert.h>
+#include <ctype.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -151,6 +152,303 @@ void css__cp_tokens_destroy(css_cp_token *tokens, uint32_t n)
 /* ------------------------------------------------------------------ */
 /* Custom-property list (per stylesheet)                              */
 /* ------------------------------------------------------------------ */
+
+/* fixes1268b (#167) - the custom-property capture path takes the value
+ * tokens verbatim, so a trailing "!important" is still in the run. Detect
+ * it and report the value length excluding it (plus any whitespace
+ * between the value and the bang).
+ *
+ * \param out_n Receives the token count of the value proper.
+ * \return true if the run ended in !important.
+ */
+static bool cp_tokens_trailing_important(const css_cp_token *toks, uint32_t n,
+		uint32_t *out_n)
+{
+	uint32_t i = n;
+	bool seen_important = false;
+
+	*out_n = n;
+	if (toks == NULL || n == 0)
+		return false;
+
+	/* Walk back over trailing whitespace */
+	while (i > 0 && toks[i - 1].type == CSS_TOKEN_S)
+		i--;
+
+	/* IDENT("important") */
+	if (i == 0 || toks[i - 1].type != CSS_TOKEN_IDENT ||
+			toks[i - 1].idata == NULL)
+		return false;
+	{
+		const char *d = lwc_string_data(toks[i - 1].idata);
+		size_t len = lwc_string_length(toks[i - 1].idata);
+		size_t k;
+		static const char imp[9] = { 'i','m','p','o','r','t','a','n','t' };
+
+		if (d == NULL || len != 9)
+			return false;
+		for (k = 0; k < 9; k++) {
+			if (tolower((unsigned char) d[k]) != imp[k])
+				return false;
+		}
+	}
+	i--;
+
+	while (i > 0 && toks[i - 1].type == CSS_TOKEN_S)
+		i--;
+
+	/* CHAR('!') */
+	if (i == 0 || toks[i - 1].type != CSS_TOKEN_CHAR ||
+			toks[i - 1].idata == NULL ||
+			lwc_string_length(toks[i - 1].idata) != 1 ||
+			lwc_string_data(toks[i - 1].idata)[0] != '!')
+		return false;
+	i--;
+	seen_important = true;
+
+	/* Trim whitespace before the bang too */
+	while (i > 0 && toks[i - 1].type == CSS_TOKEN_S)
+		i--;
+
+	*out_n = i;
+	return seen_important;
+}
+
+/* ------------------------------------------------------------------ */
+/* Per-element custom-property environment (fixes1268b, #167)         */
+/* ------------------------------------------------------------------ */
+
+/* Does a definition at (origin, important, specificity) replace the one
+ * already bound? This mirrors css__outranks_existing in css_select.c for
+ * ordinary properties; custom properties cascade by exactly the same
+ * rules, so the two must agree. Kept as a separate function rather than
+ * calling that one because it decides against a css_cp_binding, not
+ * against the prop_state table it indexes by opcode. */
+static bool cp_binding_outranked(const css_cp_binding *existing,
+		uint8_t origin, uint8_t important, uint32_t specificity)
+{
+	if (existing->origin < origin) {
+		/* New origin carries more weight, except against USER,i */
+		return (existing->important == 0 ||
+				existing->origin != CSS_ORIGIN_USER);
+	}
+
+	if (existing->origin == origin) {
+		if (origin == CSS_ORIGIN_UA) {
+			/* Importance is meaningless in the UA sheet */
+			return specificity >= existing->specificity;
+		}
+		if (existing->important == 0 && important != 0)
+			return true;
+		if (existing->important != 0 && important == 0)
+			return false;
+		/* Equal importance: higher specificity wins, and equal
+		 * specificity means the later rule wins - hence >=, as
+		 * rules arrive in ascending specificity then source
+		 * order. */
+		return specificity >= existing->specificity;
+	}
+
+	/* Existing origin outweighs the new one, except for USER,i */
+	return (origin == CSS_ORIGIN_USER && important != 0);
+}
+
+css_error css__cp_env_add(css_cp_env **env, lwc_string *name,
+		const css_cp_token *tokens, uint32_t n,
+		uint32_t specificity, uint8_t origin, uint8_t important)
+{
+	css_cp_env *e;
+	uint32_t i;
+
+	if (env == NULL || name == NULL)
+		return CSS_BADPARM;
+
+	if (*env == NULL) {
+		*env = (css_cp_env *)calloc(1, sizeof(css_cp_env));
+		if (*env == NULL)
+			return CSS_NOMEM;
+		(*env)->refcount = 1;
+	}
+	e = *env;
+
+	for (i = 0; i < e->used; i++) {
+		if (!cp_name_equal(e->items[i].entry.name, name))
+			continue;
+		if (cp_binding_outranked(&e->items[i], origin, important,
+				specificity)) {
+			e->items[i].entry.name = name;
+			e->items[i].entry.tokens = (css_cp_token *)tokens;
+			e->items[i].entry.n_tokens = n;
+			e->items[i].specificity = specificity;
+			e->items[i].origin = origin;
+			e->items[i].important = important;
+		}
+		return CSS_OK;
+	}
+
+	if (e->used == e->allocated) {
+		uint32_t newcap = (e->allocated == 0) ? 16 : e->allocated * 2;
+		css_cp_binding *ni = (css_cp_binding *)realloc(e->items,
+				newcap * sizeof(css_cp_binding));
+		if (ni == NULL)
+			return CSS_NOMEM;
+		e->items = ni;
+		e->allocated = newcap;
+	}
+
+	memset(&e->items[e->used], 0, sizeof(css_cp_binding));
+	e->items[e->used].entry.name = name;
+	e->items[e->used].entry.tokens = (css_cp_token *)tokens;
+	e->items[e->used].entry.n_tokens = n;
+	e->items[e->used].entry.next = NULL;
+	e->items[e->used].specificity = specificity;
+	e->items[e->used].origin = origin;
+	e->items[e->used].important = important;
+	e->used++;
+
+	return CSS_OK;
+}
+
+const css_cp_entry *css__cp_env_find(const css_cp_env *env, lwc_string *name)
+{
+	if (name == NULL)
+		return NULL;
+
+	/* fixes1268c - walk the inheritance chain. The element's own
+	 * bindings shadow the parent's, which is what makes a local
+	 * redefinition override an inherited one. */
+	for (; env != NULL; env = env->inherited) {
+		uint32_t i;
+
+		for (i = 0; i < env->used; i++) {
+			if (!cp_name_equal(env->items[i].entry.name, name))
+				continue;
+			/* fixes1269 - an invalid definition reads as absent
+			 * so the consumer's var() fallback applies. It still
+			 * SHADOWS an inherited binding of the same name, per
+			 * "invalid at computed-value time". */
+			if (env->items[i].invalid)
+				return NULL;
+			return &env->items[i].entry;
+		}
+	}
+
+	return NULL;
+}
+
+css_cp_env *css__cp_env_ref(css_cp_env *env)
+{
+	if (env != NULL)
+		env->refcount++;
+	return env;
+}
+
+void css__cp_env_unref(css_cp_env *env)
+{
+	while (env != NULL) {
+		css_cp_env *up;
+		uint32_t i;
+
+		if (env->refcount > 1) {
+			env->refcount--;
+			return;
+		}
+
+		/* Raw bindings borrow their names and tokens from the
+		 * stylesheet; finalised ones own a substituted run built
+		 * here, whose idata references must be released. */
+		for (i = 0; i < env->used; i++) {
+			if (env->items[i].owns_tokens) {
+				css__cp_tokens_destroy(
+						env->items[i].entry.tokens,
+						env->items[i].entry.n_tokens);
+			}
+		}
+
+		up = env->inherited;
+		free(env->items);
+		free(env);
+
+		/* Iterate rather than recurse: an inheritance chain is as
+		 * deep as the document tree, and OS 9 stacks are small. */
+		env = up;
+	}
+}
+
+css_error css__cp_env_set_inherited(css_cp_env **env, css_cp_env *parent)
+{
+	if (env == NULL)
+		return CSS_BADPARM;
+	if (parent == NULL)
+		return CSS_OK;
+
+	if (*env == NULL) {
+		*env = (css_cp_env *)calloc(1, sizeof(css_cp_env));
+		if (*env == NULL)
+			return CSS_NOMEM;
+		(*env)->refcount = 1;
+	}
+
+	if ((*env)->inherited != NULL)
+		css__cp_env_unref((*env)->inherited);
+	(*env)->inherited = css__cp_env_ref(parent);
+
+	return CSS_OK;
+}
+
+/* fixes1269 (#167) - a definition is a deferred entry whose property name
+ * begins with "--". No ordinary CSS property can, so the test is exact. */
+bool css__cp_decl_is_definition(const css_deferred_decl *dd)
+{
+	const char *d;
+
+	if (dd == NULL || dd->property == NULL)
+		return false;
+
+	d = lwc_string_data(dd->property);
+	if (d == NULL || lwc_string_length(dd->property) < 2)
+		return false;
+
+	return (d[0] == '-' && d[1] == '-');
+}
+
+css_error css__cp_env_add_style(css_cp_env **env, const css_style *style,
+		uint32_t specificity, uint8_t origin)
+{
+	const css_deferred_decl *dd;
+
+	if (style == NULL)
+		return CSS_OK;
+
+	for (dd = style->deferred; dd != NULL; dd = dd->next) {
+		css_error error;
+		uint8_t important = 0;
+		uint32_t n;
+
+		if (!css__cp_decl_is_definition(dd))
+			continue;   /* an ordinary var() consumer */
+
+		n = dd->n_tokens;
+
+		/* A trailing "!important" is still sitting in the captured
+		 * token run - the custom-property capture path takes the
+		 * value verbatim. Strip it here so it neither reaches
+		 * substitution nor is mistaken for part of the value. */
+		if (cp_tokens_trailing_important(dd->tokens, dd->n_tokens,
+				&n)) {
+			important = 1;
+		}
+		if (dd->important)
+			important = 1;
+
+		error = css__cp_env_add(env, dd->property, dd->tokens, n,
+				specificity, origin, important);
+		if (error != CSS_OK)
+			return error;
+	}
+
+	return CSS_OK;
+}
 
 css_error css__sheet_add_custom_property(css_stylesheet *sheet,
 		lwc_string *name, css_cp_token *tokens, uint32_t n)
@@ -714,32 +1012,41 @@ extern const css_stylesheet *css__select_ctx_sheet_at(
 static const css_cp_entry *lookup_var(lwc_string *name,
 		const css_stylesheet *origin_sheet,
 		const css_select_ctx *ctx,
-		const css_stylesheet *inline_sheet)
+		const css_stylesheet *inline_sheet,
+		const css_cp_env *env)
 {
 	const css_cp_entry *found;
 	const css_cp_entry *hit;
 
 	found = NULL;
 
-	if (ctx != NULL) {
-		uint32_t i;
-		uint32_t count;
-
-		count = css__select_ctx_count_sheets(ctx);
-		for (i = 0; i < count; i++) {
-			const css_stylesheet *sh;
-			sh = css__select_ctx_sheet_at(ctx, i);
-			if (sh == NULL)
-				continue;
-			hit = css__sheet_find_custom_property(sh, name);
-			if (hit != NULL)
-				found = hit;
-		}
+	/* fixes1268e (#167) - the element's environment is now the ONLY
+	 * source for author-level custom properties.
+	 *
+	 * The per-stylesheet last-write-wins scan that used to follow this
+	 * is gone rather than demoted to a fallback. Left in place it would
+	 * answer for any name the environment legitimately does NOT have -
+	 * i.e. precisely when the property is out of scope - handing an
+	 * element a value declared by a rule that never matched it, which
+	 * is the whole defect this series removes. A miss must stay a miss
+	 * so the var() fallback value is used.
+	 *
+	 * Correctness for the cases the fallback used to paper over now
+	 * comes from the mechanisms that replaced it: an ancestor's
+	 * definition arrives by inheritance (1268c), and a definition made
+	 * by a rule that cascades later is visible because var() resolution
+	 * runs as a second pass (1268d).
+	 *
+	 * UNUSED: origin_sheet is retained in the signature for the inline
+	 * paths below and for callers, not for a sheet-wide scan. */
+	if (env != NULL) {
+		found = css__cp_env_find(env, name);
+		if (found != NULL)
+			return found;
 	}
 
-	if (found == NULL) {
-		found = css__sheet_find_custom_property(origin_sheet, name);
-	}
+	UNUSED(ctx);
+	UNUSED(origin_sheet);
 
 	if (inline_sheet != NULL) {
 		hit = css__sheet_find_custom_property(inline_sheet, name);
@@ -776,6 +1083,7 @@ static css_error substitute_tokens(const css_cp_token *arr, uint32_t n,
 		const css_stylesheet *origin_sheet,
 		const css_select_ctx *ctx,
 		const css_stylesheet *inline_sheet,
+		const css_cp_env *env,
 		int depth, cp_scratch *out, bool *ok)
 {
 	uint32_t i;
@@ -823,13 +1131,14 @@ static css_error substitute_tokens(const css_cp_token *arr, uint32_t n,
 			}
 
 			entry = lookup_var(name_tok->idata,
-					origin_sheet, ctx, inline_sheet);
+					origin_sheet, ctx, inline_sheet,
+					env);
 			if (entry != NULL) {
 				error = substitute_tokens(
 						entry->tokens,
 						entry->n_tokens,
 						origin_sheet, ctx,
-						inline_sheet,
+						inline_sheet, env,
 						depth + 1, out, ok);
 				if (error != CSS_OK || !*ok)
 					return error;
@@ -837,7 +1146,7 @@ static css_error substitute_tokens(const css_cp_token *arr, uint32_t n,
 				error = substitute_tokens(
 						arr + fb_s, fb_e - fb_s,
 						origin_sheet, ctx,
-						inline_sheet,
+						inline_sheet, env,
 						depth + 1, out, ok);
 				if (error != CSS_OK || !*ok)
 					return error;
@@ -905,9 +1214,163 @@ static css_error build_replay_vector(const css_cp_token **ptrs,
 }
 
 
+/* fixes1268c (#167) - turn an element's raw bindings into COMPUTED ones.
+ *
+ * CSS Variables 1: "the computed value of a custom property is its
+ * specified value with variables substituted". Substitution therefore
+ * happens on the element that DECLARED the property, and children
+ * inherit the already-substituted result. Verified against Chrome:
+ *
+ *   .p { --a: red; --b: var(--a) }
+ *   .c { --a: blue; color: var(--b) }    =>  .c color is RED, not blue
+ *
+ * Keeping raw tokens and substituting lazily at each consumer would give
+ * blue, because the child's own --a would shadow the parent's during the
+ * recursive lookup. That is the trap: it looks like a harmless
+ * optimisation and silently changes the semantics.
+ *
+ * Substituting per element also makes the result independent of
+ * declaration order inside a rule, which Chrome likewise confirms
+ * (".q { --b: var(--a); --a: green }" resolves to green).
+ */
+css_error css__cp_env_finalise(css_cp_env *env,
+		const css_stylesheet *origin_sheet,
+		const css_select_ctx *ctx,
+		const css_stylesheet *inline_sheet)
+{
+	uint32_t i;
+
+	if (env == NULL || env->finalised)
+		return CSS_OK;
+
+	for (i = 0; i < env->used; i++) {
+		cp_scratch scratch;
+		bool ok = true;
+		css_error error;
+		css_cp_token *flat;
+		uint32_t j;
+
+		memset(&scratch, 0, sizeof(scratch));
+
+		error = substitute_tokens(env->items[i].entry.tokens,
+				env->items[i].entry.n_tokens,
+				origin_sheet, ctx, inline_sheet, env,
+				0, &scratch, &ok);
+		if (error != CSS_OK) {
+			free(scratch.items);
+			return error;
+		}
+		if (!ok) {
+			/* fixes1269 - unresolvable: a missing name, or a
+			 * var() cycle that hit the depth cap. The property
+			 * is invalid at computed-value time, so mark it and
+			 * let consumers fall back. Leaving the raw run in
+			 * place would re-enter the cycle at every consumer
+			 * and drop their declarations outright. */
+			free(scratch.items);
+			env->items[i].invalid = 1;
+			continue;
+		}
+
+		flat = (css_cp_token *)calloc(
+				(scratch.used > 0) ? scratch.used : 1,
+				sizeof(css_cp_token));
+		if (flat == NULL) {
+			free(scratch.items);
+			return CSS_NOMEM;
+		}
+
+		for (j = 0; j < scratch.used; j++) {
+			flat[j] = *scratch.items[j];
+			if (flat[j].idata != NULL)
+				(void)lwc_string_ref(flat[j].idata);
+		}
+		free(scratch.items);
+
+		if (env->items[i].owns_tokens) {
+			css__cp_tokens_destroy(env->items[i].entry.tokens,
+					env->items[i].entry.n_tokens);
+		}
+		env->items[i].entry.tokens = flat;
+		env->items[i].entry.n_tokens = scratch.used;
+		env->items[i].owns_tokens = 1;
+	}
+
+	env->finalised = 1;
+
+	return CSS_OK;
+}
+
 /* ------------------------------------------------------------------ */
 /* Resolve a deferred declaration                                     */
 /* ------------------------------------------------------------------ */
+
+/* fixes1267 (#167) - local copy of the <body> element test. The one in
+ * select/properties/helpers.c is static to that TU; a shared symbol is not
+ * worth adding for a diagnostic. Direct byte compare, no interning and no
+ * POSIX strcasecmp (see the C89/CW8 port audit checklist). */
+static int cp__qname_is_body(const css_qname *el)
+{
+	const char *d;
+	size_t len;
+	size_t i;
+	static const char body[4] = { 'b', 'o', 'd', 'y' };
+
+	if (el == NULL || el->name == NULL)
+		return 0;
+
+	d = lwc_string_data(el->name);
+	len = lwc_string_length(el->name);
+	if (d == NULL || len != 4)
+		return 0;
+
+	for (i = 0; i < 4; i++) {
+		if (tolower((unsigned char) d[i]) != body[i])
+			return 0;
+	}
+	return 1;
+}
+
+/* fixes1267 (#167) - flatten a token run into a printable buffer. Truncates
+ * rather than allocating; diagnostics must never be able to fail the
+ * cascade. buf is always NUL-terminated. */
+static void cp__tokens_to_text(const css_cp_token *const *items, uint32_t n,
+		const css_cp_token *flat, uint32_t nflat,
+		char *buf, size_t buflen)
+{
+	size_t out = 0;
+	uint32_t i;
+
+	if (buf == NULL || buflen == 0)
+		return;
+	buf[0] = '\0';
+
+	for (i = 0; i < (items != NULL ? n : nflat); i++) {
+		const css_cp_token *t = (items != NULL) ? items[i] : &flat[i];
+		const char *d;
+		size_t len;
+		size_t k;
+
+		if (t == NULL || t->idata == NULL) {
+			d = " ";
+			len = 1;
+		} else {
+			d = lwc_string_data(t->idata);
+			len = lwc_string_length(t->idata);
+			if (d == NULL)
+				continue;
+		}
+
+		for (k = 0; k < len; k++) {
+			if (out + 1 >= buflen) {
+				buf[out] = '\0';
+				return;
+			}
+			buf[out++] = d[k];
+		}
+	}
+	buf[out] = '\0';
+}
 
 /* Linear-search for property ID matching the ident's idata. */
 static int find_property_id(css_language *c, lwc_string *name)
@@ -962,7 +1425,7 @@ css_error css__deferred_decl_resolve(const css_deferred_decl *dd,
 
 	error = substitute_tokens(dd->tokens, dd->n_tokens,
 			origin_sheet, ctx, state->inline_style,
-			0, &scratch, &ok);
+			state->custom_env, 0, &scratch, &ok);
 #ifdef MACSURF_DEBUG
 	{
 		extern void macsurf_debug_log_tracef(
@@ -983,6 +1446,21 @@ css_error css__deferred_decl_resolve(const css_deferred_decl *dd,
 		/* Unresolvable var() - silently drop declaration. */
 		free(scratch.items);
 		return CSS_OK;
+	}
+
+	if (state->element.name != NULL && cp__qname_is_body(&state->element)) {
+		char rawbuf[160];
+		char outbuf[160];
+		cp__tokens_to_text(NULL, 0, dd->tokens, dd->n_tokens,
+				rawbuf, sizeof(rawbuf));
+		cp__tokens_to_text(scratch.items, scratch.used, NULL, 0,
+				outbuf, sizeof(outbuf));
+		macsurf_debug_log_writef(
+			"LIFE FBVAR prop=%s spec=%ld raw=%s -> out=%s",
+			(dd->property != NULL) ?
+				lwc_string_data(dd->property) : "(null)",
+			(long) state->current_specificity,
+			rawbuf, outbuf);
 	}
 
 	error = build_replay_vector(scratch.items, scratch.used, &replay);
@@ -1055,41 +1533,53 @@ css_error css__deferred_decl_resolve(const css_deferred_decl *dd,
 			css__make_style_important(scratch_style);
 	}
 
-	/* fixes347f - apply bytecode through the normal cascade dispatch,
-	 * but temporarily bump current_specificity to MAX so the var()-
-	 * resolved write always outranks earlier writes that may have set
-	 * a placeholder value (e.g. UA background-image:none) before this
-	 * deferred declaration's rule got its turn. var() substitution is
-	 * a textual replace; the resulting value belongs to the rule that
-	 * referenced var(), so it inherits THAT rule's specificity. By
-	 * the time we reach here, the rule's cascade_style is running and
-	 * state->current_specificity is correct, but for a defensive
-	 * cover against ordering bugs we still bump and restore. */
-	{
-		uint32_t saved_specificity = state->current_specificity;
-		state->current_specificity = 0x7fffffff;
-		cascade_walker = *scratch_style;
-		while (cascade_walker.used > 0) {
-			opcode_t op;
-			css_code_t opv;
+	/* fixes1267 (#167) - apply the resolved bytecode through the normal
+	 * cascade dispatch at the REFERENCING RULE'S OWN SPECIFICITY.
+	 *
+	 * fixes347f used to bump state->current_specificity to 0x7fffffff
+	 * across this walk, as a "defensive cover" against a var()-resolved
+	 * write losing to a placeholder written earlier (the example given
+	 * was a UA `background-image: none`). That reasoning was wrong on
+	 * both counts, and the sentinel poisoned the cascade:
+	 *
+	 *  - A UA-origin placeholder is already beaten by an author-origin
+	 *    write in css__outranks_existing purely on origin, before
+	 *    specificity is ever consulted. The bump bought nothing there.
+	 *  - cascade_style() walks this rule's deferred list from inside the
+	 *    same call in which match_selector_chain() set
+	 *    state->current_specificity = selector->specificity, so the
+	 *    correct value is already in place on entry. Within the rule,
+	 *    deferred decls run after the bytecode decls at equal
+	 *    specificity, and css__outranks_existing uses >=, so source
+	 *    order still resolves them correctly.
+	 *
+	 * What the bump actually did was make EVERY var()-resolved
+	 * declaration unbeatable by any real selector (max real specificity
+	 * is far below 0x7fffffff), inverting the cascade for the whole
+	 * page. On facebook.com this is why `body { background-color:
+	 * var(...) }` (dark) outranked a plain light-mode background: the
+	 * FBBG trace showed the two competing decls from the same sheet at
+	 * spec=1 and spec=2147483647. Per CSS Variables 1 sec 3, a var()
+	 * substitution is a textual replacement whose result belongs to the
+	 * referencing declaration - it inherits that rule's specificity and
+	 * nothing more. */
+	cascade_walker = *scratch_style;
+	while (cascade_walker.used > 0) {
+		opcode_t op;
+		css_code_t opv;
 
-			opv = *cascade_walker.bytecode;
-			cascade_walker.used -= 1;
-			cascade_walker.bytecode = cascade_walker.bytecode + 1;
+		opv = *cascade_walker.bytecode;
+		cascade_walker.used -= 1;
+		cascade_walker.bytecode = cascade_walker.bytecode + 1;
 
-			op = getOpcode(opv);
+		op = getOpcode(opv);
 
-			error = prop_dispatch[op].cascade(opv,
-					&cascade_walker, state);
-			if (error != CSS_OK) {
-				state->current_specificity =
-						saved_specificity;
-				css__stylesheet_style_destroy(scratch_style);
-				parserutils_vector_destroy(replay);
-				return error;
-			}
+		error = prop_dispatch[op].cascade(opv, &cascade_walker, state);
+		if (error != CSS_OK) {
+			css__stylesheet_style_destroy(scratch_style);
+			parserutils_vector_destroy(replay);
+			return error;
 		}
-		state->current_specificity = saved_specificity;
 	}
 
 	css__stylesheet_style_destroy(scratch_style);

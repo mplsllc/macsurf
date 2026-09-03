@@ -50,10 +50,8 @@
  *     fill-row sentinel; `-2`, etc. are not)
  *   - grid-auto-flow column/dense
  *   - subgrid
- *   - justify-self (BLOCKED: the bit-packed bits[16] computed-style array is
- *     full -- justify-items took the last slot, bits[15] shift 30 -- so the
- *     array must be extended to bits[17] first, which is a structural change
- *     to the arena-interning-sensitive css_computed_style_i)
+ *   - justify-self start/center/stretch (shipped as native scalar-tail
+ *     computed style, fixes1204/1208)
  *   - align-items: stretch as the CSS 12.8 default (cells leave empty space
  *     when the row track exceeds content height)
  *   - fr row distribution against a definite container height
@@ -84,6 +82,93 @@
 
 #include "css/utils.h"
 
+static uint8_t layout_grid_justify_effective(const struct box *grid,
+		const struct box *item)
+{
+	uint8_t ji = CSS_JUSTIFY_ITEMS_STRETCH;
+
+	if (grid != NULL && grid->style != NULL) {
+		ji = css_computed_justify_items(grid->style);
+	}
+
+	if (item != NULL && item->style != NULL) {
+		uint8_t js = css_computed_justify_self(item->style);
+		switch (js) {
+		case CSS_JUSTIFY_SELF_STRETCH:
+			return CSS_JUSTIFY_ITEMS_STRETCH;
+		case CSS_JUSTIFY_SELF_START:
+			return CSS_JUSTIFY_ITEMS_START;
+		case CSS_JUSTIFY_SELF_CENTER:
+			return CSS_JUSTIFY_ITEMS_CENTER;
+		case CSS_JUSTIFY_SELF_AUTO:
+		default:
+			break;
+		}
+	}
+
+	return ji;
+}
+
+static const char *layout_grid_justify_name(uint8_t value)
+{
+	switch (value) {
+	case CSS_JUSTIFY_ITEMS_STRETCH:
+		return "stretch";
+	case CSS_JUSTIFY_ITEMS_START:
+		return "start";
+	case CSS_JUSTIFY_ITEMS_CENTER:
+		return "center";
+	default:
+		return "other";
+	}
+}
+
+static const char *layout_grid_justify_self_name(uint8_t value)
+{
+	switch (value) {
+	case CSS_JUSTIFY_SELF_AUTO:
+		return "auto";
+	case CSS_JUSTIFY_SELF_STRETCH:
+		return "stretch";
+	case CSS_JUSTIFY_SELF_START:
+		return "start";
+	case CSS_JUSTIFY_SELF_CENTER:
+		return "center";
+	default:
+		return "other";
+	}
+}
+
+static void layout_grid_log_justify(const char *phase,
+		const struct box *grid, const struct box *item,
+		uint8_t effective, int cell_w, int item_w, int outer_w,
+		int x_pos, int child_x)
+{
+	extern long macsurf_layout_seq;
+	static long seq = -1;
+	static int budget = 0;
+	uint8_t js = CSS_JUSTIFY_SELF_AUTO;
+
+	if (seq != macsurf_layout_seq) {
+		seq = macsurf_layout_seq;
+		budget = 24;
+	}
+	if (budget <= 0)
+		return;
+	budget--;
+
+	if (item != NULL && item->style != NULL)
+		js = css_computed_justify_self(item->style);
+
+	macsurf_debug_log_writef(
+		"LIFE fixes1204 gridjs phase=%s grid=%p item=%p "
+		"self=%s(%d) eff=%s(%d) cell=%d itemw=%d outer=%d "
+		"x0=%d x=%d",
+		phase, (void *)grid, (void *)item,
+		layout_grid_justify_self_name(js), (int)js,
+		layout_grid_justify_name(effective), (int)effective,
+		cell_w, item_w, outer_w, x_pos, child_x);
+}
 
 /* fixes168b - Grid local fallback. When a grid container hits an
  * unsafe input (AUTO/INT_MIN propagated through a parent, child
@@ -221,6 +306,7 @@ static bool layout_grid_item(
 	int dummy_max_w = -1;
 	int dummy_min_h = -1;
 	int dummy_max_h = -1;
+	uint8_t effective_justify = CSS_JUSTIFY_ITEMS_STRETCH;
 
 	if (item->style != NULL) {
 		item->float_container = item->parent;
@@ -239,6 +325,10 @@ static bool layout_grid_item(
 				&dummy_max_h, &dummy_min_h,
 				item->margin, item->padding, item->border);
 		item->float_container = NULL;
+	}
+	if (item->parent != NULL) {
+		effective_justify = layout_grid_justify_effective(
+				item->parent, item);
 	}
 
 	/* fixes114 - only force cell_width if the child's CSS width is AUTO
@@ -273,11 +363,9 @@ static bool layout_grid_item(
 		 * value -> the default (stretch) path above is byte-identical,
 		 * zero regression to existing grids. Falls back to stretch if
 		 * the content width isn't sensible. */
-		if (item->parent != NULL && item->parent->style != NULL) {
-			uint8_t ji = css_computed_justify_items(
-					item->parent->style);
-			if ((ji == CSS_JUSTIFY_ITEMS_START ||
-			     ji == CSS_JUSTIFY_ITEMS_CENTER) &&
+		if (item->parent != NULL) {
+			if ((effective_justify == CSS_JUSTIFY_ITEMS_START ||
+			     effective_justify == CSS_JUSTIFY_ITEMS_CENTER) &&
 			    item->max_width > 0 &&
 			    item->max_width < item->width) {
 				item->width = item->max_width;
@@ -296,6 +384,10 @@ static bool layout_grid_item(
 	if (item->width < 0) {
 		item->width = 0;
 	}
+
+	layout_grid_log_justify("size", item->parent, item,
+			effective_justify, cell_width, item->width,
+			item->width + lh__delta_outer_width(item), 0, 0);
 
 	switch (item->type) {
 	case BOX_BLOCK:
@@ -338,6 +430,7 @@ static bool layout_grid_item(
 #define MACSURF_GRID_TRACK_UNIT_PX      2
 #define MACSURF_GRID_TRACK_UNIT_PERCENT 3
 #define MACSURF_GRID_TRACK_UNIT_AUTO    4  /* fixes817 (#62): content-sized */
+#define MACSURF_GRID_TRACK_UNIT_MINMAX_FR 5 /* fixes1214: px floor + 1fr */
 
 /* fixes158: per-child placement scratch. The two-pass layout assigns
  * (col, row, col_span, row_span) in pass 1 (placement + child layout
@@ -436,7 +529,9 @@ static bool layout_grid_inner(struct box *grid, int available_width,
 	css_unit gap_unit = CSS_UNIT_PX;
 	const int32_t *raw_tracks;
 	int track_widths[MACSURF_GRID_TRACK_MAX];
+	int track_base[MACSURF_GRID_TRACK_MAX];
 	int track_x[MACSURF_GRID_TRACK_MAX];
+	int auto_track[MACSURF_GRID_TRACK_MAX];
 	int n_tracks = 0;
 	bool has_tracks = false;
 	/* fixes150 -- row tracks (px-only V1; fr/percent degrade to
@@ -445,6 +540,8 @@ static bool layout_grid_inner(struct box *grid, int available_width,
 	int row_track_h[MACSURF_GRID_TRACK_MAX];
 	int n_row_tracks = 0;
 	bool has_row_tracks = false;
+	int grid_has_placement = 0;
+	int minmax_fr_tracks = 0;
 	int i;
 
 	/* fixes161e - per-call GRID marker capped at first 100 calls per
@@ -468,7 +565,9 @@ static bool layout_grid_inner(struct box *grid, int available_width,
 
 	for (i = 0; i < MACSURF_GRID_TRACK_MAX; i++) {
 		track_widths[i] = 0;
+		track_base[i] = 0;
 		track_x[i] = 0;
+		auto_track[i] = 0;
 		row_track_h[i] = 0;
 	}
 
@@ -560,13 +659,8 @@ static bool layout_grid_inner(struct box *grid, int available_width,
 		int fixed_total = 0;
 		int fr_total_q88 = 0;
 		int auto_total = 0;
-		int grid_has_placement = 0;
-		int is_auto[MACSURF_GRID_TRACK_MAX];
 		int total_gap;
 		int remaining;
-
-		for (i = 0; i < MACSURF_GRID_TRACK_MAX; i++)
-			is_auto[i] = 0;
 
 		/* fixes817 (#62): GUARD -- content-based AUTO track sizing
 		 * (Round 1) runs ONLY for pure auto-flow grids. If ANY child
@@ -626,15 +720,17 @@ static bool layout_grid_inner(struct box *grid, int available_width,
 				track_widths[i] = -value;
 				if (value > 0) fr_total_q88 += value;
 			} else if (unit == MACSURF_GRID_TRACK_UNIT_AUTO) {
-				if (grid_has_placement) {
-					/* guarded fallback: fold auto -> 1fr
-					 * (Q8.8 1.0 = 256), pre-fixes817. */
-					track_widths[i] = -256;
-					fr_total_q88 += 256;
-				} else {
-					is_auto[i] = 1;
-					track_widths[i] = 0;
-				}
+				auto_track[i] = 1;
+				track_widths[i] = 0;
+			} else if (unit == MACSURF_GRID_TRACK_UNIT_MINMAX_FR) {
+				/* minmax(Npx, 1fr): reserve N before sharing the
+				 * remainder among flexible tracks. */
+				if (value < 0) value = 0;
+				track_base[i] = value;
+				track_widths[i] = -256;
+				fixed_total += value;
+				fr_total_q88 += 256;
+				minmax_fr_tracks++;
 			}
 		}
 
@@ -655,7 +751,7 @@ static bool layout_grid_inner(struct box *grid, int available_width,
 			for (j = 0; j < n_tracks; j++) {
 				col_min[j] = 0;
 				col_max[j] = 0;
-				if (!is_auto[j]) continue;
+					if (!auto_track[j]) continue;
 				any_auto = 1;
 				{
 					struct box *cc;
@@ -700,7 +796,7 @@ static bool layout_grid_inner(struct box *grid, int available_width,
 				if (grow > 0 && grow_room > 0) {
 					for (j = 0; j < n_tracks; j++) {
 						int room;
-						if (!is_auto[j]) continue;
+						if (!auto_track[j]) continue;
 						room = col_max[j] - col_min[j];
 						track_widths[j] += (int)(
 							((long)grow *
@@ -709,12 +805,17 @@ static bool layout_grid_inner(struct box *grid, int available_width,
 					}
 				}
 				for (j = 0; j < n_tracks; j++)
-					if (is_auto[j])
+						if (auto_track[j])
 						auto_total += track_widths[j];
 			}
 		}
 
 		if (n_tracks > 0) {
+				if (minmax_fr_tracks > 0) {
+					macsurf_debug_log_writef(
+						"LIFE fixes1214 minmax pxfr tracks=%d",
+						minmax_fr_tracks);
+				}
 			has_tracks = true;
 			cols = n_tracks;
 			total_gap = col_gap * (n_tracks - 1);
@@ -733,17 +834,38 @@ static bool layout_grid_inner(struct box *grid, int available_width,
 								(long)q88) /
 								(long)fr_total_q88);
 						if (w < 1) w = 1;
-						track_widths[i] = w;
+							track_widths[i] = track_base[i] + w;
 					}
 				}
 			} else {
-				/* No fr tracks, only fixed + percent.
-				 * Any leftover space stays unused at the
-				 * right of the grid -- spec behavior. */
+				/* CSS Grid 12.8: the initial `justify-content: normal`
+				 * stretches AUTO tracks to consume remaining inline space.
+				 * Our compact libcss vintage represents that initial value as
+				 * FLEX_START, so this is deliberately limited to actual AUTO
+				 * tracks; fixed/percent-only grids retain their existing unused
+				 * right-side space. */
+				int auto_count = 0;
+				int extra_per_auto = 0;
+				int extra_remainder = 0;
 				for (i = 0; i < n_tracks; i++) {
-					if (track_widths[i] < 0) {
+						if (auto_track[i]) auto_count++;
+					if (track_widths[i] < 0)
 						track_widths[i] = 0;
+				}
+				if (auto_count > 0 && remaining > 0) {
+					extra_per_auto = remaining / auto_count;
+					extra_remainder = remaining % auto_count;
+					for (i = 0; i < n_tracks; i++) {
+						if (!auto_track[i]) continue;
+						track_widths[i] += extra_per_auto;
+						if (extra_remainder > 0) {
+							track_widths[i]++;
+							extra_remainder--;
+						}
 					}
+					macsurf_debug_log_writef(
+						"LIFE fixes1212 gridauto stretch tracks=%d free=%d",
+						auto_count, remaining);
 				}
 			}
 
@@ -1176,11 +1298,127 @@ static bool layout_grid_inner(struct box *grid, int available_width,
 			if (slot_row + row_span - 1 > max_row_used)
 				max_row_used = slot_row + row_span - 1;
 
-			n_children++;
-			child = child->next;
-		}
+				n_children++;
+				child = child->next;
+			}
 
-		/* --- Pass 1b: layout each child into its cell width. */
+			/* fixes1213 (#279): Round 1 could size AUTO tracks from
+			 * content only while every child was in simple row-major flow.
+			 * The slots above are the authoritative resolved placement, so
+			 * use them here for explicit placement and spans as well. A
+			 * spanning item's unmet min/max contribution is shared only by
+			 * the AUTO tracks it crosses; fixed tracks remain fixed. */
+			if (grid_has_placement && has_tracks) {
+				int min_track[MACSURF_GRID_TRACK_MAX];
+				int max_track[MACSURF_GRID_TRACK_MAX];
+				int auto_count = 0;
+				int span_count = 0;
+				int used;
+				int free_space;
+				int j;
+
+				for (j = 0; j < n_tracks; j++) {
+					min_track[j] = auto_track[j] ? 0 :
+						track_widths[j];
+					max_track[j] = min_track[j];
+					if (auto_track[j]) auto_count++;
+				}
+
+				/* First satisfy min-content contributions. */
+				child = grid->children;
+				for (slot_index = 0; child != NULL &&
+						slot_index < n_children;
+						slot_index++, child = child->next) {
+					int start = slots[slot_index].col;
+					int end = start + slots[slot_index].col_span;
+					int mn = child->min_width;
+					int current = 0;
+					int eligible = 0;
+					int need;
+					int share;
+					int rem;
+
+					if (end > n_tracks) end = n_tracks;
+					if (layout_dim_is_auto_or_bad(mn) || mn < 0 ||
+							mn > LAYOUT_SAFE_MAX) mn = 0;
+					for (j = start; j < end; j++) {
+						current += min_track[j];
+						if (j > start) current += col_gap;
+						if (auto_track[j]) eligible++;
+					}
+					need = mn - current;
+					if (need <= 0 || eligible == 0) continue;
+					share = need / eligible;
+					rem = need % eligible;
+					for (j = start; j < end; j++) {
+						if (!auto_track[j]) continue;
+						min_track[j] += share;
+						if (rem-- > 0) min_track[j]++;
+					}
+					if (end - start > 1) span_count++;
+				}
+
+				/* Then grow toward max-content with the same resolved slots. */
+				for (j = 0; j < n_tracks; j++)
+					max_track[j] = min_track[j];
+				child = grid->children;
+				for (slot_index = 0; child != NULL &&
+						slot_index < n_children;
+						slot_index++, child = child->next) {
+					int start = slots[slot_index].col;
+					int end = start + slots[slot_index].col_span;
+					int mx = child->max_width;
+					int current = 0;
+					int eligible = 0;
+					int need;
+					int share;
+					int rem;
+
+					if (end > n_tracks) end = n_tracks;
+					if (layout_dim_is_auto_or_bad(mx) || mx < 0 ||
+							mx > LAYOUT_SAFE_MAX) mx = 0;
+					for (j = start; j < end; j++) {
+						current += max_track[j];
+						if (j > start) current += col_gap;
+						if (auto_track[j]) eligible++;
+					}
+					need = mx - current;
+					if (need <= 0 || eligible == 0) continue;
+					share = need / eligible;
+					rem = need % eligible;
+					for (j = start; j < end; j++) {
+						if (!auto_track[j]) continue;
+						max_track[j] += share;
+						if (rem-- > 0) max_track[j]++;
+					}
+				}
+
+				for (j = 0; j < n_tracks; j++)
+					track_widths[j] = max_track[j];
+				used = col_gap * (n_tracks - 1);
+				for (j = 0; j < n_tracks; j++)
+					used += track_widths[j];
+				free_space = container_width - used;
+				if (free_space > 0 && auto_count > 0) {
+					int share = free_space / auto_count;
+					int rem = free_space % auto_count;
+					for (j = 0; j < n_tracks; j++) {
+						if (!auto_track[j]) continue;
+						track_widths[j] += share;
+						if (rem-- > 0) track_widths[j]++;
+					}
+				}
+				used = 0;
+				for (j = 0; j < n_tracks; j++) {
+					track_x[j] = used;
+					used += track_widths[j] + col_gap;
+				}
+				macsurf_debug_log_writef(
+					"LIFE fixes1213 gridauto placed tracks=%d spans=%d",
+					auto_count, span_count);
+			}
+
+			/* --- Pass 1b: layout each child into its cell width. */
 		child = grid->children;
 		slot_index = 0;
 		while (child != NULL && slot_index < n_children) {
@@ -1393,10 +1631,8 @@ static bool layout_grid_inner(struct box *grid, int available_width,
 		 * fixes178d: honour align-items on the grid container and
 		 * align-self per child (cross-axis = vertical). V1 supports
 		 * stretch (default - no offset), flex-start, flex-end,
-		 * center, baseline (treated as flex-start). justify-* is not
-		 * shipped in V1 because libcss in this vintage does not
-		 * expose justify-items / justify-self accessors (would
-		 * require new libcss properties, which is the trap zone). */
+		 * center, baseline (treated as flex-start). justify-items and
+		 * justify-self handle the inline axis. */
 		{
 			uint8_t grid_align_items =
 				CSS_ALIGN_ITEMS_STRETCH;
@@ -1435,22 +1671,24 @@ static bool layout_grid_inner(struct box *grid, int available_width,
 				 * is uncommon). */
 				{
 					uint8_t grid_ji =
-						CSS_JUSTIFY_ITEMS_STRETCH;
-					if (grid->style != NULL)
-						grid_ji =
-						  css_computed_justify_items(
-							grid->style);
+						layout_grid_justify_effective(
+							grid, child);
+					int cell_w = has_tracks ?
+						track_widths[slot_col] :
+						col_width;
+					int outer_w = child->width +
+					  lh__delta_outer_width(child);
 					if (grid_ji == CSS_JUSTIFY_ITEMS_CENTER) {
-						int cell_w = has_tracks ?
-							track_widths[slot_col] :
-							col_width;
-						int outer_w = child->width +
-						  lh__delta_outer_width(child);
 						if (cell_w > outer_w) {
 							child->x = x_pos +
 							  (cell_w - outer_w) / 2;
 						}
 					}
+					layout_grid_log_justify("place",
+							grid, child, grid_ji,
+							cell_w, child->width,
+							outer_w, x_pos,
+							child->x);
 				}
 
 				if (slot_row < 0 ||

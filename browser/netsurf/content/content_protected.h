@@ -330,6 +330,13 @@ struct content {
 		struct textsearch_context *context;
 	} textsearch;
 };
+/* MacSurf Trace: NO nav_id field here on purpose -- struct content is the base
+ * of ~15 content subtypes (html_content, nscss_content, every image_content,
+ * ...), so appending a field shifts every subtype's layout and any TU that
+ * misses the rebuild reads its own fields at the wrong offset (observed:
+ * html_content->base_url off by 4 -> nsurl_join near-NULL crash). content's
+ * navigation is derived from its llcache handle instead -- see
+ * content_get_nav_id(). */
 
 extern const char * const content_type_name[];
 extern const char * const content_status_name[];
@@ -688,6 +695,9 @@ const struct llcache_handle *content_get_llcache_handle(struct content *c);
  * \return Pointer to URL, or NULL if not found.
  */
 struct nsurl *content_get_url(struct content *c);
+
+/** MacSurf Trace: navigation that created this content (0 == unattributed). */
+unsigned long content_get_nav_id(struct content *c);
 
 /**
  * Clone a content object in its current state.

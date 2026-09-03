@@ -43,10 +43,34 @@ typedef struct css_style {
 	uint32_t used;		      /**< number of code entries used */
 	uint32_t allocated;	      /**< number of allocated code entries */
 	struct css_stylesheet *sheet; /**< containing sheet */
-	struct css_deferred_decl *deferred; /**< Declarations deferred until
-					* select time because they reference
-					* var(). NULL when the style has no
-					* var() dependencies. */
+	struct css_deferred_decl *deferred; /**< Declarations held until
+					* select time. Two kinds share this
+					* list, told apart by whether the
+					* property name starts with "--":
+					*
+					*  - a "--name" entry is a CUSTOM
+					*    PROPERTY DEFINITION made by this
+					*    rule (fixes1269);
+					*  - anything else is an ordinary
+					*    declaration whose value
+					*    references var().
+					*
+					* fixes1269 (#167): definitions used to
+					* have their own css_style field. That
+					* grew sizeof(css_style) from 20 to 24
+					* bytes, which every translation unit
+					* allocating or copying a css_style has
+					* to agree on; where one did not, the
+					* new field was read past the end of
+					* the allocation and came back as
+					* whatever stylesheet text sat next to
+					* it in the heap - a garbage pointer
+					* dereferenced on the first cascade of
+					* any page, including pages with no
+					* custom properties at all. Reusing
+					* this list needs no size change, and
+					* it already has the create / merge /
+					* destroy semantics definitions want. */
 } css_style;
 
 typedef enum css_selector_type {

@@ -48,6 +48,7 @@ DIR_SOURCES :=				\
 	cursor.c			\
 	elevation.c			\
 	fill_opacity.c			\
+	p_fill.c			\
 	flex.c				\
 	flex_flow.c			\
 	font.c				\

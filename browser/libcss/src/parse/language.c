@@ -19,6 +19,12 @@
 #include "parse/parse.h"
 #include "parse/propstrings.h"
 #include "parse/custom_properties.h"
+
+/* fixes1268a (#167) - defined below, but used by the declaration-block
+ * custom-property path far earlier in this file. */
+static css_error css__style_add_custom_property_to_rule(css_language *c,
+		css_rule *rule, lwc_string *name,
+		css_cp_token *tokens, uint32_t n);
 #include "parse/properties/properties.h"
 #include "parse/properties/utils.h"
 
@@ -853,6 +859,35 @@ css_error handleDeclaration(css_language *c, const parserutils_vector *vector)
 				return error;
 
 			name_ref = lwc_string_ref(t1->idata);
+
+			/* fixes1268a (#167) - dual-write: rule-scoped copy
+			 * first (keeps the selector/@media context), then
+			 * the legacy sheet-global one that resolution still
+			 * reads until 1268b/1268e. */
+			{
+				css_cp_token *rule_tokens = NULL;
+				uint32_t rule_n = 0;
+
+				error = css__cp_tokens_from_vector(vector,
+						value_start, ctx,
+						&rule_tokens, &rule_n);
+				if (error != CSS_OK) {
+					css__cp_tokens_destroy(cp_tokens, cp_n);
+					lwc_string_unref(name_ref);
+					return error;
+				}
+
+				error = css__style_add_custom_property_to_rule(
+						c, rule,
+						lwc_string_ref(t1->idata),
+						rule_tokens, rule_n);
+				if (error != CSS_OK) {
+					css__cp_tokens_destroy(cp_tokens, cp_n);
+					lwc_string_unref(name_ref);
+					return error;
+				}
+			}
+
 			return css__sheet_add_custom_property(c->sheet,
 					name_ref, cp_tokens, cp_n);
 		}
@@ -1937,6 +1972,61 @@ css_error parseSelectorList(css_language *c, const parserutils_vector *vector,
 	return CSS_OK;
 }
 
+/* fixes1269 (#167) - attach one "--name" definition to the rule that wrote
+ * it, as an entry on the rule style's DEFERRED list.
+ *
+ * fixes1268a gave css_style its own custom_props field for this. That grew
+ * sizeof(css_style), which every translation unit that allocates or copies
+ * one must agree on; where any did not, the field was read past the end of
+ * the allocation and returned adjacent stylesheet text as a pointer, which
+ * the first cascade then dereferenced - crashing on pages containing no
+ * custom properties whatsoever. The deferred list already exists, already
+ * has the create / merge / destroy semantics a definition needs, and costs
+ * no size change. Definitions are told from var() consumers by the leading
+ * "--" on the property name, which no ordinary property can have.
+ *
+ * Takes ownership of name and tokens; releases them on failure. */
+static css_error css__style_add_custom_property_to_rule(css_language *c,
+		css_rule *rule, lwc_string *name,
+		css_cp_token *tokens, uint32_t n)
+{
+	css_style *style = NULL;
+	css_deferred_decl *dd = NULL;
+	css_error error;
+
+	/* css__stylesheet_rule_append_style asserts SELECTOR or PAGE; with
+	 * assertions compiled out it would cast a css_rule_font_face to a
+	 * css_rule_selector and overwrite its font_face pointer. A "--name"
+	 * inside @font-face is meaningless anyway, so drop it rather than
+	 * corrupt the rule. */
+	if (rule == NULL || (rule->type != CSS_RULE_SELECTOR &&
+			rule->type != CSS_RULE_PAGE)) {
+		css__cp_tokens_destroy(tokens, n);
+		lwc_string_unref(name);
+		return CSS_OK;
+	}
+
+	error = css__deferred_decl_create(name, tokens, n, false, &dd);
+	if (error != CSS_OK)
+		return error;   /* callee released name/tokens */
+
+	error = css__stylesheet_style_create(c->sheet, &style);
+	if (error != CSS_OK) {
+		css__deferred_decl_list_destroy(dd);
+		return error;
+	}
+
+	css__deferred_decl_attach(style, dd);
+
+	error = css__stylesheet_rule_append_style(c->sheet, rule, style);
+	if (error != CSS_OK) {
+		css__stylesheet_style_destroy(style);
+		return error;
+	}
+
+	return CSS_OK;
+}
+
 /******************************************************************************
  * Property parsing functions						      *
  ******************************************************************************/
@@ -1973,6 +2063,36 @@ css_error parseProperty(css_language *c, const css_token *property,
 			return error;
 
 		name_ref = lwc_string_ref(property->idata);
+
+		/* fixes1268a (#167) - ALSO attach the definition to the
+		 * owning rule, so the selector and @media scope it was
+		 * written under survive to select time. The sheet-global
+		 * copy below is still what resolution reads today; 1268b
+		 * switches over and 1268e deletes it. Tokens are re-read
+		 * from the vector rather than shared, because both stores
+		 * take ownership of what they are handed. */
+		{
+			css_cp_token *rule_tokens = NULL;
+			uint32_t rule_n = 0;
+
+			error = css__cp_tokens_from_vector(vector, start_ctx,
+					*ctx, &rule_tokens, &rule_n);
+			if (error != CSS_OK) {
+				css__cp_tokens_destroy(cp_tokens, cp_n);
+				lwc_string_unref(name_ref);
+				return error;
+			}
+
+			error = css__style_add_custom_property_to_rule(c, rule,
+					lwc_string_ref(property->idata),
+					rule_tokens, rule_n);
+			if (error != CSS_OK) {
+				css__cp_tokens_destroy(cp_tokens, cp_n);
+				lwc_string_unref(name_ref);
+				return error;
+			}
+		}
+
 		return css__sheet_add_custom_property(c->sheet, name_ref,
 				cp_tokens, cp_n);
 	}

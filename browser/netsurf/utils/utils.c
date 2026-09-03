@@ -573,3 +573,22 @@ void regfree(regex_t *preg)
 }
 
 #endif
+
+/* fixes1268c (#167) - see utils.h. Deliberately uses real sprintf, not
+ * macsurf_debug_log_writef: that formatter supports only %d/%ld/%p/%s/%%,
+ * and an unrecognised %X consumes no va_arg, so a later %s in the same
+ * call reads the wrong slot and dereferences an integer as a pointer.
+ * Format here, pass the result as %s. */
+void ns_color_hex(char *buf, unsigned long col)
+{
+	if (buf == NULL)
+		return;
+	sprintf(buf, "#%06lX", col & 0x00FFFFFFUL);
+}
+
+void ns_color_hex_alpha(char *buf, unsigned long col)
+{
+	if (buf == NULL)
+		return;
+	sprintf(buf, "#%08lX", col & 0xFFFFFFFFUL);
+}

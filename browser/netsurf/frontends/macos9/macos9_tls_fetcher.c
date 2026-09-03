@@ -32,6 +32,7 @@
 #include "macos9_blocklist.h"
 #include "macos9_gzip.h"	/* fixes965 - streaming Content-Encoding: gzip */	/* fixes856 (#285) - tracker/ad blocklist */
 #include "macsurf_debug.h"
+#include "macsurf_diag.h"
 #include "macsurf_osver.h"	/* fixes936 (OS X tier 1) - macsurf_os_is_osx() */
 
 #include <string.h>
@@ -184,6 +185,15 @@ struct macos9_https_ctx {
 	int              chunked;
 	long             content_length;
 	long             body_bytes;
+	/* Facebook main-document fingerprint. Updated only with bytes delivered
+	 * to NetSurf, so gzip responses are measured after decompression. */
+	UInt32           doc_fnv32;
+	long             doc_html_len;
+	long             doc_data_sjs;
+	int              doc_data_sjs_match;
+	char             req_cookie_names[160];
+	long             req_cookie_len;
+	UInt32           req_cookie_fnv32;
 
 	OSTLSChunkDecoder chunk;
 
@@ -284,9 +294,21 @@ struct macos9_https_ctx {
 
 static struct macos9_https_ctx https_slots[MAX_HTTPS_F];
 
+/* fixes1253 (#167) - cumulative, session-lifetime count of ops.setup()
+ * calls that found all MAX_HTTPS_F slots occupied and returned NULL
+ * (never reset per navigation, same convention as macsurf_qjs.c's other
+ * session-cumulative counters - read as a delta between two LIFE lines). */
+long g_https_setup_fail_total = 0;
+
 /* fixes374 (#167) - forward decl; defined near build_request. Used by the
  * disk-cache lookup/store paths to bypass caching for Facebook hosts. */
 static int host_is_fb_asset(const char *host);
+/* fixes1297 (#167, Track B) - forward decls; defined alongside
+ * host_is_fb_asset above. host_is_fb_dynamic() is the narrower "never
+ * cache" exclusion (facebook.com/fbsbx.com only); host_is_fb_asset() stays
+ * the blanket predicate for the non-caching call sites. */
+static int host_is_fb_dynamic(const char *host);
+static int macos9_cache_response_persistable(const struct macos9_https_ctx *c);
 
 /* ---------- auto-upgrade fallback (fixes249b) ----------
  * When the user types "example.com" with no scheme, window.c prepends
@@ -733,8 +755,23 @@ static void dead_host_add(const char *key)
 	 * Transient timeouts on healthy origins (mactrove during a long
 	 * browsing session, etc.) must not poison future requests. */
 	if (success_host_check(key)) {
+		/* fixes1250 (#167) - was "https: ..." with no FAIL/ERROR/LIFE
+		 * keyword, so it never survived the release build's failures-
+		 * only gate unless MACSURF_SSL_LOG happened to be defined (it
+		 * is not in a shipping build). The sibling FAST-FAIL line a few
+		 * hundred lines down survives BY ACCIDENT (its text contains
+		 * "FAIL" as a substring of "FAST-FAIL"); this one and dead-host
+		 * ADD below had no such luck and were dark for this engine's
+		 * whole history. Promoted while directly answering whether the
+		 * tracker/dead-host mechanism could be involved in a real
+		 * investigation (it was not, this session -- FAST-FAIL never
+		 * appeared in any hardware log pulled tonight -- but that
+		 * absence is only trustworthy evidence because at least ONE of
+		 * the three related lines was already guaranteed visible;
+		 * these two deserved the same guarantee on their own merits,
+		 * not by accident of wording). */
 		macsurf_debug_log_writef(
-			"https: dead-host SKIP (previously succeeded) %s",
+			"LIFE https: dead-host SKIP (previously succeeded) %s",
 			key);
 		return;
 	}
@@ -752,7 +789,8 @@ static void dead_host_add(const char *key)
 	strncpy(dead_hosts[dead_hosts_count], key, HTTPS_POOL_KEY_LEN - 1);
 	dead_hosts[dead_hosts_count][HTTPS_POOL_KEY_LEN - 1] = '\0';
 	dead_hosts_count++;
-	macsurf_debug_log_writef("https: dead-host ADD %s count=%d",
+	/* fixes1250 (#167) - same promotion as dead-host SKIP above. */
+	macsurf_debug_log_writef("LIFE https: dead-host ADD %s count=%d",
 		key, dead_hosts_count);
 
 	/* fixes705 - persistence to disk REMOVED. The list is now purely
@@ -1006,6 +1044,46 @@ static unsigned long now_ticks(void)
 #endif
 }
 
+static UInt32 fingerprint_update(UInt32 hash, const char *data, long len)
+{
+	long i;
+	for (i = 0; i < len; i++) {
+		hash ^= (UInt32)(unsigned char)data[i];
+		hash *= (UInt32)16777619UL;
+	}
+	return hash;
+}
+
+static void hctx_fingerprint_reset(struct macos9_https_ctx *c)
+{
+	c->doc_fnv32 = (UInt32)2166136261UL;
+	c->doc_html_len = 0;
+	c->doc_data_sjs = 0;
+	c->doc_data_sjs_match = 0;
+}
+
+static void hctx_fingerprint_data(struct macos9_https_ctx *c,
+		const char *data, long len)
+{
+	static const char needle[] = "data-sjs";
+	long i;
+
+	c->doc_fnv32 = fingerprint_update(c->doc_fnv32, data, len);
+	c->doc_html_len += len;
+	for (i = 0; i < len; i++) {
+		unsigned char ch = (unsigned char)data[i];
+		if (ch == (unsigned char)needle[c->doc_data_sjs_match]) {
+			c->doc_data_sjs_match++;
+			if (c->doc_data_sjs_match == 8) {
+				c->doc_data_sjs++;
+				c->doc_data_sjs_match = 0;
+			}
+		} else {
+			c->doc_data_sjs_match = (ch == (unsigned char)needle[0]) ? 1 : 0;
+		}
+	}
+}
+
 /* fixes965 - forward declarations: the header-parse loop creates the gzip
  * decoder well before feed_body and its helpers are defined. */
 static void hctx_gz_emit(void *cbctx, const char *data, long len);
@@ -1086,6 +1164,7 @@ static void hctx_reset_for_retry(struct macos9_https_ctx *c)
 	c->post_body_sent = 0;
 	c->status = 0;
 	c->body_bytes = 0;
+	hctx_fingerprint_reset(c);
 	c->content_length = -1;
 	c->chunked = 0;
 	c->mime[0] = 0;
@@ -1312,8 +1391,12 @@ static void hctx_fail(struct macos9_https_ctx *c, const char *why)
 	 *  - cipher suite if handshake completed (0 if not)
 	 *  - pump_calls + ot_recv_bytes to see how far we got
 	 */
-	macsurf_debug_log_writef("https: FAIL state=%d status=%d body=%ld why=%s",
-		c->state, c->status, c->body_bytes, why ? why : "(null)");
+	macsurf_debug_log_writef(
+		"https: FAIL state=%d status=%d body=%ld nav=%ld req=%ld why=%s",
+		c->state, c->status, c->body_bytes,
+		(long) fetch_get_nav_id(c->parent),
+		(long) fetch_get_request_id(c->parent),
+		why ? why : "(null)");
 	macsurf_debug_log_writef("  FAIL host=%s port=%d path=%s",
 		c->host[0] ? c->host : "(unset)",
 		(int)c->port,
@@ -1586,6 +1669,9 @@ static void hctx_fail(struct macos9_https_ctx *c, const char *why)
 					(void)fetch_set_http_code(c->parent, 301);
 					rm.type = FETCH_REDIRECT;
 					rm.data.redirect = c->redirect_url;
+					macsurf_diag_request_record(c->parent,
+						MS_REQ_REDIRECT, 301,
+						MS_SCHEME_HTTPS, 0, 0);
 					fetch_send_callback(&rm, c->parent);
 					parent_save = c->parent;
 					c->parent = NULL; /* fixes447: null before OT
@@ -1655,6 +1741,8 @@ static void hctx_fail(struct macos9_https_ctx *c, const char *why)
 
 	msg.type = FETCH_ERROR;
 	msg.data.error = why ? why : "https: fetch failed";
+	macsurf_diag_request_record(c->parent, MS_REQ_FAIL, c->status,
+		MS_SCHEME_HTTPS, (unsigned long) c->body_bytes, 0);
 	fetch_send_callback(&msg, c->parent);
 
 	p = c->parent;
@@ -1772,14 +1860,30 @@ static void hctx_finish(struct macos9_https_ctx *c)
 			hctx_fail(c, "https: gzip stream incomplete");
 			return;
 		}
-		macsurf_debug_log_writef("LIFE gzip ok host=%s in=%ld out=%ld",
+		macsurf_debug_log_writef(
+			"LIFE gzip ok host=%s in=%ld out=%ld nav=%ld req=%ld",
 			c->host[0] ? c->host : "(unset)",
 			macos9_gunzip_total_in(c->gz),
-			macos9_gunzip_total_out(c->gz));
+			macos9_gunzip_total_out(c->gz),
+			(long) fetch_get_nav_id(c->parent),
+			(long) fetch_get_request_id(c->parent));
 	}
 
 	macsurf_debug_log_writef("https: done body=%ld status=%d",
 		c->body_bytes, c->status);
+	/* A positive raw data-sjs count identifies Facebook's main HTML while
+	 * excluding its many JS/CSS/image fetches. Keep this sanitized: no body,
+	 * cookie values, or Set-Cookie values are emitted. */
+	if (c->doc_data_sjs > 0) {
+		macsurf_debug_log_writef(
+			"LIFE FBDOC final=https://%s%s status=%d html_len=%ld fnv32=%ld raw_sjs=%ld",
+			c->host, c->path, c->status, c->doc_html_len,
+			(long)c->doc_fnv32, c->doc_data_sjs);
+		macsurf_debug_log_writef(
+			"LIFE FBDOCMETA mime=%s clen=%ld chunked=%d gzip=%d cache=%d",
+			c->mime[0] ? c->mime : "(unset)", c->content_length,
+			c->chunked, c->gz != NULL, c->state == HS_CACHEHIT);
+	}
 
 	/* fixes936 (OS X tier 1) - ONE Open Transport health line per session,
 	 * taken at the first HTTPS fetch that actually COMPLETES.
@@ -1835,6 +1939,8 @@ static void hctx_finish(struct macos9_https_ctx *c)
 
 	c->state = HS_DONE;
 	msg.type = FETCH_FINISHED;
+	macsurf_diag_request_record(c->parent, MS_REQ_DONE, c->status,
+		MS_SCHEME_HTTPS, (unsigned long) c->body_bytes, 0);
 	fetch_send_callback(&msg, c->parent);
 
 	/* fixes244 - mark host as "ever-succeeded" so future timeouts on
@@ -1915,8 +2021,9 @@ static int parse_headers(struct macos9_https_ctx *c, long *body_off)
 	 * A login POST that re-shows the form (status 200) vs a real success
 	 * (302 -> Set-Cookie c_user/xs) is the whole diagnosis for "wrong
 	 * password". */
-	if (host_is_fb_asset(c->host)) {
-		macsurf_debug_log_writef("WORK fbresp status=%d host=%s%s",
+	if (host_is_fb_asset(c->host) &&
+	    (c->post_body != NULL || fetch_get_verifiable(c->parent))) {
+		macsurf_debug_log_writef("LIFE FBRESP status=%d host=%s%s",
 			c->status, c->host, c->path);
 	}
 	fetch_set_http_code(c->parent, c->status);
@@ -2015,9 +2122,11 @@ static int parse_headers(struct macos9_https_ctx *c, long *body_off)
 				c->redirect_url[lv] = 0;
 				/* fixes836 (#167 M1 diag) - where FB is sending us
 				 * after the login POST (checkpoint / 2FA / home). */
-				if (host_is_fb_asset(c->host)) {
+				if (host_is_fb_asset(c->host) &&
+				    (c->post_body != NULL ||
+				     fetch_get_verifiable(c->parent))) {
 					macsurf_debug_log_writef(
-						"WORK fbloc %s", c->redirect_url);
+						"LIFE FBREDIRECT %s", c->redirect_url);
 				}
 			}
 			/* fixes313b (#150) - Content-Disposition: attachment forces
@@ -2103,9 +2212,12 @@ static int parse_headers(struct macos9_https_ctx *c, long *body_off)
 						 * copy for Facebook so the login Set-Cookie
 						 * (c_user/xs = success) survives the log
 						 * gate. Name only, never the value. */
-						if (host_is_fb_asset(c->host)) {
+						if (host_is_fb_asset(c->host) &&
+						    (strcmp(nm, "c_user") == 0 ||
+						     strcmp(nm, "xs") == 0)) {
 							macsurf_debug_log_writef(
-								"WORK fbsc %s %s", nm, c->host);
+								"LIFE FBAUTHSET name=%s host=%s accepted=1",
+								nm, c->host);
 						}
 					}
 				}
@@ -2130,11 +2242,18 @@ static int parse_headers(struct macos9_https_ctx *c, long *body_off)
 		 * downloads without spamming a synced log line per image. */
 		if (force_download || c->status >= 400 || c->mime[0] == 0) {
 			macsurf_debug_log_writef(
-				"RECON MIME net host=%s path=%s mime=%s cd=%d st=%d",
+				"RECON MIME net host=%s path=%s mime=%s cd=%d st=%d nav=%ld req=%ld",
 				c->host, c->path,
 				c->mime[0] ? c->mime : "(empty)",
-				force_download, c->status);
+				force_download, c->status,
+				(long) fetch_get_nav_id(c->parent),
+				(long) fetch_get_request_id(c->parent));
 		}
+		/* fixes1319: the per-image success trace that used to live here
+		 * ("IMG MIME net") is gone - it never had "LIFE " in it, so it
+		 * was silently dropped by the release build's failures-only
+		 * filter anyway. object.c's macsurf_log_final_image() reports
+		 * every loaded image from one place, post-decode. */
 
 		/* fixes770's text/plain->text/html relabel REMOVED (#233,
 		 * fixes1137): the real textplain.c handler is wired, so a
@@ -2178,6 +2297,8 @@ static int parse_headers(struct macos9_https_ctx *c, long *body_off)
 				"LIFE 304 not-modified host=%s path=%s",
 				c->host, c->path);
 			msg.type = FETCH_NOTMODIFIED;
+			macsurf_diag_request_record(c->parent,
+				MS_REQ_NOTMODIFIED, 304, MS_SCHEME_HTTPS, 0, 0);
 			fetch_send_callback(&msg, c->parent);
 			parent_save = c->parent;
 			hctx_clear(c);
@@ -2205,6 +2326,9 @@ static int parse_headers(struct macos9_https_ctx *c, long *body_off)
 		struct fetch *parent_save;
 		msg.type = FETCH_REDIRECT;
 		msg.data.redirect = c->redirect_url;
+		macsurf_diag_request_record(c->parent, MS_REQ_REDIRECT,
+			c->status, MS_SCHEME_HTTPS,
+			(unsigned long) c->body_bytes, 0);
 		fetch_send_callback(&msg, c->parent);
 		/* fixes368a (#167) - log the redirect TARGET, not just "redirect".
 		 * The Facebook login chain is GET → POST → 302 → save-device →
@@ -2229,10 +2353,17 @@ static int parse_headers(struct macos9_https_ctx *c, long *body_off)
 	 * served STALE pages with dead lsd/jazoest CSRF tokens AND meant the
 	 * fresh Set-Cookie (datr/c_user/xs, device-trust) was never seen -
 	 * so the login looped and 2FA was demanded every time. Always go to
-	 * network for FB so tokens are fresh and cookies are captured. */
+	 * network for FB so tokens are fresh and cookies are captured.
+	 * fixes1297 (#167, Track B) - narrowed from host_is_fb_asset() (all
+	 * four FB-family hosts) to host_is_fb_dynamic() (facebook.com/
+	 * fbsbx.com only): fbcdn.net/cdninstagram.com serve version-hashed,
+	 * immutable static assets with none of the stale-CSRF/missed-cookie
+	 * risk above, so they may now participate in caching -- subject to
+	 * macos9_cache_response_persistable()'s own response-level checks
+	 * (no-store, private, Vary), not a blanket allow. */
 	if (c->post_body == NULL &&
-	    !host_is_fb_asset(c->host) &&
-	    macos9_cache_mime_eligible(c->status, c->mime)) {
+	    !host_is_fb_dynamic(c->host) &&
+	    macos9_cache_response_persistable(c)) {
 		c->cache_eligible = 1;
 		/* fixes987 - open the cache file now, so the body can be
 		 * written through as it arrives. */
@@ -2276,6 +2407,12 @@ static void hctx_deliver(struct macos9_https_ctx *c, const char *data, long len)
 {
 	fetch_msg msg;
 	if (len <= 0) return;
+	/* Keep the bytewise diagnostic off the hot path for scripts, images and
+	 * other large subresources. Facebook's main response is dynamic HTML. */
+	if (host_is_fb_dynamic(c->host) &&
+	    strncasecmp(c->mime, "text/html", 9) == 0) {
+		hctx_fingerprint_data(c, data, len);
+	}
 	msg.type = FETCH_DATA;
 	msg.data.header_or_data.buf = (const uint8_t *)data;
 	msg.data.header_or_data.len = (size_t)len;
@@ -2485,24 +2622,134 @@ static void cookie_names_only(const char *src, char *dst, int dstcap)
  * origin keeps keep-alive + connection pooling. Covers facebook.com plus the
  * asset/CDN domains the login surface pulls (fbcdn.net, fbsbx.com,
  * cdninstagram.com). */
-static int host_is_fb_asset(const char *host)
+static int host_matches_suffix_list(const char *host,
+		const char *const *suffixes, size_t n)
 {
-	static const char *const fb_suffixes[] = {
-		"facebook.com", "fbcdn.net", "fbsbx.com", "cdninstagram.com"
-	};
-	size_t hl, n, i, sl;
+	size_t hl, i, sl;
 	if (host == NULL) return 0;
 	hl = strlen(host);
-	n = sizeof(fb_suffixes) / sizeof(fb_suffixes[0]);
 	for (i = 0; i < n; i++) {
-		sl = strlen(fb_suffixes[i]);
+		sl = strlen(suffixes[i]);
 		if (hl >= sl &&
-		    strncasecmp(host + hl - sl, fb_suffixes[i], sl) == 0 &&
+		    strncasecmp(host + hl - sl, suffixes[i], sl) == 0 &&
 		    (hl == sl || host[hl - sl - 1] == '.')) {
 			return 1;
 		}
 	}
 	return 0;
+}
+
+static int host_is_fb_asset(const char *host)
+{
+	static const char *const fb_suffixes[] = {
+		"facebook.com", "fbcdn.net", "fbsbx.com", "cdninstagram.com"
+	};
+	return host_matches_suffix_list(host, fb_suffixes,
+			sizeof(fb_suffixes) / sizeof(fb_suffixes[0]));
+}
+
+/* fixes1297 (#167, Track B) - the NARROWER exclusion, used only at the two
+ * caching decision points (write-eligibility and serve-from-cache lookup),
+ * never at the connection/POST/concurrency-shaping call sites that still
+ * use host_is_fb_asset() above unchanged. fixes374's blanket exclusion was
+ * correct for login/checkpoint/session traffic (stale CSRF tokens, missed
+ * Set-Cookie) but also caught fbcdn.net's static, version-hashed asset CDN
+ * and cdninstagram.com's image CDN, which carry none of that risk. "May
+ * participate in caching" (this predicate) is not the same claim as "is
+ * cacheable" -- see macos9_cache_response_persistable() below for the
+ * response-level checks that still apply on top of this host narrowing. */
+static int host_is_fb_dynamic(const char *host)
+{
+	static const char *const fb_dynamic_suffixes[] = {
+		"facebook.com", "fbsbx.com"
+	};
+	return host_matches_suffix_list(host, fb_dynamic_suffixes,
+			sizeof(fb_dynamic_suffixes) /
+			sizeof(fb_dynamic_suffixes[0]));
+}
+
+/* fixes1297 (#167, Track B) - find the line in a CRLF-joined cache_hdrs blob
+ * (macos9_cache_capture_hdr's format, macos9_disk_cache.c) whose name
+ * matches `prefix` case-insensitively. Returns NULL if absent. */
+static const char *macsurf__cache_hdrs_find(const char *hdrs,
+		const char *prefix)
+{
+	const char *p = hdrs;
+	size_t plen = strlen(prefix);
+	if (hdrs == NULL) return NULL;
+	while (*p != '\0') {
+		if (strncasecmp(p, prefix, plen) == 0) return p;
+		p = strstr(p, "\r\n");
+		if (p == NULL) break;
+		p += 2;
+	}
+	return NULL;
+}
+
+/* True if the named header line exists and contains `needle` (case-
+ * insensitive) anywhere before its terminating CRLF. */
+static int macsurf__cache_hdrs_line_has(const char *hdrs, const char *prefix,
+		const char *needle)
+{
+	const char *line = macsurf__cache_hdrs_find(hdrs, prefix);
+	const char *eol;
+	size_t linelen;
+	char buf[256];
+	if (line == NULL) return 0;
+	eol = strstr(line, "\r\n");
+	linelen = (eol != NULL) ? (size_t)(eol - line) : strlen(line);
+	if (linelen >= sizeof(buf)) linelen = sizeof(buf) - 1;
+	memcpy(buf, line, linelen);
+	buf[linelen] = '\0';
+	{
+		size_t i;
+		size_t nlen = strlen(needle);
+		if (nlen == 0 || linelen < nlen) return 0;
+		for (i = 0; i + nlen <= linelen; i++) {
+			if (strncasecmp(buf + i, needle, nlen) == 0) return 1;
+		}
+	}
+	return 0;
+}
+
+/* True if the named header line exists and has any non-whitespace content
+ * after its "name:" prefix (used for Vary: any nonempty value disqualifies,
+ * per the #167 backlog plan -- MacSurf's disk cache keys entries by URL
+ * alone, so it can't safely honour a Vary it can't index against). */
+static int macsurf__cache_hdrs_line_nonempty(const char *hdrs,
+		const char *prefix)
+{
+	const char *line = macsurf__cache_hdrs_find(hdrs, prefix);
+	const char *v;
+	size_t plen = strlen(prefix);
+	if (line == NULL) return 0;
+	v = line + plen;
+	while (*v == ' ' || *v == '\t') v++;
+	return (*v != '\0' && *v != '\r' && *v != '\n');
+}
+
+/* fixes1297 (#167, Track B) - the single response-level persistability
+ * gate. Consolidates status/MIME eligibility (existing
+ * macos9_cache_mime_eligible) with the two new checks this track adds
+ * (no Cache-Control: no-store, private treated conservatively as
+ * non-persistable, no meaningful Vary) into one decision point, called
+ * once right before macos9_cache_stream_begin(), instead of growing the
+ * inline conjunction at the call site with another && every time a new
+ * exclusion is needed. */
+static int macos9_cache_response_persistable(const struct macos9_https_ctx *c)
+{
+	if (!macos9_cache_mime_eligible(c->status, c->mime)) return 0;
+	if (c->cache_hdrs[0] != '\0') {
+		if (macsurf__cache_hdrs_line_has(c->cache_hdrs,
+				"cache-control:", "no-store"))
+			return 0;
+		if (macsurf__cache_hdrs_line_has(c->cache_hdrs,
+				"cache-control:", "private"))
+			return 0;
+		if (macsurf__cache_hdrs_line_nonempty(c->cache_hdrs, "vary:"))
+			return 0;
+	}
+	return 1;
 }
 
 /* fixes378 (#167) - strip any persisted 'noscript=...' token out of an
@@ -2593,6 +2840,7 @@ static int build_request(struct macos9_https_ctx *c)
 	 * wired; this gates reading it into the request. */
 	cookie_str = (nsoption_bool(accept_cookies) && c->url != NULL)
 		? urldb_get_cookie(c->url, true) : NULL;
+	c->req_cookie_names[0] = '\0';
 	if (cookie_str != NULL) {
 		/* fixes378 - drop any stuck noscript=1 before it reaches FB. */
 		cookie_strip_noscript(cookie_str);
@@ -2601,6 +2849,9 @@ static int build_request(struct macos9_https_ctx *c)
 			char cknames[256];
 			cookie_names_only(cookie_str, cknames,
 				(int)sizeof cknames);
+			strncpy(c->req_cookie_names, cknames,
+				sizeof c->req_cookie_names - 1);
+			c->req_cookie_names[sizeof c->req_cookie_names - 1] = '\0';
 			macsurf_debug_log_writef("https: cookies sent: %s",
 				cknames);
 			/* fixes838 (#167 diag) - WORK-gated copy for Facebook so
@@ -2614,7 +2865,11 @@ static int build_request(struct macos9_https_ctx *c)
 		}
 	}
 	macos9_build_cookie_header(cookie_hdr, sizeof cookie_hdr, cookie_str);
+	c->req_cookie_len = (long)strlen(cookie_hdr);
+	c->req_cookie_fnv32 = fingerprint_update((UInt32)2166136261UL,
+		cookie_hdr, c->req_cookie_len);
 	if (cookie_str != NULL) free(cookie_str);
+	verifiable = fetch_get_verifiable(c->parent);
 	/* preferences: Do Not Track - the core option exists but only
 	 * curl.c (not built) consumed it; this fetcher builds its own
 	 * request headers, so emit DNT: 1 here (rides the cookie slot,
@@ -2636,6 +2891,17 @@ static int build_request(struct macos9_https_ctx *c)
 		(long)strlen(cookie_hdr),
 		(long)((c->post_body != NULL) ? (long)c->post_body_len : 0L),
 		ua);
+	if (host_is_fb_asset(c->host) && verifiable) {
+		macsurf_debug_log_writef("LIFE FBDOCREQ url=https://%s%s ua=%s",
+			c->host, c->path, ua);
+		macsurf_debug_log_writef(
+			"LIFE FBDOCREQ accept=%s lang=en-US,en;q=0.5",
+			macos9_accept_for_path(c->path));
+		macsurf_debug_log_writef(
+			"LIFE FBDOCREQ cookie_names=%s cookie_len=%ld cookie_fnv32=%ld",
+			c->req_cookie_names[0] ? c->req_cookie_names : "(none)",
+			c->req_cookie_len, (long)c->req_cookie_fnv32);
+	}
 	/* fixes835 (#167 Facebook M1) - synthesize the Sec-Fetch request
 	 * metadata a real browser sends (FB returns HTTP 400 to a modern UA
 	 * that omits these), keyed on request kind so the claimed identity is
@@ -2647,7 +2913,6 @@ static int build_request(struct macos9_https_ctx *c)
 	 * Sec-Fetch set (future M3 XHR) wins. Ships globally (browser-standard).
 	 * This is the https fetcher, so Origin is always https and c->host has
 	 * no port (FB is :443). */
-	verifiable = fetch_get_verifiable(c->parent);
 	macos9_build_sec_fetch(synth, sizeof synth, verifiable,
 		(c->post_body != NULL), "https", c->host);
 	/* fixes836 (#167 M1 diag) - dump the shape of a Facebook POST (the login
@@ -2663,7 +2928,7 @@ static int build_request(struct macos9_https_ctx *c)
 		fb_body_fieldmap(c->post_body, (long)c->post_body_len,
 			fmap, sizeof fmap);
 		macsurf_debug_log_writef(
-			"WORK fbreq POST %s%s ckB=%ld pbB=%ld org=%d sf=%d ref=%d uatail=%s",
+			"LIFE FBPOST %s%s ckB=%ld pbB=%ld org=%d sf=%d ref=%d uatail=%s",
 			c->host, c->path,
 			(long)strlen(cookie_hdr), (long)c->post_body_len,
 			(int)(synth[0] != '\0'
@@ -2671,7 +2936,7 @@ static int build_request(struct macos9_https_ctx *c)
 			(int)(synth[0] != '\0'),
 			(int)macos9_hdr_has_ci(c->caller_hdrs, "referer:"),
 			(ual > 12) ? (ua + ual - 12) : ua);
-		macsurf_debug_log_writef("WORK fbbody %s", fmap);
+		macsurf_debug_log_writef("LIFE FBPOSTFIELDS %s", fmap);
 	}
 	if (c->post_body != NULL) {
 		/* fixes312 (#144) - POST. Body goes out in a second
@@ -2689,7 +2954,7 @@ static int build_request(struct macos9_https_ctx *c)
 			"POST %s HTTP/1.1\r\n"
 			"Host: %s\r\n"
 			"User-Agent: %s\r\n"
-			"Accept: text/html,application/xhtml+xml,*/*;q=0.8\r\n"
+			"Accept: %s\r\n"
 			"Accept-Language: en-US,en;q=0.5\r\n"
 			"Accept-Encoding: gzip\r\n"
 			"%s"                        /* cookie_hdr  */
@@ -2699,14 +2964,15 @@ static int build_request(struct macos9_https_ctx *c)
 			"Content-Length: %lu\r\n"
 			"Connection: keep-alive\r\n"
 			"\r\n",
-			c->path, c->host, ua, cookie_hdr, c->caller_hdrs, synth, ct,
+			c->path, c->host, ua, macos9_accept_for_path(c->path),
+			cookie_hdr, c->caller_hdrs, synth, ct,
 			(unsigned long)c->post_body_len);
 	} else {
 		rn = sprintf(c->req_buf,
 			"GET %s HTTP/1.1\r\n"
 			"Host: %s\r\n"
 			"User-Agent: %s\r\n"
-			"Accept: text/html,application/xhtml+xml,*/*;q=0.8\r\n"
+			"Accept: %s\r\n"
 			"Accept-Language: en-US,en;q=0.5\r\n"
 			"Accept-Encoding: gzip\r\n"
 			"%s"                    /* cookie_hdr  */
@@ -2714,7 +2980,8 @@ static int build_request(struct macos9_https_ctx *c)
 			"%s"                    /* synth       (fixes835) */
 			"Connection: %s\r\n"
 			"\r\n",
-			c->path, c->host, ua, cookie_hdr, c->caller_hdrs, synth, conn);
+			c->path, c->host, ua, macos9_accept_for_path(c->path),
+			cookie_hdr, c->caller_hdrs, synth, conn);
 	}
 	if (rn <= 0 || (unsigned long)rn >= sizeof c->req_buf) return -1;
 	c->req_len = (unsigned long)rn;
@@ -2751,6 +3018,28 @@ static int hdr_append(struct macos9_https_ctx *c, const char *buf, long n)
 }
 
 /* ---------- per-slot pump ---------- */
+
+/* fixes1252 (#167) - real concurrency visibility. fixes1251 raised
+ * max_fetchers_per_host 4->16 on the theory that fbcdn's cold-handshake-only
+ * fetches (host_is_fb_asset, fixes373) were starved at 4-concurrent; hardware
+ * result showed NO change in scripts executed per page (still ~18 of ~186).
+ * Before guessing further, count how many slots are ACTUALLY concurrently
+ * active for a given pool_key at the moment a new one starts, so the next
+ * round shows whether core's ops.start is really handing us more than 4 at
+ * once or something else caps it upstream. */
+static int https_active_count_for_host(const char *pool_key)
+{
+	int i, n = 0;
+	for (i = 0; i < MAX_HTTPS_F; i++) {
+		if (https_slots[i].state != HS_IDLE &&
+		    https_slots[i].state != HS_DONE &&
+		    https_slots[i].state != HS_FAIL &&
+		    strcmp(https_slots[i].pool_key, pool_key) == 0) {
+			n++;
+		}
+	}
+	return n;
+}
 
 static void hctx_poll(struct macos9_https_ctx *c)
 {
@@ -2829,12 +3118,7 @@ static void hctx_poll(struct macos9_https_ctx *c)
 		}
 
 		if (c->cache_hit_body != NULL && c->cache_hit_len > 0) {
-			msg.type = FETCH_DATA;
-			msg.data.header_or_data.buf =
-				(const uint8_t *)c->cache_hit_body;
-			msg.data.header_or_data.len =
-				(size_t)c->cache_hit_len;
-			fetch_send_callback(&msg, c->parent);
+			hctx_deliver(c, c->cache_hit_body, c->cache_hit_len);
 			c->body_bytes = c->cache_hit_len;
 		}
 
@@ -2905,8 +3189,12 @@ static void hctx_poll(struct macos9_https_ctx *c)
 		 * canonical case). Fast-fail here saves ~5s per dead host on
 		 * retries. */
 		if (dead_host_check(c->pool_key)) {
+			/* fixes1250 (#167) - already survived the release gate,
+			 * but only because "FAST-FAIL" happens to contain "FAIL"
+			 * as a substring -- not by deliberate design. Made
+			 * explicit rather than relying on that accident. */
 			macsurf_debug_log_writef(
-				"https: dead-host FAST-FAIL %s",
+				"LIFE https: dead-host FAST-FAIL %s",
 				c->pool_key);
 			/* fixes554 - mark THIS resource URL terminally failed on
 			 * the first dead-host fast-fail: render alt text once, no
@@ -2941,6 +3229,13 @@ static void hctx_poll(struct macos9_https_ctx *c)
 			c->progress_ticks = now_ticks();
 			c->state = HS_SEND_REQ;
 			MS_LOG("https: pool reuse");
+			macsurf_debug_log_writef(
+				"LIFE FETCHCONC pool host=%s active=%d cap=%ld nav=%ld req=%ld",
+				c->pool_key,
+				https_active_count_for_host(c->pool_key),
+				(long) nsoption_int(max_fetchers_per_host),
+				(long) fetch_get_nav_id(c->parent),
+				(long) fetch_get_request_id(c->parent));
 			return;
 		}
 
@@ -2961,6 +3256,13 @@ static void hctx_poll(struct macos9_https_ctx *c)
 		c->progress_ticks = now_ticks();
 		c->state = HS_TLSING;
 		MS_LOG("https: started");
+		macsurf_debug_log_writef(
+			"LIFE FETCHCONC cold host=%s active=%d cap=%ld nav=%ld req=%ld",
+			c->pool_key,
+			https_active_count_for_host(c->pool_key),
+			(long) nsoption_int(max_fetchers_per_host),
+			(long) fetch_get_nav_id(c->parent),
+			(long) fetch_get_request_id(c->parent));
 		macsurf_profile_stamp("tls-handshake-start");
 		return;
 	}
@@ -3447,11 +3749,29 @@ static void *macos9_https_setup(struct fetch *p, struct nsurl *u,
 		if (https_slots[i].state == HS_IDLE) { slot = i; break; }
 	}
 	if (slot < 0) {
+		/* fixes1253 (#167) - setup() (this function) claims a slot for
+		 * EVERY queued fetch up-front, before ops.start()'s
+		 * max_fetchers_per_host gate ever runs (fixes241's own comment
+		 * above MAX_HTTPS_F already said so). fixes1251/1252 raised and
+		 * proved out concurrency at the ops.start() layer, but a fetch
+		 * that fails HERE never reaches that layer at all - it never
+		 * queues, base.active never increments for it, and the script
+		 * census (skipped=0/timed_out=0/failed=0) has no counter for
+		 * this path because it's a full level below anything the JS
+		 * audit code can see. If Facebook's ~186 script tags are being
+		 * dropped here rather than throttled downstream, that fully
+		 * explains why raising max_fetchers_per_host moved nothing. */
+		g_https_setup_fail_total++;
 		MS_LOG("https_setup: NO FREE SLOTS");
+		macsurf_debug_log_writef(
+			"LIFE HTTPSLOTS FULL used=%d cap=%d total_fails=%ld url=%s",
+			MAX_HTTPS_F, MAX_HTTPS_F, g_https_setup_fail_total,
+			nsurl_access(u));
 		return NULL;
 	}
 	c = &https_slots[slot];
 	memset(c, 0, sizeof *c);
+	hctx_fingerprint_reset(c);
 	c->parent = p;
 	c->url = nsurl_ref(u);
 	/* fixes835 (#167 M1) - capture core's additional request headers now
@@ -3593,7 +3913,13 @@ static void *macos9_https_setup(struct fetch *p, struct nsurl *u,
 		 * fixes374 (#167) - never SERVE a cached Facebook page either:
 		 * a stale login page (dead CSRF tokens, no Set-Cookie) is what
 		 * broke login. Always hit the network for FB hosts. This also
-		 * evicts any FB pages a pre-fixes374 build already cached. */
+		 * evicts any FB pages a pre-fixes374 build already cached.
+		 * fixes1297 (#167, Track B) - narrowed to host_is_fb_dynamic()
+		 * below, same reasoning as the write-eligibility gate above:
+		 * fbcdn.net/cdninstagram.com may now be served from disk. Any
+		 * entry that made it to disk for those hosts already passed
+		 * macos9_cache_response_persistable() at write time, so nothing
+		 * extra is needed here beyond the narrower host check. */
 		/* fixes981 - a CONDITIONAL request must never be answered
 		 * from our own disk copy. Once a disk hit carries real
 		 * Cache-Control/ETag (above), llcache can decide the copy is
@@ -3605,7 +3931,7 @@ static void *macos9_https_setup(struct fetch *p, struct nsurl *u,
 		 * captured earlier in this same setup(), so it is populated. */
 		if (c->post_body == NULL &&
 		    url_str != NULL &&
-		    !host_is_fb_asset(c->host) &&
+		    !host_is_fb_dynamic(c->host) &&
 		    !macos9_hdr_has_ci(c->caller_hdrs, "if-none-match:") &&
 		    !macos9_hdr_has_ci(c->caller_hdrs, "if-modified-since:") &&
 		    /* fixes1159 (#240) - a recent POST to this origin arms a

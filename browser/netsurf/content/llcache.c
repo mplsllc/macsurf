@@ -52,6 +52,7 @@
 #include "desktop/gui_internal.h"
 
 #include "content/fetch.h"
+#include "content/macsurf_nav_seed.h"
 #include "content/backing_store.h"
 #include "content/urldb.h"
 
@@ -240,6 +241,14 @@ typedef struct {
 	bool tried_with_tls_downgrade;	/**< Whether we've tried TLS 1.2 */
 
 	bool tainted_tls;		/**< Whether the TLS transport is tainted */
+
+	/* MacSurf Trace 1a: durable navigation owner of this object's wire
+	 * fetch. Set from the llcache seed when the first request is issued;
+	 * every refetch (redirect / retry / revalidation) re-seeds fetch_start
+	 * from here, so a later navigation's revalidation is owned by THAT
+	 * navigation via its own seed, not by whatever browser is now active. */
+	unsigned long nav_id;
+	unsigned long last_request_id;	/**< Previous hop's request_id, or 0. */
 } llcache_fetch_ctx;
 
 /**
@@ -397,6 +406,25 @@ static struct llcache_s *llcache = NULL;
 
 /* fixes460: global notify reentrancy guard - see llcache_object_notify_users */
 static bool llcache_notify_in_progress = false;
+
+/* MacSurf Trace 1a: llcache-boundary seed (content/macsurf_nav_seed.h). One-shot:
+ * set immediately before llcache_handle_retrieve, consumed at its first lines. */
+static unsigned long ms_llcache_seed_nav;
+static int ms_llcache_seed_valid;
+
+void macsurf_llcache_seed_nav(unsigned long nav_id)
+{
+	ms_llcache_seed_nav = nav_id;
+	ms_llcache_seed_valid = 1;
+}
+
+unsigned long macsurf_llcache_consume_seed(void)
+{
+	unsigned long nav = ms_llcache_seed_valid ? ms_llcache_seed_nav : 0;
+	ms_llcache_seed_nav = 0;
+	ms_llcache_seed_valid = 0;
+	return nav;
+}
 
 /* forward referenced callback function */
 static void llcache_fetch_callback(const fetch_msg *msg, void *p);
@@ -1322,6 +1350,12 @@ static nserror llcache_object_refetch(llcache_object *object)
 
 	nslog_log(__FILE__, "", __LINE__, "Re-fetching %p", object);
 
+	/* MacSurf Trace 1a: seed the fetch boundary from this object's durable
+	 * navigation owner (set in llcache_object_fetch). Every hop -- initial,
+	 * redirect, retry, revalidation -- gets a fresh request_id and points
+	 * redirect_from at the previous hop. */
+	macsurf_fetch_seed(object->fetch.nav_id, object->fetch.last_request_id);
+
 	/* Kick off fetch */
 	res = fetch_start(object->url,
 			  object->fetch.referer,
@@ -1334,6 +1368,11 @@ static nserror llcache_object_refetch(llcache_object *object)
 			  object->fetch.tried_with_tls_downgrade,
 			  (const char **)headers,
 			  &object->fetch.fetch);
+
+	if (res == NSERROR_OK && object->fetch.fetch != NULL) {
+		object->fetch.last_request_id =
+			fetch_get_request_id(object->fetch.fetch);
+	}
 
 	/* Clean up cache-control headers */
 	while (--header_idx >= 0) {
@@ -1362,7 +1401,8 @@ static nserror llcache_object_refetch(llcache_object *object)
  */
 static nserror llcache_object_fetch(llcache_object *object, uint32_t flags,
 		nsurl *referer, const llcache_post_data *post,
-		uint32_t redirect_count, bool hsts_in_use)
+		uint32_t redirect_count, bool hsts_in_use,
+		unsigned long ms_nav)
 {
 	nserror error;
 	nsurl *referer_clone = NULL;
@@ -1393,6 +1433,12 @@ static nserror llcache_object_fetch(llcache_object *object, uint32_t flags,
 	object->fetch.redirect_count = redirect_count;
 	object->fetch.retries_remaining = llcache->fetch_attempts;
 	object->fetch.hsts_in_use = hsts_in_use;
+	/* MacSurf Trace 1a: this is the choke for "new wire intent" -- initial
+	 * load AND a later navigation's revalidation both land here, so the
+	 * durable owner is (re)set to whichever navigation seeded THIS retrieve.
+	 * Pure redirect/retry go straight to llcache_object_refetch and keep
+	 * the owner already stored here. */
+	object->fetch.nav_id = ms_nav;
 
 	return llcache_object_refetch(object);
 }
@@ -2263,7 +2309,8 @@ llcache_object_fetch_persistent(llcache_object *object,
 				uint32_t flags,
 				nsurl *referer,
 				const llcache_post_data *post,
-				uint32_t redirect_count)
+				uint32_t redirect_count,
+				unsigned long ms_nav)
 {
 	nserror error;
 	nsurl *referer_clone = NULL;
@@ -2299,6 +2346,10 @@ llcache_object_fetch_persistent(llcache_object *object,
 	object->fetch.referer = referer_clone;
 	object->fetch.post = post_clone;
 	object->fetch.redirect_count = redirect_count;
+	/* MacSurf Trace 1a: no wire request here (persisted cache hit), but the
+	 * content created from this object still takes its nav provenance from
+	 * object->fetch.nav_id. */
+	object->fetch.nav_id = ms_nav;
 
 	/* fetch is "finished" */
 	object->fetch.state = LLCACHE_FETCH_COMPLETE;
@@ -2326,6 +2377,7 @@ llcache_object_retrieve_from_cache(nsurl *url,
 				   const llcache_post_data *post,
 				   uint32_t redirect_count,
 				   bool hsts_in_use,
+				   unsigned long ms_nav,
 				   llcache_object **result)
 {
 	nserror error;
@@ -2360,7 +2412,7 @@ llcache_object_retrieve_from_cache(nsurl *url,
 			return error;
 
 		/* attempt to retrieve object from persistent store */
-		error = llcache_object_fetch_persistent(obj, flags, referer, post, redirect_count);
+		error = llcache_object_fetch_persistent(obj, flags, referer, post, redirect_count, ms_nav);
 		if (error == NSERROR_OK) {
 			NSLOG(llcache, DEBUG, "retrieved object from persistent store");
 
@@ -2439,7 +2491,8 @@ llcache_object_retrieve_from_cache(nsurl *url,
 
 			/* Attempt to kick-off fetch */
 			error = llcache_object_fetch(obj, flags, referer, post,
-						     redirect_count, hsts_in_use);
+						     redirect_count, hsts_in_use,
+						     ms_nav);
 			if (error != NSERROR_OK) {
 				newest->candidate_count--;
 				llcache_object_destroy(obj);
@@ -2473,7 +2526,7 @@ llcache_object_retrieve_from_cache(nsurl *url,
 	/* Attempt to kick-off fetch */
 	g_llc_miss++;   /* fixes979 ledger */
 	error = llcache_object_fetch(obj, flags, referer, post,
-			redirect_count, hsts_in_use);
+			redirect_count, hsts_in_use, ms_nav);
 	if (error != NSERROR_OK) {
 		llcache_object_destroy(obj);
 		return error;
@@ -2506,6 +2559,7 @@ llcache_object_retrieve(nsurl *url,
 			const llcache_post_data *post,
 			uint32_t redirect_count,
 			bool hsts_in_use,
+			unsigned long ms_nav,
 			llcache_object **result)
 {
 	nserror error;
@@ -2547,7 +2601,7 @@ llcache_object_retrieve(nsurl *url,
 
 		/* Attempt to kick-off fetch */
 		error = llcache_object_fetch(obj, flags, referer, post,
-				redirect_count, hsts_in_use);
+				redirect_count, hsts_in_use, ms_nav);
 		if (error != NSERROR_OK) {
 			llcache_object_destroy(obj);
 			nsurl_unref(defragmented_url);
@@ -2559,7 +2613,7 @@ llcache_object_retrieve(nsurl *url,
 	} else {
 		error = llcache_object_retrieve_from_cache(defragmented_url,
 				flags, referer, post, redirect_count,
-				hsts_in_use, &obj);
+				hsts_in_use, ms_nav, &obj);
 		if (error != NSERROR_OK) {
 			nsurl_unref(defragmented_url);
 			return error;
@@ -2869,13 +2923,15 @@ static nserror llcache_fetch_redirect(llcache_object *object,
 		return res;
 	}
 
-	/* Attempt to fetch target URL */
+	/* Attempt to fetch target URL. MacSurf Trace 1a: a redirect hop
+	 * inherits the initiating navigation from the object being redirected. */
 	res = llcache_object_retrieve(hsts_url,
 					object->fetch.flags,
 					object->fetch.referer,
 					post,
 					object->fetch.redirect_count + 1,
 					hsts_in_use,
+					object->fetch.nav_id,
 					&dest);
 
 	/* No longer require url */
@@ -4658,6 +4714,11 @@ llcache_handle_retrieve(nsurl *url,
 	llcache_object *object;
 	nsurl *hsts_url;
 	bool hsts_in_use;
+	/* MacSurf Trace 1a: consume the llcache seed at the first line, before
+	 * any early return, and carry it explicitly down the (all-static) fetch
+	 * chain to llcache_object_fetch, which stores it as the object's
+	 * durable navigation owner. */
+	unsigned long ms_nav = macsurf_llcache_consume_seed();
 
 	/* Perform HSTS transform */
 	error = llcache_hsts_transform_url(url, &hsts_url, &hsts_in_use);
@@ -4681,7 +4742,7 @@ llcache_handle_retrieve(nsurl *url,
 	/* Retrieve a suitable object from the cache,
 	 * creating a new one if needed. */
 	error = llcache_object_retrieve(hsts_url, flags, referer, post, 0,
-			hsts_in_use, &object);
+			hsts_in_use, ms_nav, &object);
 	if (error != NSERROR_OK) {
 		llcache_object_user_destroy(user);
 		nsurl_unref(hsts_url);
@@ -4854,6 +4915,15 @@ nserror llcache_handle_invalidate_cache_data(llcache_handle *handle)
 nsurl *llcache_handle_get_url(const llcache_handle *handle)
 {
 	return handle->object != NULL ? handle->object->url : NULL;
+}
+
+/* MacSurf Trace 1a: the navigation that caused this object's wire fetch. */
+unsigned long llcache_handle_get_nav_id(const llcache_handle *handle)
+{
+	if (handle == NULL || handle->object == NULL) {
+		return 0;
+	}
+	return handle->object->fetch.nav_id;
 }
 
 /* See llcache.h for documentation */

@@ -43,6 +43,7 @@
 #define MACSURF_GRID_TRACK_UNIT_PX      2
 #define MACSURF_GRID_TRACK_UNIT_PERCENT 3
 #define MACSURF_GRID_TRACK_UNIT_AUTO    4  /* fixes817 (#62): content-sized */
+#define MACSURF_GRID_TRACK_UNIT_MINMAX_FR 5 /* fixes1214: px floor + 1fr */
 #define MACSURF_GRID_TRACK_MAX          8
 
 static int32_t macsurf__pack_track(uint8_t unit, int32_t value)
@@ -130,9 +131,15 @@ css_error css__parse_macsurf_grid(css_language *c,
 	if (!track_list_form && token->type == CSS_TOKEN_IDENT &&
 			token->idata != NULL) {
 		bool amatch = false;
+		const char *raw = lwc_string_data(token->idata);
+		size_t raw_len = lwc_string_length(token->idata);
 		if (lwc_string_caseless_isequal(token->idata,
 				c->strings[AUTO], &amatch) == lwc_error_ok &&
 				amatch) {
+			track_list_form = true;
+		}
+		if (raw_len > 2 && (raw[0] == 'm' || raw[0] == 'M') &&
+				(raw[1] == 'm' || raw[1] == 'M')) {
 			track_list_form = true;
 		}
 	}
@@ -148,6 +155,24 @@ css_error css__parse_macsurf_grid(css_language *c,
 			 * minmax still arrive folded to 1fr. */
 			if (token->type == CSS_TOKEN_IDENT) {
 				bool amatch = false;
+				const char *raw = lwc_string_data(token->idata);
+				size_t raw_len = lwc_string_length(token->idata);
+				if (raw_len > 2 && (raw[0] == 'm' || raw[0] == 'M') &&
+						(raw[1] == 'm' || raw[1] == 'M')) {
+					int32_t floor_px = 0;
+					size_t k;
+					for (k = 2; k < raw_len; k++) {
+						if (raw[k] < '0' || raw[k] > '9') break;
+						if (floor_px < 10000000)
+							floor_px = floor_px * 10 +
+								(raw[k] - '0');
+					}
+					tracks[n_tracks++] = macsurf__pack_track(
+						MACSURF_GRID_TRACK_UNIT_MINMAX_FR,
+						floor_px);
+					parserutils_vector_iterate(vector, ctx);
+					continue;
+				}
 				if (lwc_string_caseless_isequal(token->idata,
 						c->strings[AUTO], &amatch) ==
 						lwc_error_ok && amatch) {

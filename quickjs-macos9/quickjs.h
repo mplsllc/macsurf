@@ -1225,6 +1225,15 @@ JS_EXTERN bool JS_IsJobPending(JSRuntime *rt);
 JS_EXTERN JSContext *JS_GetPendingJobContext(JSRuntime *rt);
 JS_EXTERN int JS_ExecutePendingJob(JSRuntime *rt, JSContext **pctx);
 
+/* fixes1292 (#167) - discard (never execute) every job in rt->job_list
+   belonging to `ctx`, freeing it at the RUNTIME level. A context about to be
+   freed while its runtime stays alive (a same-runtime realm reset) must call
+   this BEFORE JS_FreeContext(ctx): JS_FreeContext does not touch job_list,
+   only JS_FreeRuntime does, so a job left pointing at a freed context is a
+   real use-after-free the next time JS_ExecutePendingJob runs it. Returns
+   the number of jobs discarded. */
+JS_EXTERN int JS_DiscardPendingJobsForContext(JSRuntime *rt, JSContext *ctx);
+
 /* Structure to retrieve (de)serialized SharedArrayBuffer objects. */
 typedef struct JSSABTab {
     uint8_t **tab;

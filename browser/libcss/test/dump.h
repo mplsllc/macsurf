@@ -1839,6 +1839,15 @@ void dump_bytecode(css_style *style, char **ptr, uint32_t depth)
 				case DISPLAY_INLINE_FLEX:
 					*ptr += sprintf(*ptr, "inline-flex");
 					break;
+				case DISPLAY_GRID:
+					*ptr += sprintf(*ptr, "grid");
+					break;
+				case DISPLAY_INLINE_GRID:
+					*ptr += sprintf(*ptr, "inline-grid");
+					break;
+				case DISPLAY_CONTENTS:
+					*ptr += sprintf(*ptr, "contents");
+					break;
 				}
 				break;
 			case CSS_PROP_ELEVATION:
@@ -2428,6 +2437,9 @@ void dump_bytecode(css_style *style, char **ptr, uint32_t depth)
 					break;
 				case OVERFLOW_AUTO:
 					*ptr += sprintf(*ptr, "auto");
+					break;
+				case OVERFLOW_CLIP:
+					*ptr += sprintf(*ptr, "clip");
 					break;
 				}
 				break;

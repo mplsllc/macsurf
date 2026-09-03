@@ -385,6 +385,14 @@ void box_free_box(struct box *box)
 			scrollbar_destroy(box->scroll_y);
 		if (box->styles != NULL)
 			css_select_results_destroy(box->styles);
+		/* fixes1268c (#167) - release this box's reference to its
+		 * custom-property environment. Guarded by !CLONE alongside
+		 * styles: a CLONE box shares both with its original and must
+		 * not drop a reference it never took. */
+		if (box->custom_env != NULL) {
+			css_custom_env_unref(box->custom_env);
+			box->custom_env = NULL;
+		}
 	}
 
 	talloc_free(box);

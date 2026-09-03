@@ -1,0 +1,22 @@
+# MacSurf libwebp import
+
+This is the decode-only, scalar subset of libwebp v1.6.0 at commit
+`4fa21912338357f89e4fd51cf2368325b59e9bd9`.  `COPYING`, `PATENTS`, and
+`AUTHORS` are retained from upstream.
+
+The import excludes encoder, mux, tools, SIMD translation units, and runtime
+threading. `WebPAnimDecoder` is retained, so the demux sources are required.
+The MacSurf handler always sets `use_threads = 0`; leave `WEBP_USE_THREAD` and
+all `WEBP_HAVE_*` SIMD definitions unset in CodeWarrior.
+
+All imported C and header files have only their `//` comments converted to
+C90 block comments by a lexer-aware mechanical import step. `types.h` also
+uses CodeWarrior's `stdint.h` and suppresses inline under `__MWERKS__`. The
+upstream pre-conversion SHA-256 values and exact file set are in
+`SOURCE-MANIFEST`. The resulting sources compile under `gcc -std=c89`; the
+library's existing `uint64_t` arithmetic remains an intentional CodeWarrior
+extension requirement.
+
+For the Classic build, add `frontends/macos9/macos9_webp.c` plus every source
+in `Makefile.macos9` to `MacSurf.mcp`, and add `browser/libwebp` to the header
+access paths. Do not modify or distribute `MacSurf.mcp` itself.

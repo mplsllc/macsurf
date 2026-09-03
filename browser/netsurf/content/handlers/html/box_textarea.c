@@ -338,18 +338,27 @@ bool box_textarea_create_textarea(html_content *html,
 
 		err = dom_html_text_area_element_get_read_only(
 				textarea, &read_only);
-		if (err != DOM_NO_ERR)
+		if (err != DOM_NO_ERR) {
+			macsurf_debug_log_writef(
+				"WORK textarea: get_read_only failed err=%d", (int) err);
 			return false;
+		}
 
 		err = dom_html_text_area_element_get_disabled(
 				textarea, &disabled);
-		if (err != DOM_NO_ERR)
+		if (err != DOM_NO_ERR) {
+			macsurf_debug_log_writef(
+				"WORK textarea: get_disabled failed err=%d", (int) err);
 			return false;
+		}
 
 		/* Get the textarea's initial content */
 		err = dom_html_text_area_element_get_value(textarea, &dom_text);
-		if (err != DOM_NO_ERR)
+		if (err != DOM_NO_ERR) {
+			macsurf_debug_log_writef(
+				"WORK textarea: get_value failed err=%d", (int) err);
 			return false;
+		}
 
 	} else {
 		dom_html_input_element *input = (dom_html_input_element *) node;
@@ -438,11 +447,14 @@ bool box_textarea_create_textarea(html_content *html,
 			box_textarea_callback, &gadget->data.text.data);
 
 	if (gadget->data.text.ta == NULL) {
+		macsurf_debug_log_writef("WORK textarea: textarea_create failed");
 		return false;
 	}
 
-	if (!textarea_set_text(gadget->data.text.ta, text))
+	if (!textarea_set_text(gadget->data.text.ta, text)) {
+		macsurf_debug_log_writef("WORK textarea: textarea_set_text failed");
 		return false;
+	}
 
 	return true;
 }

@@ -319,10 +319,32 @@ css_select_results *nscss_get_style(nscss_select_ctx *ctx, dom_node *n,
 	{
 		extern double macos9_micros(void);
 		extern void macsurf_profile_accum_cascade(long us);
-		double t_casc = macos9_micros();
+		extern int macos9_debug_integrations_enabled(void);
+		int profile = macos9_debug_integrations_enabled();
+		double t_casc = 0.0;
+		if (profile) t_casc = macos9_micros();
+
+		/* fixes1268c (#167) - hand libcss the parent's custom
+		 * properties so this element inherits them, then take back
+		 * the element's own set for its children. */
+		css_select_ctx_set_parent_custom_env(ctx->ctx,
+				ctx->parent_custom_env);
+
 		error = css_select_style(ctx->ctx, n, unit_len_ctx, media,
 				inline_style, &selection_handler, ctx, &styles);
-		macsurf_profile_accum_cascade((long)(macos9_micros() - t_casc));
+
+		if (ctx->produced_custom_env != NULL) {
+			css_custom_env_unref(ctx->produced_custom_env);
+			ctx->produced_custom_env = NULL;
+		}
+		if (error == CSS_OK) {
+			ctx->produced_custom_env =
+				css_select_ctx_take_custom_env(ctx->ctx);
+		}
+
+		if (profile)
+			macsurf_profile_accum_cascade(
+				(long)(macos9_micros() - t_casc));
 	}
 
 	if (error != CSS_OK || styles == NULL) {

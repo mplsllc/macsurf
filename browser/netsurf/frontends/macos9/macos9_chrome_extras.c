@@ -36,6 +36,8 @@
 
 #ifdef __MACOS9__
 #include <Carbon.h>
+#include <Movies.h>
+#include <QuickTimeComponents.h>
 #endif
 
 extern struct browser_window *macos9_gw_bw(struct gui_window *g);
@@ -3832,6 +3834,62 @@ static void about_draw(GWorldPtr off, WindowRef win, const Rect *content,
 		GetPortBitMapForCopyBits(GetWindowPort(win)),
 		content, content, srcCopy, NULL);
 }
+
+/* The About sounds stay inside the application.  QuickTime imports the MP3
+ * from this handle; the caller keeps it alive until the movie is disposed. */
+static Movie about_audio_from_memory(const unsigned char *bytes, long len,
+		Handle *data_out)
+{
+	Handle data;
+	Movie movie;
+	MovieImportComponent importer;
+	Track used_track;
+	TimeValue duration;
+	long import_flags;
+	ComponentResult err;
+
+	*data_out = NULL;
+	if (bytes == NULL || len <= 0) return NULL;
+	data = NewHandle(len);
+	if (data == NULL || MemError() != noErr) {
+		MS_LOG("LIFE about-audio FAIL alloc");
+		return NULL;
+	}
+	BlockMoveData(bytes, *data, len);
+
+	movie = NewMovie(0);
+	if (movie == NULL) {
+		DisposeHandle(data);
+		MS_LOG("LIFE about-audio FAIL NewMovie");
+		return NULL;
+	}
+	importer = OpenDefaultComponent(MovieImportType, 'MPG3');
+	if (importer == NULL) {
+		DisposeMovie(movie);
+		DisposeHandle(data);
+		MS_LOG("LIFE about-audio FAIL no-mp3-importer");
+		return NULL;
+	}
+	used_track = NULL;
+	duration = 0;
+	import_flags = 0;
+	err = MovieImportHandle(importer, data, movie, NULL, &used_track, 0,
+			&duration, movieImportCreateTrack, &import_flags);
+	CloseComponent(importer);
+	if (err != noErr || used_track == NULL) {
+		DisposeMovie(movie);
+		DisposeHandle(data);
+		macsurf_debug_log_writef("LIFE about-audio FAIL import=%d", (int)err);
+		return NULL;
+	}
+	SetMovieActive(movie, true);
+	GoToBeginningOfMovie(movie);
+	StartMovie(movie);
+	*data_out = data;
+	macsurf_debug_log_writef("LIFE about-audio START bytes=%ld duration=%ld",
+		len, (long)duration);
+	return movie;
+}
 #endif /* __MACOS9__ */
 
 void macos9_about_show(void)
@@ -3847,6 +3905,8 @@ void macos9_about_show(void)
 	short        titleFnum = 0, bodyFnum = 0;
 	int          done = 0;
 	RGBColor     black, white;
+	Movie        audio_movie = NULL;
+	Handle       audio_data = NULL;
 
 	{
 		BitMap sb;
@@ -3892,6 +3952,16 @@ void macos9_about_show(void)
 	startTick = (long)TickCount();
 
 	while (!done) {
+		if (audio_movie != NULL) {
+			MoviesTask(audio_movie, 0);
+			if (IsMovieDone(audio_movie)) {
+				DisposeMovie(audio_movie);
+				DisposeHandle(audio_data);
+				audio_movie = NULL;
+				audio_data = NULL;
+				MS_LOG("LIFE about-audio DONE");
+			}
+		}
 		WaitNextEvent(everyEvent, &ev, 2, NULL);
 		switch (ev.what) {
 		case mouseDown: {
@@ -3913,14 +3983,26 @@ void macos9_about_show(void)
 				SetRect(&gary_r, 155, 140, 195, 153);
 				SetRect(&kaija_r, 210, 140, 248, 153);
 				if (PtInRect(lp, &gary_r)) {
-					{ FILE *f = fopen("/tmp/_g.mp3","wb");
-					  if(f){fwrite(realbutter_mp3,1,(size_t)realbutter_mp3_len,f);fclose(f);}
-					  system("open /tmp/_g.mp3 &"); }
+					if (audio_movie != NULL) {
+						StopMovie(audio_movie);
+						DisposeMovie(audio_movie);
+						DisposeHandle(audio_data);
+						audio_movie = NULL;
+						audio_data = NULL;
+					}
+					audio_movie = about_audio_from_memory(realbutter_mp3,
+						realbutter_mp3_len, &audio_data);
 				}
 				if (PtInRect(lp, &kaija_r)) {
-					{ FILE *f = fopen("/tmp/_k.mp3","wb");
-					  if(f){fwrite(hiitsme_mp3,1,(size_t)hiitsme_mp3_len,f);fclose(f);}
-					  system("open /tmp/_k.mp3 &"); }
+					if (audio_movie != NULL) {
+						StopMovie(audio_movie);
+						DisposeMovie(audio_movie);
+						DisposeHandle(audio_data);
+						audio_movie = NULL;
+						audio_data = NULL;
+					}
+					audio_movie = about_audio_from_memory(hiitsme_mp3,
+						hiitsme_mp3_len, &audio_data);
 				}
 			}
 			break;
@@ -3947,6 +4029,11 @@ void macos9_about_show(void)
 			titleFnum, bodyFnum, &black, &white);
 	}
 
+	if (audio_movie != NULL) {
+		StopMovie(audio_movie);
+		DisposeMovie(audio_movie);
+		DisposeHandle(audio_data);
+	}
 	UnlockPixels(offpm);
 	DisposeGWorld(off);
 	SetPort(savedPort);

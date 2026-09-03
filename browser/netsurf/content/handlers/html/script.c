@@ -45,6 +45,7 @@
 #include "netsurf/misc.h"
 #include "desktop/gui_internal.h"
 #include "macsurf_debug.h"
+#include "macsurf_diag.h"
 
 extern int macsurf_ptr_is_heap(const void *);
 
@@ -102,6 +103,71 @@ static script_handler_t *select_script_handler(content_type ctype)
 	return NULL;
 }
 
+/* fixes1254 (#167) - per-tag lifecycle trace (LIFE SPIPE Q/D/X, ord= on
+ * RUN). Budgeted like every other per-nav diagnostic in this file
+ * (g_script_tags_seen etc.): Facebook pages carry ~190 external tags, each
+ * good for up to 3 SPIPE lines, so an unbudgeted trace could run to
+ * thousands of lines across a session. Reset alongside the other counters
+ * in html_script_tag_census_report(). Session-cumulative counters (Q/D/X
+ * event totals) are NOT budgeted - only the verbose per-event line is -
+ * so a hardware round can always tell how many events happened even past
+ * budget, from the delta between two LIFE SPIPETOTALS lines. */
+static long g_spipe_budget = 600;
+long g_spipe_q_total = 0;
+long g_spipe_d_total = 0;
+long g_spipe_x_total = 0;
+
+static int macsurf_spipe_budget_take(void)
+{
+	if (g_spipe_budget <= 0) {
+		return 0;
+	}
+	g_spipe_budget--;
+	return 1;
+}
+
+/* fixes1259 (#167) - Facebook loader observability. fixes1258 fixed the
+ * data: URI base64/MIME bug (SPIPE now shows q=d, x=0, essentially 100%
+ * script throughput), but JSREQUIRE total=0 persists even so - the
+ * fetch/exec layer is now healthy, so the remaining question is entirely
+ * inside Facebook's own module loader. This is a cheap, install-timing-
+ * independent breadcrumb: scan a script's raw source for the literal
+ * target module name BEFORE it executes, so the hardware log has
+ * confirmation the target is even present in the script graph regardless
+ * of whether the JS-side __d/requireLazy wrapper (macsurf_qjs.c) manages
+ * to intercept the real call. Size-gated to 4096 bytes - the small data:
+ * bootstrap-glue scripts that reference this name directly are all under
+ * 500 bytes; the multi-MB fbcdn.net bundles this would otherwise scan on
+ * every navigation are not where a literal name string like this shows up
+ * unminified, and scanning all of them on a slow PPC is real cost for no
+ * signal. */
+static long g_fbtarget_budget = 50;
+
+static int
+macsurf_buf_contains(const uint8_t *data, size_t size, const char *needle)
+{
+	size_t nlen = strlen(needle);
+	size_t i;
+	if (nlen == 0 || size < nlen) return 0;
+	for (i = 0; i + nlen <= size; i++) {
+		if (memcmp(data + i, needle, nlen) == 0) return 1;
+	}
+	return 0;
+}
+
+static void
+macsurf_fbtarget_scan(long ord, const uint8_t *data, size_t size)
+{
+	if (size == 0 || size > 4096) return;
+	if (g_fbtarget_budget <= 0) return;
+	if (macsurf_buf_contains(data, size, "ServerJSPayloadListener")) {
+		g_fbtarget_budget--;
+		macsurf_debug_log_writef(
+			"LIFE FBTARGET source ord=%ld has_ServerJSPayloadListener=1",
+			ord);
+	}
+}
+
 
 /* exported internal interface documented in html/html_internal.h */
 nserror html_script_exec(html_content *c, bool allow_defer)
@@ -147,7 +213,7 @@ nserror html_script_exec(html_content *c, bool allow_defer)
 				 * defer scripts are exactly the pattern modern
 				 * sites (Facebook) use for their real bundles. */
 				macsurf_debug_log_writef(
-					"WORK script_exec: SKIP unsupported "
+					"LIFE script_exec: SKIP unsupported "
 					"content_type=%d url=%s",
 					(int) content_get_type(s->data.handle),
 					nsurl_access(
@@ -167,10 +233,11 @@ nserror html_script_exec(html_content *c, bool allow_defer)
 				 * js_exec, WORK-gated (this whole function had zero
 				 * log lines of any kind before this fix). */
 				macsurf_debug_log_writef(
-					"WORK script_exec: RUN bytes=%ld url=%s",
-					(long) size,
+					"LIFE script_exec: RUN ord=%ld bytes=%ld url=%s",
+					(long) (i + 1), (long) size,
 					nsurl_access(
 						hlcache_handle_get_url(s->data.handle)));
+				macsurf_fbtarget_scan((long) (i + 1), data, size);
 				/* fixes873 (#301) - document.currentScript must name THIS
 				 * script while it runs. webpack's publicPath runtime reads
 				 * it first thing and throws "Automatic publicPath is not
@@ -181,8 +248,18 @@ nserror html_script_exec(html_content *c, bool allow_defer)
 				if (s->node != NULL) {
 					js_set_current_script(c->js_thread, s->node);
 				}
-				script_handler(c->js_thread, data, size,
+				{
+					struct ms_diag_scope scr;
+					int rc;
+					ms_diag_script_enter(&scr,
+						content_get_nav_id(&c->base),
+						MS_SCRIPT_CLASSIC,
+						nsurl_access(hlcache_handle_get_url(s->data.handle)));
+					rc = script_handler(c->js_thread, data, size,
 					       nsurl_access(hlcache_handle_get_url(s->data.handle)));
+					ms_diag_script_leave(&scr,
+						rc ? MS_SCR_DONE : MS_SCR_RUN_FAIL);
+				}
 				/* Re-acquire BEFORE touching s again: script_handler is JS
 				 * and can realloc c->scripts. */
 				s = &(c->scripts[i]);
@@ -312,12 +389,27 @@ convert_script_async_cb(hlcache_handle *script,
 		parent->base.active--;
 		NSLOG(netsurf, INFO, "%d fetches active", parent->base.active);
 
+		g_spipe_d_total++;
+		if (macsurf_spipe_budget_take()) {
+			macsurf_debug_log_writef(
+				"LIFE SPIPE D ord=%ld url=%s", (long) (i + 1),
+				nsurl_access(hlcache_handle_get_url(script)));
+		}
+
 		break;
 
 	case CONTENT_MSG_ERROR:
 		NSLOG(netsurf, INFO, "script %s failed: %s",
 		      nsurl_access(hlcache_handle_get_url(script)),
 		      event->data.errordata.errormsg);
+
+		g_spipe_x_total++;
+		if (macsurf_spipe_budget_take()) {
+			macsurf_debug_log_writef(
+				"LIFE SPIPE X ord=%ld url=%s err=%s", (long) (i + 1),
+				nsurl_access(hlcache_handle_get_url(script)),
+				event->data.errordata.errormsg);
+		}
 
 		/* fixes869 (#295) - fire `error` at the element so a loader waiting
 		 * on this script REJECTS rather than hanging forever.  A promise that
@@ -395,12 +487,27 @@ convert_script_defer_cb(hlcache_handle *script,
 		parent->base.active--;
 		NSLOG(netsurf, INFO, "%d fetches active", parent->base.active);
 
+		g_spipe_d_total++;
+		if (macsurf_spipe_budget_take()) {
+			macsurf_debug_log_writef(
+				"LIFE SPIPE D ord=%ld url=%s", (long) (i + 1),
+				nsurl_access(hlcache_handle_get_url(script)));
+		}
+
 		break;
 
 	case CONTENT_MSG_ERROR:
 		NSLOG(netsurf, INFO, "script %s failed: %s",
 		      nsurl_access(hlcache_handle_get_url(script)),
 		      event->data.errordata.errormsg);
+
+		g_spipe_x_total++;
+		if (macsurf_spipe_budget_take()) {
+			macsurf_debug_log_writef(
+				"LIFE SPIPE X ord=%ld url=%s err=%s", (long) (i + 1),
+				nsurl_access(hlcache_handle_get_url(script)),
+				event->data.errordata.errormsg);
+		}
 
 		/* fixes869 (#295) - fire `error` at the element so a loader waiting
 		 * on this script REJECTS rather than hanging forever.  A promise that
@@ -582,8 +689,8 @@ deferred_parser_unpause(void *pw)
 	}
 	err = dom_hubbub_parser_pause(parent->parser, false);
 	if (err != DOM_HUBBUB_OK) {
-		macsurf_debug_log_writef("deferred_unpause: pause returned 0x%x",
-			(int)err);
+		macsurf_debug_log_writef("deferred_unpause: pause returned %ld",
+			(long)err);
 		return;
 	}
 	/* fixes558: unpause_pending was already cleared unconditionally at dispatch
@@ -655,7 +762,7 @@ convert_script_sync_cb(hlcache_handle *script,
 		extern long macos9_heap_free_bytes(void);
 		extern long macos9_heap_max_block(void);
 		macsurf_debug_log_writef(
-			"sync_cb: ENTRY type=%d count=%ld free=%ld maxblk=%ld",
+			"LIFE sync_cb: ENTRY type=%d count=%ld free=%ld maxblk=%ld",
 			(int)event->type, (long)parent->scripts_count,
 			macos9_heap_free_bytes(), macos9_heap_max_block());
 	}
@@ -663,7 +770,7 @@ convert_script_sync_cb(hlcache_handle *script,
 	/* fixes535: registry-membership liveness guard FIRST (see async cb). */
 	if (macos9_content_is_live(&parent->base) == 0) {
 		macsurf_debug_log_writef(
-			"convert_script_sync_cb: parent NOT LIVE parent=%p", (void *)parent);
+			"LIFE convert_script_sync_cb: parent NOT LIVE parent=%p", (void *)parent);
 		return NSERROR_OK;
 	}
 
@@ -704,6 +811,13 @@ convert_script_sync_cb(hlcache_handle *script,
 		parent->base.active--;
 		NSLOG(netsurf, INFO, "%d fetches active", parent->base.active);
 
+		g_spipe_d_total++;
+		if (macsurf_spipe_budget_take()) {
+			macsurf_debug_log_writef(
+				"LIFE SPIPE D ord=%ld url=%s", (long) (i + 1),
+				nsurl_access(hlcache_handle_get_url(script)));
+		}
+
 		s->already_started = true;
 
 		/* attempt to execute script */
@@ -716,25 +830,61 @@ convert_script_sync_cb(hlcache_handle *script,
 			/* fixes847 (#167 S1 census gap) - the sync-script sibling of
 			 * html_script_exec's RUN log below. */
 			macsurf_debug_log_writef(
-				"WORK script_exec: RUN(sync) bytes=%ld url=%s",
-				(long) size,
+				"LIFE script_exec: RUN(sync) ord=%ld bytes=%ld url=%s",
+				(long) (i + 1), (long) size,
 				nsurl_access(hlcache_handle_get_url(s->data.handle)));
-			script_handler(parent->js_thread, data, size,
+			macsurf_fbtarget_scan((long) (i + 1), data, size);
+			{
+				struct ms_diag_scope scr;
+				int rc;
+				ms_diag_script_enter(&scr,
+					content_get_nav_id(&parent->base),
+					MS_SCRIPT_CLASSIC,
+					nsurl_access(hlcache_handle_get_url(s->data.handle)));
+				rc = script_handler(parent->js_thread, data, size,
 				       nsurl_access(hlcache_handle_get_url(s->data.handle)));
+				ms_diag_script_leave(&scr,
+					rc ? MS_SCR_DONE : MS_SCR_RUN_FAIL);
+			}
 		} else {
 			macsurf_debug_log_writef(
-				"WORK script_exec: SKIP(sync) handler=%p "
+				"LIFE script_exec: SKIP(sync) handler=%p "
 				"js_thread=%p content_type=%d url=%s",
 				(void *) script_handler, (void *) parent->js_thread,
 				(int) content_get_type(s->data.handle),
 				nsurl_access(hlcache_handle_get_url(s->data.handle)));
 		}
 
+		/* fixes1326 (#167) - execution is the last consumer of a completed
+		 * synchronous script's fetched content.  Keeping every successful
+		 * handle until html_destroy pinned its source and cache object for the
+		 * whole parse.  Facebook emits roughly 180 tiny parser-blocking data:
+		 * scripts before its large bundles; on Mac OS 9 those retained objects
+		 * reduced the largest heap block from about 8.4 MB to 1.47 MB, then the
+		 * next multi-megabyte bundle exhausted the heap and aborted the page.
+		 *
+		 * JS can append scripts and realloc parent->scripts, so re-acquire the
+		 * slot.  already_started was set before execution, making a release-
+		 * driven callback harmless, and the callback argument is the identity
+		 * guard against releasing a replacement handle.  The error path below
+		 * already performs this same null-before-release operation here. */
+		s = &parent->scripts[i];
+		if (s->data.handle == script) {
+			safe_hlcache_handle_release(&s->data.handle);
+		}
+
 		/* fixes581 DIAG: js_exec returned. If the log ends here (after
 		 * 'qjs: exec-return0' but before 'sync_cb: sched done'), the hang is
-		 * in macos9_schedule_unpause. */
-		macsurf_debug_log_writef("sync_cb: exec done i=%d active_sync=%d",
-			(int)i, (int)active_sync_scripts);
+		 * in macos9_schedule_unpause.
+		 * fixes1256 (#167) - both lines below were missing "LIFE " and
+		 * have been completely invisible in every release-build log this
+		 * whole session; the resume gate (active_sync_scripts==0) is the
+		 * prime suspect for the ~179 stuck sync data: URI scripts found
+		 * via fixes1254's SPIPE trace (queued, never RUN or SKIP logged),
+		 * so its actual value at the decision point needs to be visible. */
+		macsurf_debug_log_writef(
+			"LIFE sync_cb: exec done ord=%ld active_sync=%ld",
+			(long) (i + 1), (long) active_sync_scripts);
 
 		/* continue parse -- deferred to avoid re-entering the tokenizer
 		 * from inside the content_broadcast notification walk. */
@@ -742,7 +892,8 @@ convert_script_sync_cb(hlcache_handle *script,
 			macos9_schedule_unpause(parent);
 		}
 
-		macsurf_debug_log_writef("sync_cb: sched done i=%d", (int)i);
+		macsurf_debug_log_writef("LIFE sync_cb: sched done ord=%ld",
+			(long) (i + 1));
 
 		break;
 
@@ -750,6 +901,14 @@ convert_script_sync_cb(hlcache_handle *script,
 		NSLOG(netsurf, INFO, "script %s failed: %s",
 		      nsurl_access(hlcache_handle_get_url(script)),
 		      event->data.errordata.errormsg);
+
+		g_spipe_x_total++;
+		if (macsurf_spipe_budget_take()) {
+			macsurf_debug_log_writef(
+				"LIFE SPIPE X ord=%ld url=%s err=%s", (long) (i + 1),
+				nsurl_access(hlcache_handle_get_url(script)),
+				event->data.errordata.errormsg);
+		}
 
 		/* fixes515: NULL before release so a reentrant callback finds
 		 * NULL instead of a freed handle / freed callback TVector. */
@@ -764,6 +923,10 @@ convert_script_sync_cb(hlcache_handle *script,
 		if (parent->parser != NULL && active_sync_scripts == 0) {
 			macos9_schedule_unpause(parent);
 		}
+
+		macsurf_debug_log_writef(
+			"LIFE sync_cb: ERROR sched ord=%ld active_sync=%ld",
+			(long) (i + 1), (long) active_sync_scripts);
 
 		break;
 
@@ -883,6 +1046,8 @@ exec_src_script(html_content *c,
 	/* set up child fetch encoding and quirks */
 	child.charset = c->encoding;
 	child.quirks = c->base.quirks;
+	child.nav_id = content_get_nav_id(&c->base);	/* MacSurf Trace 1a */
+	child.doc_id = 0;
 
 	ns_error = hlcache_handle_retrieve(joined,
 					   0,
@@ -894,6 +1059,21 @@ exec_src_script(html_content *c,
 					   CONTENT_SCRIPT,
 					   &nscript->data.handle);
 
+	/* fixes1253 (#167) - hlcache_handle_retrieve failing here (most
+	 * commonly the HTTPS fetcher's ops.setup() finding every
+	 * MAX_HTTPS_F slot occupied, see macos9_tls_fetcher.c) is a
+	 * silent script drop that predates fetch_dispatch_jobs entirely:
+	 * base.active is never incremented, so this script never counts
+	 * toward the JS audit's skipped/timed_out/failed totals - it just
+	 * vanishes between SCRIPTTAGS (parser saw it) and JS PAGE (engine
+	 * never did). Logged here, before nsurl_unref, while joined is
+	 * still safely referenced. */
+	if (ns_error != NSERROR_OK) {
+		macsurf_debug_log_writef(
+			"LIFE SCRIPTFETCHFAIL idx=%ld rc=%d src=%s",
+			(long) c->scripts_count, (int) ns_error,
+			nsurl_access(joined));
+	}
 
 	nsurl_unref(joined);
 
@@ -908,6 +1088,26 @@ exec_src_script(html_content *c,
 		/* update base content active fetch count */
 		c->base.active++;
 		NSLOG(netsurf, INFO, "%d fetches active", c->base.active);
+
+		/* fixes1254 (#167) - per-tag lifecycle ordinal. c->scripts_count
+		 * is this entry's 1-based position among ALL <script> tags
+		 * (inline+external) the parser has processed so far, matching
+		 * SCRIPTTAGS's combined seen count. Paired with the D/X markers
+		 * in convert_script_{async,defer,sync}_cb and ord= on the RUN
+		 * line, this traces every tag's queued->fetch-done/error->exec
+		 * path by ordinal, answering "which of the ~186 actually run,
+		 * and where does admission/fetch/exec diverge for the rest." */
+		g_spipe_q_total++;
+		if (macsurf_spipe_budget_take()) {
+			macsurf_debug_log_writef(
+				"LIFE SPIPE Q ord=%ld type=%s url=%s",
+				(long) c->scripts_count,
+				script_type == HTML_SCRIPT_SYNC ? "sync" :
+				script_type == HTML_SCRIPT_ASYNC ? "async" :
+					"defer",
+				nsurl_access(hlcache_handle_get_url(
+					nscript->data.handle)));
+		}
 
 		switch (script_type) {
 		case HTML_SCRIPT_SYNC:
@@ -965,14 +1165,71 @@ exec_inline_script(html_content *c, dom_node *node, dom_string *mimetype)
 	lwc_string_unref(lwcmimetype);
 
 	if (script_handler != NULL) {
-		script_handler(c->js_thread,
+		struct ms_diag_scope scr;
+		int rc;
+		ms_diag_script_enter(&scr, content_get_nav_id(&c->base),
+			MS_SCRIPT_CLASSIC, "inline");
+		rc = script_handler(c->js_thread,
 			       (const uint8_t *)dom_string_data(script),
 			       dom_string_byte_length(script),
 			       "?inline script?");
+		ms_diag_script_leave(&scr, rc ? MS_SCR_DONE : MS_SCR_RUN_FAIL);
+	} else {
+		/* Silent skip, same class as the fixes847 async/defer gap:
+		 * an inline <script> whose declared type doesn't map to
+		 * CONTENT_JS (e.g. type="application/json" data islands,
+		 * common in modern bundlers) never runs and, until now,
+		 * nothing said so. */
+		macsurf_debug_log_writef(
+			"LIFE script_exec: SKIP inline unsupported "
+			"mimetype=%s len=%ld",
+			dom_string_data(mimetype),
+			(long) dom_string_byte_length(script));
 	}
 	return DOM_HUBBUB_OK;
 }
 
+
+/* fixes1239 (#167) - <script> tags the PARSER found, split inline/external,
+ * independent of whether js_exec ever ran one. The Facebook SSR-streaming
+ * investigation needed exactly this split: the script-census in
+ * macsurf_qjs.c (macsurf_qjs_page_js_summary) only records EXECUTIONS
+ * (js_exec's own SCRIPT_CENSUS_INLINE/EXTERNAL split), so a stuck page
+ * reporting zero inline executions is ambiguous between "the parser found
+ * no inline <script> tags in this document at all" and "it found some but
+ * something upstream of js_exec (js_thread creation failure, an
+ * unsupported mimetype -- both of which return early below, before either
+ * increment site) quietly dropped them". This counts DISCOVERY at the
+ * parser callback itself, before any of those early returns, so the two
+ * cases read differently in the log. `seen` increments unconditionally at
+ * the top (covers the js_thread-missing early return too); `inline`/
+ * `external` increment at the existing src-attribute checks already made
+ * for the module and regular-script paths below -- no extra DOM query. */
+long g_script_tags_seen     = 0;
+long g_script_tags_inline   = 0;
+long g_script_tags_external = 0;
+
+void html_script_tag_census_report(void)
+{
+	macsurf_debug_log_writef(
+		"LIFE SCRIPTTAGS seen=%ld inline=%ld external=%ld",
+		g_script_tags_seen, g_script_tags_inline,
+		g_script_tags_external);
+	g_script_tags_seen     = 0;
+	g_script_tags_inline   = 0;
+	g_script_tags_external = 0;
+
+	/* fixes1254 (#167) - Q/D/X totals are session-cumulative (like
+	 * JS PAGE's scripts=), so a hardware round reads them as deltas
+	 * between two SPIPETOTALS lines the same way it already reads
+	 * JS PAGE. Only the per-event verbose lines are budgeted; these
+	 * totals count every Q/D/X regardless of budget, so the delta is
+	 * always exact even once the per-event trace goes quiet. */
+	macsurf_debug_log_writef(
+		"LIFE SPIPETOTALS q=%ld d=%ld x=%ld",
+		g_spipe_q_total, g_spipe_d_total, g_spipe_x_total);
+	g_spipe_budget = 600;
+}
 
 /**
  * process script node parser callback
@@ -986,6 +1243,8 @@ html_process_script(void *ctx, dom_node *node)
 	dom_exception exc; /* returned by libdom functions */
 	dom_string *src, *mimetype;
 	dom_hubbub_error err = DOM_HUBBUB_OK;
+
+	g_script_tags_seen++;   /* fixes1239 - every callback, no early return skips this */
 
 	/* ensure javascript context is available */
 	/* We should only ever be here if scripting was enabled for this
@@ -1027,6 +1286,7 @@ html_process_script(void *ctx, dom_node *node)
 				 * semantics via js_exec_module. */
 				dom_string *modsrc;
 				dom_exception mexc;
+				g_script_tags_inline++;   /* fixes1239 */
 				mexc = dom_node_get_text_content(
 					node, &modsrc);
 				if (mexc == DOM_NO_ERR &&
@@ -1036,11 +1296,20 @@ html_process_script(void *ctx, dom_node *node)
 						"len=%ld",
 						(long)dom_string_byte_length(
 							modsrc));
-					js_exec_module(c->js_thread,
-						(const unsigned char *)
-							dom_string_data(modsrc),
-						dom_string_byte_length(modsrc),
-						"?inline module?");
+					{
+						struct ms_diag_scope scr;
+						int rc;
+						ms_diag_script_enter(&scr,
+							content_get_nav_id(&c->base),
+							MS_SCRIPT_MODULE, "inline-module");
+						rc = js_exec_module(c->js_thread,
+							(const unsigned char *)
+								dom_string_data(modsrc),
+							dom_string_byte_length(modsrc),
+							"?inline module?");
+						ms_diag_script_leave(&scr,
+							rc ? MS_SCR_DONE : MS_SCR_RUN_FAIL);
+					}
 					dom_string_unref(modsrc);
 				} else {
 					macsurf_debug_log_writef(
@@ -1058,6 +1327,7 @@ html_process_script(void *ctx, dom_node *node)
 			 * deferred; external module scripts get
 			 * regular-script treatment for now (still a
 			 * massive improvement over the silent drop). */
+			g_script_tags_external++;   /* fixes1239 */
 			dom_string_unref(mimetype);
 			mimetype = dom_string_ref(
 				corestring_dom_text_javascript);
@@ -1070,8 +1340,10 @@ html_process_script(void *ctx, dom_node *node)
 
 	exc = dom_element_get_attribute(node, corestring_dom_src, &src);
 	if (exc != DOM_NO_ERR || src == NULL) {
+		g_script_tags_inline++;   /* fixes1239 */
 		err = exec_inline_script(c, node, mimetype);
 	} else {
+		g_script_tags_external++;   /* fixes1239 */
 		err = exec_src_script(c, node, mimetype, src);
 		dom_string_unref(src);
 	}

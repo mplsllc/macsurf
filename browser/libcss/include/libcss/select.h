@@ -44,6 +44,9 @@ typedef struct css_select_results {
 	css_computed_style *styles[CSS_PSEUDO_ELEMENT_COUNT];
 } css_select_results;
 
+/** Opaque standalone media-query list. */
+struct css_media_query;
+
 typedef enum css_select_handler_version {
 	CSS_SELECT_HANDLER_VERSION_1 = 1
 } css_select_handler_version;
@@ -233,6 +236,24 @@ css_error css_select_font_faces(css_select_ctx *ctx,
 css_error css_select_font_faces_results_destroy(
 		css_select_font_faces_results *results);
 
+/**
+ * Create a standalone media-query list for non-stylesheet consumers.
+ * The query uses the same parser and matcher as @media rules.
+ */
+css_error css_media_query_create(const char *query,
+		struct css_media_query **result);
+
+/** Test a standalone media-query list against the supplied document media. */
+css_error css_media_query_matches(const struct css_media_query *query,
+		const css_unit_ctx *unit_ctx, const css_media *media,
+		bool *matches);
+
+/** Return the query's CSSOM-facing media text. */
+const char *css_media_query_text(const struct css_media_query *query);
+
+/** Destroy a standalone media-query list. */
+void css_media_query_destroy(struct css_media_query *query);
+
 /* fixes267 - register a stylesheet's custom_properties list into the
  * doc-global inline-extras table. Used by NetSurf's
  * nscss_create_inline_style so element-scoped --custom-props (parent
@@ -247,5 +268,56 @@ void css_inline_extras_clear(void);
 #ifdef __cplusplus
 }
 #endif
+
+
+/* fixes1268c (#167) - custom-property inheritance.
+ *
+ * Custom properties inherit, so selecting an element needs the set in
+ * force on its PARENT. That cannot travel on css_computed_style: styles
+ * are interned by css__arena_intern_style, so two elements with
+ * identical computed properties share one struct, while their custom
+ * environments may differ entirely. Nor can it live on
+ * libcss_node_data, which is an opportunistic cache that
+ * css_libcss_node_data_handler destroys on any DOM change without
+ * rebuilding it.
+ *
+ * The client therefore threads it, alongside the parent style it already
+ * threads: set the parent's environment before selecting, take the
+ * element's afterwards, and hand that to the element's children.
+ *
+ * Passing NULL is always valid and means "root element".
+ */
+
+/**
+ * Set the parent element's custom-property environment for the NEXT
+ * css_select_style call on this context. The context takes a reference.
+ */
+css_error css_select_ctx_set_parent_custom_env(css_select_ctx *ctx,
+		css_custom_env *env);
+
+/**
+ * Take ownership of the environment produced by the most recent
+ * css_select_style call on this context. Returns NULL if that element
+ * had no custom properties in force. The caller must release it with
+ * css_custom_env_unref; calling this twice returns NULL the second time.
+ */
+css_custom_env *css_select_ctx_take_custom_env(css_select_ctx *ctx);
+
+/**
+ * Take an additional reference to an environment. Returns env.
+ */
+css_custom_env *css_custom_env_ref(css_custom_env *env);
+
+/**
+ * Release a reference to an environment.
+ */
+void css_custom_env_unref(css_custom_env *env);
+
+/**
+ * fixes1269 (#167) - number of times a node adopted another node's
+ * computed styles through the style-sharing path since process start.
+ * Diagnostic; lets a test prove it actually exercised sharing.
+ */
+uint32_t css_select_share_adoptions(void);
 
 #endif

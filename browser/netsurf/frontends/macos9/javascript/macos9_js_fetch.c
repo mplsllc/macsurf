@@ -70,6 +70,8 @@
 #include "utils/ns_errors.h"
 #include "utils/nsurl.h"
 #include "content/fetch.h"
+#include "content/macsurf_nav_seed.h"
+#include "macsurf_diag.h"
 #include "content/content_protected.h"
 
 #include "macsurf_debug.h"
@@ -92,6 +94,11 @@ struct qjs_xhr_slot {
 	JSValue xhr_obj;		/* dup'd JS XMLHttpRequest instance */
 
 	nsurl *url;			/* current (post-redirect) target */
+	nsurl *referer;		/* owned snapshot of the invoking realm's URL */
+	unsigned long nav_id;		/* MacSurf Trace: owning nav, captured at send() */
+	unsigned long last_request_id;	/* previous hop's request_id, or 0 */
+	unsigned long origin_script_id;	/* MacSurf Trace 1b: script that called send() */
+	unsigned long operation_id;	/* browser-operation attempt, before wire req */
 	char method[8];			/* upper-cased, NUL-terminated */
 	char *body;			/* owned copy of the send() body, or NULL */
 	long body_len;
@@ -135,6 +142,7 @@ static void
 xhr_slot_wipe(struct qjs_xhr_slot *s)
 {
 	if (s->url != NULL) { nsurl_unref(s->url); s->url = NULL; }
+	if (s->referer != NULL) { nsurl_unref(s->referer); s->referer = NULL; }
 	if (s->body != NULL) { free(s->body); s->body = NULL; }
 	xhr_free_req_headers(s);
 	if (s->resp_buf != NULL) { free(s->resp_buf); s->resp_buf = NULL; }
@@ -212,7 +220,10 @@ xhr_accum(char **buf, long *len, long *cap, long max_bytes, int *poisoned,
 		while (ncap < *len + l) ncap *= 2;
 		if (ncap > max_bytes) ncap = max_bytes;
 		nb = (char *) realloc(*buf, (size_t) (ncap + 1));
-		if (nb == NULL) return;	/* OOM: keep what we have */
+		if (nb == NULL) {
+			*poisoned = 1;
+			return;
+		}
 		*buf = nb;
 		*cap = ncap;
 	}
@@ -281,6 +292,8 @@ xhr_deliver(void *p)
 	struct qjs_xhr_slot *s = (struct qjs_xhr_slot *) p;
 	JSContext *ctx;
 	JSValue fn, ret, exc, stk;
+	double prevdl;
+	struct ms_diag_scope __xtsk;	/* MacSurf Trace 1b */
 	const char *body;
 	const char *hdrs;
 	const char *url_str;
@@ -291,13 +304,34 @@ xhr_deliver(void *p)
 	/* sendBeacon slots are fire-and-forget: nothing to deliver, and no
 	 * JSValue/ctx to touch (the realm may be long gone). The fetch is
 	 * over, so just release the C-side allocations. */
-	if (s->beacon) { xhr_slot_wipe(s); return; }
+	if (s->beacon) {
+		ms_diag_operation_record(s->operation_id, MS_OP_BEACON, MS_OP_SETTLE,
+			s->is_error ? MS_OP_REJECT : MS_OP_RESOLVE,
+			s->is_error ? MS_OPR_NETWORK_ERROR : MS_OPR_NONE,
+			MS_ANSWER_NATIVE, s->last_request_id);
+		xhr_slot_wipe(s);
+		return;
+	}
 	ctx = s->ctx;
-	if (ctx == NULL) { xhr_slot_release(s); return; }
+	if (ctx == NULL) {
+		ms_diag_operation_record(s->operation_id, MS_OP_XHR, MS_OP_DELIVER,
+			MS_OP_DECLINE, MS_OPR_REALM_GONE, MS_ANSWER_NATIVE,
+			s->last_request_id);
+		xhr_slot_release(s); return;
+	}
 
 	body = (s->resp_buf != NULL) ? s->resp_buf : "";
 	hdrs = (s->hdr_buf != NULL) ? s->hdr_buf : "";
 	url_str = (s->url != NULL) ? nsurl_access(s->url) : "";
+	if (s->resp_poisoned || s->hdr_poisoned) {
+		s->is_error = 1;
+		ms_diag_operation_record(s->operation_id, MS_OP_XHR, MS_OP_DELIVER,
+			MS_OP_DECLINE, MS_OPR_RESPONSE_POISONED, MS_ANSWER_NATIVE,
+			s->last_request_id);
+		macsurf_debug_log_writef(
+			"LIFE xhr poisoned response resp=%d hdr=%d bytes=%ld url=%s",
+			s->resp_poisoned, s->hdr_poisoned, s->resp_len, url_str);
+	}
 
 	JS_SetPropertyStr(ctx, s->xhr_obj, "readyState", JS_NewInt32(ctx, 4));
 	JS_SetPropertyStr(ctx, s->xhr_obj, "status",
@@ -312,18 +346,27 @@ xhr_deliver(void *p)
 			JS_NewString(ctx, hdrs));
 
 	macsurf_debug_log_writef(
-			"WORK xhr deliver status=%d err=%d bytes=%ld url=%s",
+			"LIFE xhr deliver status=%d err=%d bytes=%ld url=%s",
 			s->status, s->is_error, s->resp_len, url_str);
 
 	fn = JS_GetPropertyStr(ctx, s->xhr_obj, "__onNativeComplete");
 	if (JS_IsFunction(ctx, fn)) {
+		prevdl = macsurf_qjs_deadline_push_ms(
+				macsurf_qjs_default_timeout_ms());
+		ms_diag_task_enter(&__xtsk, MS_TASK_XHR, s->nav_id,
+			s->origin_script_id, s->last_request_id, (const char *) 0);
 		ret = JS_Call(ctx, fn, s->xhr_obj, 0, NULL);
+		ms_diag_task_leave(&__xtsk);
+		macsurf_qjs_deadline_pop(prevdl);
 		if (JS_IsException(ret)) {
 			exc = JS_GetException(ctx);
 			msg = JS_ToCString(ctx, exc);
 			macsurf_debug_log_writef(
 					"LIFE qjs xhr deliver threw: %s url=%s",
-					msg ? msg : "?", url_str);
+			msg ? msg : "?", url_str);
+			ms_diag_error_record(s->operation_id, s->last_request_id,
+				MS_ERR_CALLBACK_FAILURE, MS_OP_DELIVER, MS_OPR_NONE,
+				"Exception", msg);
 			if (msg) JS_FreeCString(ctx, msg);
 			stk = JS_GetPropertyStr(ctx, exc, "stack");
 			if (JS_IsString(stk)) {
@@ -341,6 +384,10 @@ xhr_deliver(void *p)
 		JS_FreeValue(ctx, ret);
 	}
 	JS_FreeValue(ctx, fn);
+	ms_diag_operation_record(s->operation_id, MS_OP_XHR, MS_OP_SETTLE,
+		s->is_error ? MS_OP_REJECT : MS_OP_RESOLVE,
+		s->is_error ? MS_OPR_NETWORK_ERROR : MS_OPR_NONE,
+		MS_ANSWER_NATIVE, s->last_request_id);
 
 	xhr_slot_release(s);
 }
@@ -361,6 +408,27 @@ xhr_apply_redirect_method(struct qjs_xhr_slot *s, int status)
 
 static int xhr_start_fetch(struct qjs_xhr_slot *s);
 
+/* The document URL for the realm executing this native binding.  It is a
+ * borrowed URL: callers that need it beyond this synchronous operation retain
+ * it in their slot with nsurl_ref(). */
+static nsurl *
+xhr_realm_url(JSContext *ctx)
+{
+	struct content *content = qjs_get_content_for_ctx(ctx);
+	if (content == NULL || content->llcache == NULL) return NULL;
+	return content_get_url(content);
+}
+
+/* MacSurf Trace 1a: the nav owning the realm that issued this XHR. Captured
+ * once at send() so redirect hops (which run later, after realm state has
+ * moved on) stay attributed to the originating navigation. */
+static unsigned long
+xhr_realm_nav_id(JSContext *ctx)
+{
+	extern unsigned long content_get_nav_id(struct content *c);
+	return content_get_nav_id(qjs_get_content_for_ctx(ctx));
+}
+
 static void
 xhr_follow_redirect(struct qjs_xhr_slot *s, const char *target)
 {
@@ -369,12 +437,18 @@ xhr_follow_redirect(struct qjs_xhr_slot *s, const char *target)
 
 	if (s->redirect_hops >= QJS_XHR_MAX_HOPS) {
 		s->is_error = 1;
+		ms_diag_operation_record(s->operation_id, MS_OP_XHR, MS_OP_WIRE_START,
+			MS_OP_DECLINE, MS_OPR_REDIRECT_LIMIT, MS_ANSWER_NATIVE,
+			s->last_request_id);
 		macos9_schedule(0, xhr_deliver, s);
 		return;
 	}
 	err = nsurl_join(s->url, target, &joined);
 	if (err != NSERROR_OK || joined == NULL) {
 		s->is_error = 1;
+		ms_diag_operation_record(s->operation_id, MS_OP_XHR, MS_OP_WIRE_START,
+			MS_OP_DECLINE, MS_OPR_BAD_URL, MS_ANSWER_NATIVE,
+			s->last_request_id);
 		macos9_schedule(0, xhr_deliver, s);
 		return;
 	}
@@ -413,6 +487,9 @@ xhr_follow_redirect(struct qjs_xhr_slot *s, const char *target)
 				nsurl_access(joined));
 			nsurl_unref(joined);
 			s->is_error = 1;
+			ms_diag_operation_record(s->operation_id, MS_OP_XHR, MS_OP_WIRE_START,
+				MS_OP_DECLINE, MS_OPR_REDIRECT_DOWNGRADE, MS_ANSWER_NATIVE,
+				s->last_request_id);
 			macos9_schedule(0, xhr_deliver, s);
 			return;
 		}
@@ -490,6 +567,32 @@ xhr_fetch_cb(const fetch_msg *msg, void *pw)
 			s->is_error = 1;
 		macos9_schedule(0, xhr_deliver, s);
 		break;
+	case FETCH_TIMEDOUT:
+		ms_diag_operation_record(s->operation_id, MS_OP_XHR, MS_OP_NATIVE_EVENT,
+			MS_OP_IGNORED, MS_OPR_TIMEOUT, MS_ANSWER_UNSUPPORTED,
+			s->last_request_id);
+		break;
+	case FETCH_AUTH:
+		ms_diag_operation_record(s->operation_id, MS_OP_XHR, MS_OP_NATIVE_EVENT,
+			MS_OP_IGNORED, MS_OPR_AUTH, MS_ANSWER_UNSUPPORTED,
+			s->last_request_id);
+		break;
+	case FETCH_CERTS:
+	case FETCH_CERT_ERR:
+		ms_diag_operation_record(s->operation_id, MS_OP_XHR, MS_OP_NATIVE_EVENT,
+			MS_OP_IGNORED, MS_OPR_CERT, MS_ANSWER_UNSUPPORTED,
+			s->last_request_id);
+		break;
+	case FETCH_SSL_ERR:
+		ms_diag_operation_record(s->operation_id, MS_OP_XHR, MS_OP_NATIVE_EVENT,
+			MS_OP_IGNORED, MS_OPR_SSL_ERROR, MS_ANSWER_UNSUPPORTED,
+			s->last_request_id);
+		break;
+	case FETCH_NOTMODIFIED:
+		ms_diag_operation_record(s->operation_id, MS_OP_XHR, MS_OP_NATIVE_EVENT,
+			MS_OP_IGNORED, MS_OPR_NOT_MODIFIED, MS_ANSWER_UNSUPPORTED,
+			s->last_request_id);
+		break;
 	default:
 		/* FETCH_PROGRESS / FETCH_TIMEDOUT / FETCH_NOTMODIFIED / FETCH_AUTH
 		 * / FETCH_CERT* / FETCH_SSL_ERR: no XHR-visible equivalent yet. */
@@ -502,21 +605,14 @@ xhr_fetch_cb(const fetch_msg *msg, void *pw)
 static int
 xhr_start_fetch(struct qjs_xhr_slot *s)
 {
-	nsurl *referer = NULL;
-	struct content *c = qjs_get_content();
+	nsurl *referer;
 	nserror err;
 	struct fetch *out = NULL;
 
-	/* c->llcache can be NULL for a content that isn't (yet, or any
-	 * longer) fully live -- content_get_url() -> llcache_handle_get_url()
-	 * dereferences it unconditionally and crashes otherwise. Same guard
-	 * as macos9_reconvert_host_allowed() (macos9_reconvert.c) uses
-	 * before its own content_get_url() call, for the same reason. Caught
-	 * by the S0 harness (its minimal test content has no llcache) before
-	 * this ever had a chance to reach real hardware. */
-	if (c != NULL && c->llcache != NULL) {
-		referer = content_get_url(c);	/* borrowed; fetch_start refs it */
-	}
+	/* The owner was captured at JS call time.  This function also runs after
+	 * redirects and after beacon navigation, when consulting a current global
+	 * realm would send the wrong referrer or dereference a dead one. */
+	referer = s->referer;
 
 	/* Every real macos9 fetcher is poll-driven and never completes inside
 	 * its own start() callback, so in production xhr_fetch_cb can't fire
@@ -528,6 +624,10 @@ xhr_start_fetch(struct qjs_xhr_slot *s)
 	 * the fetcher -- so only store it if nothing terminal happened while
 	 * the call was in flight. */
 	s->fetch_live = 1;
+	/* MacSurf Trace 1a: seed the fetch boundary from the slot's captured
+	 * owner (never a current global); each hop gets a fresh request_id and
+	 * points redirect_from at the previous one. */
+	macsurf_fetch_seed(s->nav_id, s->last_request_id);
 	err = fetch_start(s->url, referer, xhr_fetch_cb, s,
 			false /* only_2xx: XHR must see 4xx/5xx bodies too */,
 			(s->body != NULL && strcmp(s->method, "GET") != 0) ?
@@ -536,8 +636,13 @@ xhr_start_fetch(struct qjs_xhr_slot *s)
 			(const char **) s->req_headers, &out);
 	if (err != NSERROR_OK || out == NULL) {
 		s->fetch_live = 0;
+		ms_diag_operation_record(s->operation_id, MS_OP_XHR, MS_OP_WIRE_START,
+			MS_OP_DECLINE, MS_OPR_FETCH_START_FAIL, MS_ANSWER_NATIVE, 0);
 		return -1;
 	}
+	s->last_request_id = fetch_get_request_id(out);
+	ms_diag_operation_record(s->operation_id, MS_OP_XHR, MS_OP_WIRE_START,
+		MS_OP_OK, MS_OPR_NONE, MS_ANSWER_NATIVE, s->last_request_id);
 	if (s->fetch_live) {
 		s->fetch = out;
 	}
@@ -555,18 +660,33 @@ qjs_xhr_native_send(JSContext *ctx, JSValueConst this_val,
 	const char *url_c;
 	const char *body_c = NULL;
 	nsurl *url = NULL;
+	nsurl *base;
 	nserror err;
 	int i;
+	int32_t operation32 = 0;
+	unsigned long operation_id;
 
 	(void) this_val;
 
-	if (argc < 3) return JS_NewInt32(ctx, -1);
+	if (argc > 6) (void) JS_ToInt32(ctx, &operation32, argv[6]);
+	operation_id = (operation32 > 0) ? (unsigned long) operation32 : 0;
+	if (operation_id == 0)
+		operation_id = ms_diag_operation_begin(MS_OP_XHR, MS_ANSWER_NATIVE);
+	ms_diag_operation_record(operation_id, MS_OP_XHR, MS_OP_SEND_ATTEMPT,
+		MS_OP_PENDING, MS_OPR_NONE, MS_ANSWER_NATIVE, 0);
+	if (argc < 3) {
+		ms_diag_operation_record(operation_id, MS_OP_XHR, MS_OP_SEND_ATTEMPT,
+			MS_OP_DECLINE, MS_OPR_BAD_URL, MS_ANSWER_NATIVE, 0);
+		return JS_NewInt32(ctx, -1);
+	}
 
 	method_c = JS_ToCString(ctx, argv[1]);
 	url_c = JS_ToCString(ctx, argv[2]);
 	if (method_c == NULL || url_c == NULL) {
 		if (method_c) JS_FreeCString(ctx, method_c);
 		if (url_c) JS_FreeCString(ctx, url_c);
+		ms_diag_operation_record(operation_id, MS_OP_XHR, MS_OP_SEND_ATTEMPT,
+			MS_OP_DECLINE, MS_OPR_BAD_URL, MS_ANSWER_NATIVE, 0);
 		return JS_NewInt32(ctx, -1);
 	}
 
@@ -589,26 +709,22 @@ qjs_xhr_native_send(JSContext *ctx, JSValueConst this_val,
 	 *
 	 * nsurl_join is RFC-3986 and passes an absolute target straight through,
 	 * so this is a strict superset of the old behaviour.  Base is the current
-	 * document's URL via the same qjs_get_content() + c->llcache NULL-guard
-	 * xhr_start_fetch() already uses for the referer (content_get_url()
+	 * document's URL from the invoking realm (content_get_url()
 	 * dereferences llcache unconditionally and crashes on a not-fully-live
 	 * content).  No base (JS with no live content) falls back to the old
 	 * create, which is right: there is nothing to resolve against. */
-	{
-		struct content *bc = qjs_get_content();
-		nsurl *base = NULL;
-		if (bc != NULL && bc->llcache != NULL) {
-			base = content_get_url(bc);	/* borrowed */
-		}
-		if (base != NULL) {
-			err = nsurl_join(base, url_c, &url);
-		} else {
-			err = nsurl_create(url_c, &url);
-		}
+	base = xhr_realm_url(ctx);
+	if (base != NULL) {
+		err = nsurl_join(base, url_c, &url);
+	} else {
+		err = nsurl_create(url_c, &url);
 	}
 	if (err != NSERROR_OK || url == NULL) {
 		JS_FreeCString(ctx, method_c);
 		JS_FreeCString(ctx, url_c);
+		ms_diag_operation_record(operation_id, MS_OP_XHR, MS_OP_SEND_ATTEMPT,
+			MS_OP_DECLINE, base == NULL ? MS_OPR_NO_BASE : MS_OPR_BAD_URL,
+			MS_ANSWER_NATIVE, 0);
 		return JS_NewInt32(ctx, -1);
 	}
 
@@ -617,14 +733,23 @@ qjs_xhr_native_send(JSContext *ctx, JSValueConst this_val,
 		nsurl_unref(url);
 		JS_FreeCString(ctx, method_c);
 		JS_FreeCString(ctx, url_c);
-		macsurf_debug_log_writef("WORK xhr send: arena full, url=%s",
+		macsurf_debug_log_writef("LIFE xhr send: arena full, url=%s",
 				url_c);
+		ms_diag_operation_record(operation_id, MS_OP_XHR, MS_OP_NATIVE_ALLOC,
+			MS_OP_DECLINE, MS_OPR_ARENA_FULL, MS_ANSWER_NATIVE, 0);
 		return JS_NewInt32(ctx, -1);
 	}
+	ms_diag_operation_record(operation_id, MS_OP_XHR, MS_OP_NATIVE_ALLOC,
+		MS_OP_OK, MS_OPR_NONE, MS_ANSWER_NATIVE, 0);
 
 	s->ctx = ctx;
 	s->xhr_obj = JS_DupValue(ctx, argv[0]);
 	s->url = url;
+	s->referer = (base != NULL) ? nsurl_ref(base) : NULL;
+	s->nav_id = xhr_realm_nav_id(ctx);	/* MacSurf Trace 1a */
+	s->last_request_id = 0;
+	s->origin_script_id = ms_diag_cur_script();	/* MacSurf Trace 1b */
+	s->operation_id = operation_id;
 	strncpy(s->method, method_c, sizeof(s->method) - 1);
 	s->method[sizeof(s->method) - 1] = '\0';
 	for (i = 0; s->method[i]; i++) {
@@ -638,9 +763,17 @@ qjs_xhr_native_send(JSContext *ctx, JSValueConst this_val,
 		if (body_c != NULL) {
 			s->body_len = (long) strlen(body_c);
 			s->body = (char *) malloc((size_t) s->body_len + 1);
-			if (s->body != NULL) {
-				memcpy(s->body, body_c, (size_t) s->body_len + 1);
+			if (s->body == NULL) {
+				JS_FreeCString(ctx, body_c);
+				JS_FreeCString(ctx, url_c);
+				xhr_slot_release(s);
+				ms_diag_operation_record(operation_id, MS_OP_XHR, MS_OP_SEND_ATTEMPT,
+					MS_OP_DECLINE, MS_OPR_BODY_ALLOC, MS_ANSWER_NATIVE, 0);
+				ms_diag_error_record(operation_id, 0, MS_ERR_API_DECLINE,
+					MS_OP_SEND_ATTEMPT, MS_OPR_BODY_ALLOC, "OutOfMemory", "XHR body allocation failed");
+				return JS_NewInt32(ctx, -1);
 			}
+			memcpy(s->body, body_c, (size_t) s->body_len + 1);
 			JS_FreeCString(ctx, body_c);
 		}
 	}
@@ -650,8 +783,9 @@ qjs_xhr_native_send(JSContext *ctx, JSValueConst this_val,
 	if (argc > 4 && JS_IsArray(argv[4])) {
 		JSValue lenv = JS_GetPropertyStr(ctx, argv[4], "length");
 		int32_t len32 = 0;
-		JS_ToInt32(ctx, &len32, lenv);
+		if (JS_ToInt32(ctx, &len32, lenv) < 0) len32 = 0;
 		JS_FreeValue(ctx, lenv);
+		if (len32 < 0) len32 = 0;
 		if (len32 > QJS_XHR_MAX_REQ_HDRS) len32 = QJS_XHR_MAX_REQ_HDRS;
 		for (i = 0; i < len32; i++) {
 			JSValue hv = JS_GetPropertyUint32(ctx, argv[4], (uint32_t) i);
@@ -667,11 +801,13 @@ qjs_xhr_native_send(JSContext *ctx, JSValueConst this_val,
 		s->req_headers[len32] = NULL;
 	}
 
-	macsurf_debug_log_writef("WORK xhr send method=%s url=%s",
+	macsurf_debug_log_writef("LIFE xhr send method=%s url=%s",
 			s->method, url_c);
 	JS_FreeCString(ctx, url_c);
 
 	if (xhr_start_fetch(s) != 0) {
+		ms_diag_error_record(operation_id, 0, MS_ERR_API_DECLINE,
+			MS_OP_WIRE_START, MS_OPR_FETCH_START_FAIL, "NetworkError", "fetch_start failed");
 		xhr_slot_release(s);
 		return JS_NewInt32(ctx, -1);
 	}
@@ -691,7 +827,11 @@ qjs_xhr_native_abort(JSContext *ctx, JSValueConst this_val,
 	if (argc < 1) return JS_UNDEFINED;
 	JS_ToInt32(ctx, &id, argv[0]);
 	s = xhr_slot_find(id);
-	if (s != NULL) xhr_slot_release(s);
+	if (s != NULL) {
+		ms_diag_operation_record(s->operation_id, MS_OP_XHR, MS_OP_ABORT,
+			MS_OP_OK, MS_OPR_ABORTED, MS_ANSWER_NATIVE, s->last_request_id);
+		xhr_slot_release(s);
+	}
 	return JS_UNDEFINED;
 }
 
@@ -715,31 +855,38 @@ qjs_beacon_send(JSContext *ctx, JSValueConst this_val,
 	const char *url_c;
 	const char *body_c = NULL;
 	nsurl *url = NULL;
+	nsurl *base;
 	nserror err;
+	unsigned long operation_id;
 
 	(void) this_val;
+	operation_id = ms_diag_operation_begin(MS_OP_BEACON, MS_ANSWER_NATIVE);
 
-	if (argc < 1) return JS_FALSE;
+	if (argc < 1) {
+		ms_diag_operation_record(operation_id, MS_OP_BEACON, MS_OP_SEND_ATTEMPT,
+			MS_OP_DECLINE, MS_OPR_BAD_URL, MS_ANSWER_NATIVE, 0);
+		return JS_FALSE;
+	}
 
 	url_c = JS_ToCString(ctx, argv[0]);
-	if (url_c == NULL) return JS_FALSE;
+	if (url_c == NULL) {
+		ms_diag_operation_record(operation_id, MS_OP_BEACON, MS_OP_SEND_ATTEMPT,
+			MS_OP_DECLINE, MS_OPR_BAD_URL, MS_ANSWER_NATIVE, 0);
+		return JS_FALSE;
+	}
 
 	/* Resolve against the document base, same as xhr's initial send
 	 * (fixes865): analytics targets are commonly root-relative. */
-	{
-		struct content *bc = qjs_get_content();
-		nsurl *base = NULL;
-		if (bc != NULL && bc->llcache != NULL) {
-			base = content_get_url(bc);	/* borrowed */
-		}
-		if (base != NULL) {
-			err = nsurl_join(base, url_c, &url);
-		} else {
-			err = nsurl_create(url_c, &url);
-		}
+	base = xhr_realm_url(ctx);
+	if (base != NULL) {
+		err = nsurl_join(base, url_c, &url);
+	} else {
+		err = nsurl_create(url_c, &url);
 	}
 	if (err != NSERROR_OK || url == NULL) {
 		JS_FreeCString(ctx, url_c);
+		ms_diag_operation_record(operation_id, MS_OP_BEACON, MS_OP_SEND_ATTEMPT,
+			MS_OP_DECLINE, MS_OPR_BAD_URL, MS_ANSWER_NATIVE, 0);
 		return JS_FALSE;
 	}
 	/* sendBeacon only transports over http(s); any other scheme is an
@@ -751,6 +898,8 @@ qjs_beacon_send(JSContext *ctx, JSValueConst this_val,
 		     strncmp(surl, "https://", 8) != 0)) {
 			nsurl_unref(url);
 			JS_FreeCString(ctx, url_c);
+			ms_diag_operation_record(operation_id, MS_OP_BEACON, MS_OP_SEND_ATTEMPT,
+				MS_OP_DECLINE, MS_OPR_BAD_URL, MS_ANSWER_NATIVE, 0);
 			return JS_FALSE;
 		}
 	}
@@ -761,6 +910,8 @@ qjs_beacon_send(JSContext *ctx, JSValueConst this_val,
 		JS_FreeCString(ctx, url_c);
 		macsurf_debug_log_writef("WORK beacon send: arena full, url=%s",
 				url_c);
+		ms_diag_operation_record(operation_id, MS_OP_BEACON, MS_OP_NATIVE_ALLOC,
+			MS_OP_DECLINE, MS_OPR_ARENA_FULL, MS_ANSWER_NATIVE, 0);
 		return JS_FALSE;
 	}
 
@@ -768,6 +919,11 @@ qjs_beacon_send(JSContext *ctx, JSValueConst this_val,
 	s->ctx = NULL;			/* flush() skips beacons: keep flying */
 	s->xhr_obj = JS_UNDEFINED;
 	s->url = url;
+	s->referer = (base != NULL) ? nsurl_ref(base) : NULL;
+	s->nav_id = xhr_realm_nav_id(ctx);	/* MacSurf Trace 1a */
+	s->last_request_id = 0;
+	s->origin_script_id = ms_diag_cur_script();	/* MacSurf Trace 1b */
+	s->operation_id = operation_id;
 	strcpy(s->method, "POST");
 
 	if (argc > 1 && !JS_IsNull(argv[1]) && !JS_IsUndefined(argv[1])) {
@@ -775,9 +931,16 @@ qjs_beacon_send(JSContext *ctx, JSValueConst this_val,
 		if (body_c != NULL) {
 			s->body_len = (long) strlen(body_c);
 			s->body = (char *) malloc((size_t) s->body_len + 1);
-			if (s->body != NULL) {
-				memcpy(s->body, body_c, (size_t) s->body_len + 1);
+			if (s->body == NULL) {
+				JS_FreeCString(ctx, body_c);
+				JS_FreeCString(ctx, url_c);
+				xhr_slot_release(s);
+				ms_diag_operation_record(operation_id, MS_OP_BEACON,
+					MS_OP_SEND_ATTEMPT, MS_OP_DECLINE,
+					MS_OPR_BODY_ALLOC, MS_ANSWER_NATIVE, 0);
+				return JS_FALSE;
 			}
+			memcpy(s->body, body_c, (size_t) s->body_len + 1);
 			JS_FreeCString(ctx, body_c);
 		}
 	}
@@ -825,6 +988,9 @@ macos9_js_fetch_flush(JSContext *old_ctx)
 	if (old_ctx == NULL) return;
 	for (i = 0; i < QJS_XHR_MAX; i++) {
 		if (s_xhr_arena[i].used && s_xhr_arena[i].ctx == old_ctx) {
+			ms_diag_operation_record(s_xhr_arena[i].operation_id, MS_OP_XHR,
+				MS_OP_ABORT, MS_OP_OK, MS_OPR_REALM_GONE,
+				MS_ANSWER_NATIVE, s_xhr_arena[i].last_request_id);
 			xhr_slot_release(&s_xhr_arena[i]);
 		}
 	}

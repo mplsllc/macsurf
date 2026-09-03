@@ -768,8 +768,15 @@ void content__request_redraw(struct content *c,
 			     int x, int y, int width, int height)
 {
 	union content_msg_data data;
+	/* MacSurf Trace 1c: bind this invalidation to the live render pass (if
+	 * any). No-op when no pass is on the stack -- caret blink, text
+	 * selection, form menus etc. request redraws with no render scope.
+	 * Uniquely-named frontend symbol; implemented in macsurf_diag.c. */
+	extern void ms_diag_paint_note(void);
 
 	CONTENT_CHECK_VOID(c);
+
+	ms_diag_paint_note();
 
 	data.redraw.x = x;
 	data.redraw.y = y;
@@ -941,6 +948,7 @@ content_scaled_redraw(struct hlcache_handle *h,
 	data.repeat_x = false;
 	data.repeat_y = false;
 	data.nearest = false;  /* fixes829 (#256) */
+	data.background_blend_mode = 0;
 
 	/* Find the scale factor to use if the content has a width */
 	if (c->width) {
@@ -1638,6 +1646,18 @@ content__add_rfc5988_link(struct content *c,
 
 
 /* exported interface documented in content/content.h */
+/* MacSurf Trace 1a: navigation that fetched this content's llcache object
+ * (0 == unattributed, or the content is no longer cache-backed). Derived, not
+ * stored -- see the note in content_protected.h. */
+unsigned long content_get_nav_id(struct content *c)
+{
+	if (c == NULL || c->llcache == NULL) {
+		return 0;
+	}
+	return llcache_handle_get_nav_id(c->llcache);
+}
+
+
 nsurl *content_get_url(struct content *c)
 {
 	CONTENT_CHECK_RETURN(c, NULL);

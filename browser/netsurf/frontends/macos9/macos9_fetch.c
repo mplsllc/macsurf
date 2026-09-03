@@ -258,6 +258,63 @@ int macos9_host_is_tracker(const char *host)
 	return 0;
 }
 
+/* fixes1328 (#167)  -  request-kind Accept selection.
+ *
+ * 9b86becd ("Select and request WebP in normal browsing") gave EVERY
+ * request -- documents, XHR and images alike -- the image-flavoured
+ * Accept header: text/html, application/xhtml+xml, image/webp, then
+ * image wildcard at q=0.8 and the full wildcard demoted to q=0.7.
+ *
+ * Facebook negotiates its bootstrap document server-side, so advertising
+ * image/webp (and demoting the full wildcard from q=0.8 to q=0.7) on the
+ * MAIN DOCUMENT request can change which bundle variant the edge serves.
+ * Real browsers never do this: they send a document Accept for documents
+ * and an image Accept for images.
+ *
+ * So: restore the exact pre-WebP document header for everything that is
+ * not positively identified as an image request, and keep an explicit
+ * image/webp advertisement for the ones that are.  WebP decoding and
+ * srcset/picture selection are untouched -- and the restored document
+ * header still carries the full wildcard at q=0.8, so a server that
+ * sniffs rather than negotiates keeps serving WebP either way.
+ *
+ * NOTE: do not paste a literal Accept value into this comment.  Those
+ * strings contain a star-slash pair, which closes the block comment
+ * early and drops the remaining prose into the token stream. */
+static int macos9_path_is_image(const char *path)
+{
+	static const char *exts[] = {
+		".webp", ".png", ".jpg", ".jpeg", ".gif", ".bmp",
+		".ico", ".svg", ".tif", ".tiff"
+	};
+	size_t n;
+	size_t i;
+	size_t cut;
+	if (path == NULL) return 0;
+	/* Measure the path only, never the query or fragment: Facebook CDN
+	 * URLs carry .jpg/.webp before a long ?stp=... tail. */
+	n = strlen(path);
+	for (cut = 0; cut < n; cut++) {
+		if (path[cut] == '?' || path[cut] == '#') break;
+	}
+	for (i = 0; i < sizeof exts / sizeof exts[0]; i++) {
+		size_t el = strlen(exts[i]);
+		if (cut >= el &&
+		    strncasecmp(path + cut - el, exts[i], el) == 0) {
+			return 1;
+		}
+	}
+	return 0;
+}
+
+const char *macos9_accept_for_path(const char *path)
+{
+	if (macos9_path_is_image(path)) {
+		return "image/webp,image/png,image/jpeg,image/gif,*/*;q=0.8";
+	}
+	return "text/html,application/xhtml+xml,*/*;q=0.8";
+}
+
 /* fixes835 (#167 Facebook M1)  -  case-insensitive substring test. Used by
  * the fetchers to decide whether the caller already supplied a Sec-Fetch
  * / Origin header (which then WINS over the synthesized one). */
@@ -346,6 +403,7 @@ static const char *macos9_fetch_filetype(const char *unix_path)
 		return "text/html";
 	if (strcasecmp(ext, "css") == 0) return "text/css";
 	if (strcasecmp(ext, "png") == 0) return "image/png";
+	if (strcasecmp(ext, "webp") == 0) return "image/webp";
 	if (strcasecmp(ext, "gif") == 0) return "image/gif";
 	if (strcasecmp(ext, "txt") == 0) return "text/plain";
 	return "application/octet-stream";

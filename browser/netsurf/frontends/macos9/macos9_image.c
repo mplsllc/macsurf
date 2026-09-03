@@ -39,6 +39,7 @@
 
 #include "macsurf_debug.h"
 #include "macos9_svg_inline.h"	/* fixes823 (#280) svg-as-image */
+#include "macos9_webp.h"
 
 #include "lodepng.h"
 
@@ -325,6 +326,7 @@ macos9_purge_decoded_images(void)
 			"img purge: evicted=%ld remaining=%ld",
 			evicted, macsurf__decoded_img_bytes_current);
 	}
+	macos9_webp_purge_decoded_images();
 }
 
 static bool
@@ -760,6 +762,29 @@ macos9_qt_decode_to_bitmap(GraphicsImportComponent gi,
 extern void macos9_bitmap_set_mask(void *bitmap, unsigned char *mask,
 		int mask_rowbytes);
 
+/* Finish a decoded RGBA bitmap using MacSurf's shared QuickDraw alpha
+ * contract.  Decoders hand ownership of mask to macos9_bitmap_set_mask;
+ * fully opaque images still receive a mask allocation here, but the plotter
+ * follows the colour-accurate CopyBits path after set_opaque(true). */
+void
+macos9_image_finish_rgba_bitmap(void *bitmap, unsigned char *mask,
+		int mask_rowbytes, bool has_transparency)
+{
+	if (bitmap == NULL) {
+		if (mask != NULL) free(mask);
+		return;
+	}
+	macos9_bitmap_set_mask(bitmap, mask, mask_rowbytes);
+	if (guit != NULL && guit->bitmap != NULL &&
+		guit->bitmap->set_opaque != NULL) {
+		guit->bitmap->set_opaque(bitmap, has_transparency ? false : true);
+	}
+	if (guit != NULL && guit->bitmap != NULL &&
+		guit->bitmap->modified != NULL) {
+		guit->bitmap->modified(bitmap);
+	}
+}
+
 /* fixes259  -  decode PNG at native via lodepng, then box-filter
  * downscale to (target_w, target_h) into a single NetSurf bitmap +
  * matching 1-bit mask. If target dims match native (or upscale would
@@ -922,8 +947,8 @@ macos9_png_decode_target(const unsigned char *data, size_t size,
 	 * source into a blue cast. Marking them opaque sends them down the plain
 	 * CopyBits srcCopy path  -  the same path JPEGs use, which is colour-
 	 * accurate. Transparent PNGs still use CopyMask (unchanged). */
-	guit->bitmap->set_opaque(bm, has_trans ? false : true);
-	macos9_bitmap_set_mask(bm, mask, mask_rowbytes);
+	macos9_image_finish_rgba_bitmap(bm, mask, mask_rowbytes,
+			has_trans ? true : false);
 
 	*out_bitmap = bm;
 	return NSERROR_OK;
@@ -1037,16 +1062,10 @@ macos9_png_decode_to_bitmap(const unsigned char *data, size_t size,
 
 	free(rgba);
 
-	macos9_bitmap_set_mask(bm, mask, mask_rowbytes);
-
-	/* fixes301c  -  opaque PNGs take the colour-accurate CopyBits srcCopy
-	 * path; only transparent ones use CopyMask. See decode_target. */
-	if (guit->bitmap->set_opaque != NULL) {
-		guit->bitmap->set_opaque(bm, has_trans ? false : true);
-	}
-	if (guit->bitmap->modified != NULL) {
-		guit->bitmap->modified(bm);
-	}
+	/* Opaque PNGs take the colour-accurate CopyBits path; transparent ones
+	 * retain the CopyMask path.  Shared with the WebP decoder. */
+	macos9_image_finish_rgba_bitmap(bm, mask, mask_rowbytes,
+			has_trans ? true : false);
 
 	*out_bitmap = bm;
 	*out_w = (int)w;
@@ -1357,8 +1376,8 @@ static int macos9_ico_extract_png(macos9_qt_image_content *qti)
 	qti->compressed = new_handle;
 
 	macsurf_debug_log_writef(
-		"img convert: ICO entry %d extracted PNG %lu bytes",
-		(int)best_idx, size);
+		"img convert: ICO entry %d extracted PNG %ld bytes",
+		(int)best_idx, (long)size);
 	return 1;
 }
 
@@ -2040,6 +2059,7 @@ macos9_qt_image_redraw(struct content *c, struct content_redraw_data *data,
 	if (data->repeat_x) flags |= BITMAPF_REPEAT_X;
 	if (data->repeat_y) flags |= BITMAPF_REPEAT_Y;
 	if (data->nearest)  flags |= BITMAPF_NEAREST;  /* fixes829 (#256) */
+	flags |= BITMAPF_BLEND_MODE(data->background_blend_mode);
 
 	return ctx->plot->bitmap(ctx, (struct bitmap *)qti->bitmap,
 			data->x, data->y,
@@ -2358,74 +2378,67 @@ macos9_svg_src_process(struct content *c, const char *data, unsigned int size)
 	return true;
 }
 
-/* fixes823 (#280): tiny attribute-number scanner for the root <svg> tag.
- * Reads the integer prefix of attr="VALUE" within the first 512 bytes.
- * Returns 0 when absent/unparsable. Integer-only is fine for icon dims;
- * the PAINT path (macos9_svg_paint_standalone) does full float parsing. */
-static int
-macos9_svg_src_attr_int(const char *src, size_t len, const char *name)
-{
-	char needle[24];
-	size_t nl = strlen(name);
-	const char *p;
-	const char *end;
-	int v = 0;
-	int any = 0;
-
-	if (len > 512) len = 512;
-	if (nl + 4 > sizeof(needle)) return 0;
-	needle[0] = ' ';
-	memcpy(needle + 1, name, nl);
-	needle[1 + nl] = '=';
-	needle[2 + nl] = '"';
-	needle[3 + nl] = '\0';
-	end = src + len;
-	for (p = src; p + nl + 3 < end; p++) {
-		if (memcmp(p, needle, nl + 3) == 0) {
-			p += nl + 3;
-			while (p < end && *p >= '0' && *p <= '9') {
-				v = v * 10 + (*p - '0');
-				any = 1;
-				p++;
-			}
-			return any ? v : 0;
-		}
-	}
-	return 0;
-}
-
 static bool
 macos9_svg_src_convert(struct content *c)
 {
-	/* fixes823 (#280): give the SVG intrinsic dimensions so <img> layout
-	 * sizes it (without these the image lays out 0x0 and the redraw never
-	 * fires). width/height attrs first; else viewBox w/h; else 16. */
+	/* Give the SVG intrinsic dimensions so <img> layout sizes it
+	 * (without these the image lays out 0x0 and the redraw never
+	 * fires). Priority: explicit width+height; else viewBox, deriving
+	 * a missing single explicit dimension from its aspect ratio; else
+	 * one explicit dimension alone; else 16 - MacSurf's own survival
+	 * default for the residual case where the document gives no size
+	 * information at all (not spec behaviour - this browser mostly
+	 * paints small icons/logos in these slots and needs SOME
+	 * deterministic size rather than 0x0). */
 	size_t sz = 0;
 	const uint8_t *src = content__get_source_data(c, &sz);
-	int w = 0;
-	int h = 0;
+	struct macos9_svg_root_dims dims;
+	char *buf;
+	const char *root;
+	const char *root_end;
+	float fw = 0.0f;
+	float fh = 0.0f;
 
-	if (src != NULL && sz > 0) {
-		w = macos9_svg_src_attr_int((const char *)src, sz, "width");
-		h = macos9_svg_src_attr_int((const char *)src, sz, "height");
+	memset(&dims, 0, sizeof(dims));
+	if (src != NULL && sz > 0 &&
+			macos9_svg_locate_root((const char *)src, sz,
+				&buf, &root, &root_end)) {
+		macos9_svg_parse_root_dims(root, root_end, &dims);
+		free(buf);
 	}
-	if (w <= 0 || h <= 0) {
-		/* crude viewBox fallback: last two numbers of viewBox. */
-		w = (w > 0) ? w : 16;
-		h = (h > 0) ? h : 16;
+
+	if (dims.have_width && dims.have_height) {
+		fw = dims.width;
+		fh = dims.height;
+	} else if (dims.have_vb) {
+		if (dims.have_width) {
+			fw = dims.width;
+			fh = dims.width * dims.vb_h / dims.vb_w;
+		} else if (dims.have_height) {
+			fh = dims.height;
+			fw = dims.height * dims.vb_w / dims.vb_h;
+		} else {
+			fw = dims.vb_w;
+			fh = dims.vb_h;
+		}
+	} else {
+		fw = dims.have_width ? dims.width : 16.0f;
+		fh = dims.have_height ? dims.height : 16.0f;
 	}
-	c->width = w;
-	c->height = h;
+
+	c->width = (int)(fw + 0.5f);
+	c->height = (int)(fh + 0.5f);
 
 	content_set_ready(c);
 	content_set_done(c);
 	return true;
 }
 
-/* fixes823 (#280): REAL redraw for external SVG - previously NULL, so
- * <img src="*.svg"> and CSS background url(*.svg) painted nothing (the
- * fixes578b handler existed only to feed sprite <use>). Paint the raw
- * source via the shared standalone painter (paths+fills, viewBox->rect). */
+/* REAL redraw for external SVG - previously NULL, so <img src="*.svg">
+ * and CSS background url(*.svg) painted nothing. Paint the raw source
+ * via the shared standalone painter (path/rect/circle/ellipse/line/
+ * polygon/polyline with per-shape fill/stroke and full transform
+ * composition; viewBox->rect via preserveAspectRatio). */
 static bool
 macos9_svg_src_redraw(struct content *c, struct content_redraw_data *data,
 		const struct rect *clip, const struct redraw_context *ctx)
@@ -2435,8 +2448,6 @@ macos9_svg_src_redraw(struct content *c, struct content_redraw_data *data,
 	int w;
 	int h;
 
-	(void)clip;   /* vector paints are clipped by the caller's plot clip */
-
 	if (src == NULL || sz == 0)
 		return true;
 	w = (data->width > 0) ? data->width : c->width;
@@ -2444,7 +2455,7 @@ macos9_svg_src_redraw(struct content *c, struct content_redraw_data *data,
 	if (w <= 0 || h <= 0)
 		return true;
 	(void)macos9_svg_paint_standalone((const char *)src, sz,
-			data->x, data->y, w, h, ctx);
+			data->x, data->y, w, h, clip, ctx);
 	return true;
 }
 
@@ -2530,6 +2541,11 @@ nserror image_init(void)
 	}
 	err = content_factory_register_handler("image/svg",
 			&macos9_svg_src_handler);
+	if (err != NSERROR_OK) {
+		return err;
+	}
+
+	err = macos9_webp_init();
 	if (err != NSERROR_OK) {
 		return err;
 	}

@@ -8,7 +8,7 @@ libcss parse + cascade, our own layout, and QuickDraw painting. This page is the
 user-facing summary; the deep engineering audit lives in
 [.private/research/css-gap-inventory-2026-08-14.md](../.private/research/css-gap-inventory-2026-08-14.md).
 
-*Last updated: MacSurf 2.0.5 (2026-07-15).*
+*Last updated: development snapshot after fixes1216 (2026-08-19).*
 
 ### Legend
 
@@ -42,9 +42,10 @@ user-facing summary; the deep engineering audit lives in
 | `background-size` | ◑ | Honored for raster images; not yet for background SVG. |
 | `background-position` / `-repeat` | ✅ | |
 | `background: none` / `transparent` reset | ✅ | Shorthand reset fixed 2.0.5 (#268). |
-| `background-clip` | ◑&ast; | `border-box`/`padding-box`/`content-box` honored (2.0.5, #255); `background-clip: text` deferred. |
-| `background-origin` | ✖ | Deferred (#255). |
-| `background-attachment: fixed` | ✖ | |
+| `background-clip` | ✅&ast; | `border-box`/`padding-box`/`content-box` honored (2.0.5, #255); `text` clips gradient and bitmap backgrounds to glyphs, hardware-confirmed on G3 iMac (fixes1218–1223). |
+| `background-origin` | ◑&ast; | Longhand `border-box` / `padding-box` / `content-box` positions raster backgrounds independently of clipping; hardware-confirmed on G3 iMac (fixes1215/1216). Shorthand box keywords are deferred. |
+| `background-blend-mode` | ✅&ast; | All 16 standard keywords parse and cascade. The supported background layer blends with `background-color` for gradients and raster images; `multiply` hardware-confirmed for both on G3 iMac (fixes1224/1225, #255). |
+| `background-attachment: fixed` | ✅&ast; | Raster images and gradients stay viewport-anchored while their box scrolls. |
 
 ## Gradients
 
@@ -66,10 +67,11 @@ user-facing summary; the deep engineering audit lives in
 | `tab-size` | ✅&ast; | Tabs in `<pre>` (2.0.5, #251). |
 | `word-break` / `overflow-wrap` | ✅&ast; | break-all / break-word / anywhere (#273/#234). |
 | `text-shadow` | ✅ | |
-| `text-overflow: ellipsis` | ✖ | Clips today; ellipsis deferred. |
+| `text-overflow: ellipsis` | ✅&ast; | Paints an ellipsis over clipped single-line overflow. |
 | `text-decoration` longhands | ✅&ast; | color / style / thickness (2.0.5, #249). |
 | `caret-color` | ✅&ast; | In-page text caret (2.0.5, #252). |
-| `word-spacing` / `writing-mode` / `unicode-bidi` | ✖ | LTR only; vertical & RTL deferred (#248). |
+| `word-spacing` | ✅&ast; | Applies to inline text, including justified lines. |
+| `writing-mode` / `unicode-bidi` | ✖ | Horizontal LTR layout only; vertical writing and full bidi are deferred (#248). |
 
 ## Fonts
 
@@ -92,7 +94,7 @@ user-facing summary; the deep engineering audit lives in
 
 | Feature | Support | Notes |
 |---|:---:|---|
-| `transition` | ✖ | Degrades to the end state (no animation). |
+| `transition` | ◑ | Temporal presentation is hardware-verified for `opacity` only (QuickDraw stipple approximation); other properties currently degrade to the end state. |
 | `animation` / `@keyframes` | ✖ | Same — final state, no motion. |
 
 ## Layout — Flexbox
@@ -111,8 +113,9 @@ user-facing summary; the deep engineering audit lives in
 |---|:---:|---|
 | `display: grid`, `grid-template-columns/rows` | ✅ | Fixed, %, and fr tracks. |
 | `auto` tracks sized to content | ✅&ast; | Spec-order content sizing (2.0.5, #62). |
-| `gap` / `column-gap` | ✅ | Single-value; two-value `gap: A B` ◑ (row-gap shares storage). |
-| Placement / span / `grid-auto-flow` | ◑ | Round 2 in progress (#279). |
+| `gap` / `row-gap` / `column-gap` | ✅&ast; | Independent row and column gaps; two-value `gap: A B` is honored. |
+| Placement / span / `grid-auto-flow` | ◑&ast; | Numeric placement, spans, areas, and row/column/dense flow work; named lines and negative lines other than `-1` are deferred. |
+| `justify-self` | ✅&ast; | start / center / stretch per grid item (2.0.5 follow-up, #279). |
 | `subgrid` | ✖ | (#66) |
 
 ## Multiple Columns
@@ -120,7 +123,7 @@ user-facing summary; the deep engineering audit lives in
 | Feature | Support | Notes |
 |---|:---:|---|
 | `column-count` / `column-width` / `column-gap` | ✅ | Multicol V1. |
-| `column-span: all` | ✖ | Parsed, not yet applied. |
+| `column-span: all` | ✅&ast; | Spanning children break out across all columns. |
 
 ## User Interface & Box Model
 
@@ -128,8 +131,8 @@ user-facing summary; the deep engineering audit lives in
 |---|:---:|---|
 | `box-sizing` | ✅ | |
 | `resize` / `user-select` | ✖ | (#257) |
-| `appearance` / native form-control styling | ✖ | Deferred (#80). |
-| `outline` | ✖ | Focus rings deferred. |
+| `appearance: none` | ✅&ast; | Suppresses the native widget so CSS can paint the control (#80). |
+| `outline` | ✅&ast; | CSS outline color, width, and style paint outside the border box. Native focus-ring policy remains separate. |
 | `image-rendering` | ▫&ast; | Parsed/stored; QuickDraw scaling is nearest-neighbor regardless (2.0.5, #256). |
 
 ## Modern building blocks
@@ -139,7 +142,7 @@ user-facing summary; the deep engineering audit lives in
 | **CSS Custom Properties** (`var()`, `--foo`) | ✅&ast; | Native `var()` resolution at cascade time — the feature that unblocked modern themes (Drupal/XenForo). **First in the NetSurf family.** |
 | **CSS Logical Properties** | ✅&ast; | `margin/padding/border-block\|inline`, `inset-*`, logical sizing (2.0.5, #247). |
 | `:root`, attribute & structural selectors | ✅ | |
-| `:is()` / `:where()` / `:has()` | ◑ | Partial matching (#163). |
+| `:is()` / `:where()` / `:has()` | ◑ | Recognised but not semantically matched yet (#163). |
 | `@media` queries | ✅ | |
 | `@container` queries | ✖ | (#75) |
 | `clip-path` / `mask` / `filter` | ✖ | Degrade to flat rendering. |

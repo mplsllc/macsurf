@@ -91,6 +91,11 @@
 
 #include "macsurf_debug_log.h"
 
+/* Preference-owned runtime gate. It returns false before nsoption_init(), so
+ * startup work does not accidentally activate diagnostics ahead of the
+ * persisted release setting. */
+extern int macos9_debug_integrations_enabled(void);
+
 #include <string.h>
 #include <stdarg.h>
 
@@ -422,6 +427,41 @@ static OSErr macos9_app_dir_get(short *vRef, long *dirID)
 	*dirID = appSpec.parID;
 	return noErr;
 }
+
+/* The compiler's __DATE__/__TIME__ below belong to this translation unit,
+ * not to the executable as a whole: an incremental CodeWarrior build can
+ * relink MacSurf after changing other files while this one remains untouched.
+ * Read the running application's HFS modification date instead. It is the
+ * timestamp of the exact executable file that opened this log. */
+static OSErr macsurf_running_app_mtime(unsigned long *mtime)
+{
+	ProcessSerialNumber psn;
+	ProcessInfoRec      info;
+	FSSpec              appSpec;
+	CInfoPBRec          pb;
+	Str63               name;
+	OSErr               err;
+
+	if (mtime == NULL) return paramErr;
+	psn.highLongOfPSN = 0;
+	psn.lowLongOfPSN = kCurrentProcess;
+	memset(&info, 0, sizeof(info));
+	info.processInfoLength = sizeof(ProcessInfoRec);
+	info.processName = NULL;
+	info.processAppSpec = &appSpec;
+	err = GetProcessInformation(&psn, &info);
+	if (err != noErr) return err;
+	memcpy(name, appSpec.name, appSpec.name[0] + 1);
+	memset(&pb, 0, sizeof(pb));
+	pb.hFileInfo.ioNamePtr = name;
+	pb.hFileInfo.ioVRefNum = appSpec.vRefNum;
+	pb.hFileInfo.ioDirID = appSpec.parID;
+	pb.hFileInfo.ioFDirIndex = 0;
+	err = PBGetCatInfoSync(&pb);
+	if (err != noErr) return err;
+	*mtime = (unsigned long)pb.hFileInfo.ioFlMdDat;
+	return noErr;
+}
 #endif
 
 void
@@ -433,11 +473,13 @@ macsurf_debug_log_init(void)
 	OSErr cerr;
 	short vRefNum;
 	long dirID;
+	unsigned long exe_mtime;
+	DateTimeRec exe_date;
 	unsigned char fname[32];
 	const char *name;
 	size_t nlen;
 
-	if (g_log_open) return;
+	if (!macos9_debug_integrations_enabled() || g_log_open) return;
 
 	vRefNum = 0;
 	dirID = 0;
@@ -495,17 +537,27 @@ macsurf_debug_log_init(void)
 
 	(void)SetFPos(g_log_ref, fsFromLEOF, 0);
 
-	/* fixes703  -  prominent, unmistakable session header so a log that spans
+	/* fixes703/1334  -  prominent, unmistakable session header so a log that spans
 	 * several launches (the reporter didn't clear it) is trivially segmented.
 	 * Every line is '='-led so it survives the crash-only gate (fixes697).
-	 * __DATE__/__TIME__ stamp the BUILD (distinguishes two different .sit's);
-	 * the GetDateTime line stamps this LAUNCH. */
+	 * The first timestamp is this logger object's compiler time only; the
+	 * second is the HFS modification time of the RUNNING executable and is the
+	 * authoritative incremental-build/deploy identifier. */
 	macsurf_debug_log_write(
 		"====================================================================");
 	macsurf_debug_log_write(
 		"=====================   N E W   S E S S I O N   ====================");
 	macsurf_debug_log_writef(
-		"===  MacSurf 2.0.5   (build %s %s)", __DATE__, __TIME__);
+		"===  MacSurf 2.0.5   (logger compiled %s %s)", __DATE__, __TIME__);
+	if (macsurf_running_app_mtime(&exe_mtime) == noErr) {
+		SecondsToDate(exe_mtime, &exe_date);
+		macsurf_debug_log_writef(
+			"===  executable build %d-%d-%d %d:%d:%d",
+			(int)exe_date.year, (int)exe_date.month, (int)exe_date.day,
+			(int)exe_date.hour, (int)exe_date.minute, (int)exe_date.second);
+	} else {
+		macsurf_debug_log_write("===  executable build timestamp unavailable");
+	}
 	{
 		unsigned long secs = 0;
 		DateTimeRec dtr;
@@ -926,7 +978,7 @@ do_write:
 	if (g_log_vref != 0) (void)FlushVol(NULL, g_log_vref);
 #else
 #ifdef MACSURF_DEBUG
-	/* fixes911  -  DEBUG builds flush EVERY kept line straight to disk.
+	/* fixes911  -  DEBUG builds write EVERY kept line immediately.
 	 *
 	 * The buffered path (fixes261) and the 250-line eager budget (fixes704)
 	 * were both tuned when this channel emitted ~3000 lines per load, where
@@ -939,11 +991,18 @@ do_write:
 	 * log whose last line was an ordinary NAV, with nothing about what the
 	 * drain was doing.
 	 *
-	 * At the gate's volume, per-line FlushVol is affordable, and a debug build
-	 * should buy durability with it. RELEASE builds keep the old budget +
-	 * buffered path below. */
+	 * fixes1328 (#167) - real OS 9 timing disproved "affordable": a 68kmla
+	 * navigation retained about 750 lines and took 31 seconds, while its
+	 * instrumented CPU/network work totalled only 5.3 seconds.  FlushVol costs
+	 * the documented 10-50 ms and synchronises the ENTIRE HFS volume; the
+	 * observed 41 ms per retained line accounts for the missing wall time.
+	 *
+	 * Keep the per-line buffer flush (FSWrite), so an application exception
+	 * leaves an up-to-date file, but do not force the whole volume to stable
+	 * media for ordinary diagnostics.  FATAL paths and explicit checkpoints
+	 * still call macsurf_debug_log_flush(), which retains FlushVol. RELEASE
+	 * builds keep the eager-budget + buffered path below. */
 	macsurf_debug_log_buffer_flush();
-	if (g_log_vref != 0) (void)FlushVol(NULL, g_log_vref);
 	if (g_log_eager_left > 0) g_log_eager_left--;
 #else
 	/* fixes704  -  flush the first LOG_EAGER_LINES lines straight to disk so a
@@ -1000,8 +1059,20 @@ macsurf_debug_log_flush(void)
 void
 macsurf_debug_log_writef(const char *fmt, ...)
 {
-	char buf[256];
+	/* fixes1238 (#167) - 256 was silently truncating any line whose %s
+	 * argument runs long, with no ellipsis or marker: fbcdn.net's
+	 * content-hash rsrc.php URLs (the exact bundle URLs a hardware-log
+	 * investigation needs to curl and read) were cut off mid-string at
+	 * ~254 usable chars, past any closing bracket, so the truncated tail
+	 * could not even be recognised as truncated from the log alone.
+	 * fmt_vformat and macsurf_debug_log_write both already take the
+	 * buffer length as a parameter (no OTHER fixed-size assumption
+	 * downstream -- macsurf_debug_log_write's own LOG_BUF_CAP=4096 ring
+	 * buffer already handles single lines up to 4 KB, longer ones FSWrite
+	 * straight through), so this is the one place that needed to grow. */
+	char buf[1024];
 	va_list ap;
+	if (!macos9_debug_integrations_enabled()) return;
 
 	va_start(ap, fmt);
 	fmt_vformat(buf, (int)sizeof(buf), fmt, ap);
@@ -1171,10 +1242,13 @@ macsurf_free_mem(void)
 void
 macsurf_debug_log_tracef(const char *fmt, ...)
 {
-	char buf[256];
+	/* fixes1238 (#167) - same widen as macsurf_debug_log_writef above,
+	 * kept in sync so the two formatters don't silently diverge again. */
+	char buf[1024];
 	va_list ap;
 
-	if (!macsurf_debug_log_trace_enabled) return;
+	if (!macos9_debug_integrations_enabled() ||
+		!macsurf_debug_log_trace_enabled) return;
 	va_start(ap, fmt);
 	fmt_vformat(buf, (int)sizeof(buf), fmt, ap);
 	va_end(ap);
@@ -1268,6 +1342,7 @@ profile_us_from_wide(const UnsignedWide *w)
 void
 macsurf_profile_reset(void)
 {
+	if (!macos9_debug_integrations_enabled()) return;
 #ifdef __MACOS9__
 	Microseconds(&g_profile_t0);
 	g_profile_t0_set = 1;
@@ -1312,6 +1387,7 @@ macsurf_profile_reset(void)
 void
 macsurf_profile_nav_begin(void)
 {
+	if (!macos9_debug_integrations_enabled()) return;
 #ifdef __MACOS9__
 	Microseconds(&g_nav_t0);
 #endif
@@ -1321,6 +1397,7 @@ macsurf_profile_nav_begin(void)
 void
 macsurf_profile_stamp(const char *label)
 {
+	if (!macos9_debug_integrations_enabled()) return;
 #ifdef __MACOS9__
 	UnsignedWide now;
 	double us_now;
@@ -1370,14 +1447,14 @@ macsurf_profile_note_milestone(const char *label, int delta_us_i)
  * guard. A phase that ran but measured 0us (sub-microsecond, or a clock
  * hiccup) still happened, and a count of 0 next to a non-zero total would be
  * a lie of exactly the kind this engine has paid for repeatedly. */
-void macsurf_profile_accum_tls(long us)     { g_n_tls++;     if (us > 0) g_accum_tls_us     += us; }
-void macsurf_profile_accum_net(long us)     { g_n_net++;     if (us > 0) g_accum_net_us     += us; }
-void macsurf_profile_accum_parse(long us)   { g_n_parse++;   if (us > 0) g_accum_parse_us   += us; }
-void macsurf_profile_accum_cascade(long us) { g_n_cascade++; if (us > 0) g_accum_cascade_us += us; }
-void macsurf_profile_accum_layout(long us)  { g_n_layout++;  if (us > 0) g_accum_layout_us  += us; }
-void macsurf_profile_accum_paint(long us)   { g_n_paint++;   if (us > 0) g_accum_paint_us   += us; }
-void macsurf_profile_accum_js(long us)      { g_n_js++;      if (us > 0) g_accum_js_us      += us; }
-void macsurf_profile_note_reflow(void)      { g_accum_reflows++; }
+void macsurf_profile_accum_tls(long us)     { if (!macos9_debug_integrations_enabled()) return; g_n_tls++;     if (us > 0) g_accum_tls_us     += us; }
+void macsurf_profile_accum_net(long us)     { if (!macos9_debug_integrations_enabled()) return; g_n_net++;     if (us > 0) g_accum_net_us     += us; }
+void macsurf_profile_accum_parse(long us)   { if (!macos9_debug_integrations_enabled()) return; g_n_parse++;   if (us > 0) g_accum_parse_us   += us; }
+void macsurf_profile_accum_cascade(long us) { if (!macos9_debug_integrations_enabled()) return; g_n_cascade++; if (us > 0) g_accum_cascade_us += us; }
+void macsurf_profile_accum_layout(long us)  { if (!macos9_debug_integrations_enabled()) return; g_n_layout++;  if (us > 0) g_accum_layout_us  += us; }
+void macsurf_profile_accum_paint(long us)   { if (!macos9_debug_integrations_enabled()) return; g_n_paint++;   if (us > 0) g_accum_paint_us   += us; }
+void macsurf_profile_accum_js(long us)      { if (!macos9_debug_integrations_enabled()) return; g_n_js++;      if (us > 0) g_accum_js_us      += us; }
+void macsurf_profile_note_reflow(void)      { if (!macos9_debug_integrations_enabled()) return; g_accum_reflows++; }
 
 /* fixes640a (review blocker): inline <script> executes SYNCHRONOUSLY inside
  * dom_hubbub_parser_parse_chunk (parser script callback -> js_exec -> JS_Eval),
@@ -1399,6 +1476,7 @@ macsurf_profile_emit_phases(const char *url)
 	long wall_us;
 	long unacct_us;
 	long unacct_pct;
+	if (!macos9_debug_integrations_enabled()) return;
 	(void)url;
 	total = g_accum_tls_us + g_accum_net_us + g_accum_parse_us +
 		g_accum_cascade_us + g_accum_layout_us + g_accum_paint_us +
@@ -1523,18 +1601,21 @@ macsurf_profile_emit_phases(const char *url)
 void
 macsurf_profile_add_bytes(long n)
 {
+	if (!macos9_debug_integrations_enabled()) return;
 	if (n > 0) g_profile_bytes += n;
 }
 
 void
 macsurf_profile_count_resource(void)
 {
+	if (!macos9_debug_integrations_enabled()) return;
 	g_profile_resources++;
 }
 
 void
 macsurf_profile_emit(const char *url)
 {
+	if (!macos9_debug_integrations_enabled()) return;
 	if (url == NULL) url = "(null)";
 	macsurf_debug_log_writef(
 		"PROFILE url=%s total_bytes=%ld subresources=%d",

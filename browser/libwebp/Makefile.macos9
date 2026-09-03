@@ -1,0 +1,9 @@
+# libwebp v1.6.0 decoder/demux subset for the MacSurf CodeWarrior project.
+#
+# Add every c/macwebp_*.c file to MacSurf.mcp and add browser/libwebp/h to the
+# C/C++ access paths.  The flat macwebp_ names avoid CodeWarrior's project-wide
+# filename/object namespace collisions. Do not add encoder, mux, tools, SIMD,
+# or system-thread files.
+# Compile with WEBP_USE_THREAD undefined and no WEBP_HAVE_* SIMD definitions.
+
+WEBP_DECODER_SRCS = $(sort $(wildcard c/macwebp_*.c))

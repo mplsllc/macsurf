@@ -42,6 +42,7 @@
 #include "netsurf/content_type.h"
 #include "content/hlcache.h"
 #include "content/fetch.h"
+#include "content/macsurf_nav_seed.h"
 #include "netsurf/content.h"
 #include <libwapcaplet/libwapcaplet.h>
 
@@ -56,6 +57,7 @@ extern void macos9_window_request_reformat(struct gui_window *g);
 /* Core accessor (content/handlers/html/html.c): family -> @font-face src URL,
  * or NULL if the family has no usable downloadable @font-face rule. Returns a
  * new nsurl ref the caller owns. */
+extern unsigned long content_get_nav_id(struct content *c);
 extern struct nsurl *html_macsurf_font_face_url(struct content *c,
 		lwc_string *family);
 
@@ -646,6 +648,9 @@ macos9_webfont_ensure(struct content *content, lwc_string *family)
 	if (slot->fetch == NULL) {
 		nserror e;
 		webfont_dl_reset(slot);
+		/* MacSurf Trace 1a: attribute this raw font fetch to the nav
+		 * that created the content requesting the face. */
+		macsurf_fetch_seed(content_get_nav_id(content), 0);
 		e = fetch_start(slot->url, NULL, webfont_fetch_cb, slot,
 				true, NULL, NULL, true, false, NULL,
 				&slot->fetch);

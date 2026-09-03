@@ -1441,6 +1441,64 @@ static void css_hint_color(
 	}
 }
 
+/* SVG presentation attribute. This enters the author cascade as a
+ * zero-specificity hint, so a class rule (for example Facebook's
+ * path-specific fill) correctly outranks fill="currentColor" inherited
+ * from the SVG root. */
+static void css_hint_svg_fill(dom_node *node)
+{
+	struct css_hint *hint = &hint_ctx.hints[hint_ctx.len];
+	dom_string *name = NULL;
+	dom_string *value = NULL;
+	const char *text;
+
+	if (dom_string_create((const uint8_t *)"fill", 4, &name) !=
+			DOM_NO_ERR) {
+		return;
+	}
+	if (dom_element_get_attribute(node, name, &value) != DOM_NO_ERR) {
+		dom_string_unref(name);
+		return;
+	}
+	dom_string_unref(name);
+	if (value == NULL) return;
+
+	text = (const char *)dom_string_data(value);
+	if (strcasecmp(text, "none") == 0) {
+		hint->prop = CSS_PROP_FILL;
+		hint->status = CSS_FILL_NONE;
+		css_hint_advance(&hint);
+	} else if (strcasecmp(text, "currentColor") == 0) {
+		hint->prop = CSS_PROP_FILL;
+		hint->status = CSS_FILL_CURRENT_COLOR;
+		css_hint_advance(&hint);
+	} else if (nscss_parse_colour(text, &hint->data.color)) {
+		hint->prop = CSS_PROP_FILL;
+		hint->status = CSS_FILL_COLOR;
+		css_hint_advance(&hint);
+	}
+	dom_string_unref(value);
+}
+
+static bool css_hint_is_svg_node(dom_node *node, const char *tname)
+{
+	dom_string *ns = NULL;
+	bool svg = false;
+
+	if (dom_node_get_namespace(node, &ns) == DOM_NO_ERR && ns != NULL) {
+		const char *s = (const char *)dom_string_data(ns);
+		svg = (s != NULL &&
+				strcmp(s, "http://www.w3.org/2000/svg") == 0);
+		dom_string_unref(ns);
+	}
+	/* Hubbub builds seen on the Classic port have occasionally omitted
+	 * the foreign-content namespace on the root. Preserve that proven
+	 * fallback without treating arbitrary unknown HTML elements as SVG. */
+	if (!svg && tname != NULL && strcasecmp(tname, "svg") == 0)
+		svg = true;
+	return svg;
+}
+
 static void css_hint_font_size(
 		nscss_select_ctx *ctx,
 		dom_node *node)
@@ -1739,6 +1797,16 @@ css_error node_presentational_hint(void *pw, void *node,
 		is_known = 0;
 	} else {
 		is_known = 0;
+	}
+
+	/* SVG elements are foreign content and therefore fall through the
+	 * HTML-specific table above. color and fill are nevertheless SVG
+	 * presentation attributes and must participate in the CSS cascade on
+	 * both the root and descendant shapes. Harmless on non-SVG elements
+	 * because absent attributes produce no hints. */
+	if (is_known == 0 && css_hint_is_svg_node(node, tname)) {
+		css_hint_color(pw, node);
+		css_hint_svg_fill(node);
 	}
 
 	if (is_known != 0) {

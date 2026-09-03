@@ -127,9 +127,14 @@ struct content_html_object {
 	 * handle whose retrieval has not yet resolved has no content and
 	 * reports its URL only by walking hlcache's private retrieval ring --
 	 * i.e. exactly the in-flight case adoption exists to catch. Deliberately
-	 * LAST in the struct: only html_fetch_object allocates one of these, so
-	 * appending keeps every existing field at its current offset. */
+	 * Appended with the active ledger below: only html_fetch_object allocates
+	 * one of these, so existing field offsets remain unchanged. */
 	struct nsurl *url;
+	/** fixes1288 - true exactly while this object's fetch owns one count in
+	 * parent->active.  Reconvert can retire an in-flight duplicate and release
+	 * its callback handle; without an explicit ledger that lost callback can
+	 * never repay the count and the document remains READY forever. */
+	bool active_counted;
 };
 
 
@@ -261,5 +266,16 @@ struct content_html_object *html_get_objects(struct hlcache_handle *h,
  */
 bool html_get_id_offset(struct hlcache_handle *h, lwc_string *frag_id,
 		int *x, int *y);
+
+/**
+ * fixes1315 (#167) - "TAG#id.class" identity string for a DOM element node,
+ * truncated to `cap`. Lets a diagnostic outside html.c (e.g. layout_flex.c)
+ * report which real element a box is, instead of a bare pointer. Element
+ * nodes only -- caller checks the node type first.
+ */
+void html_pagemap_brief(struct dom_node *n, char *out, int cap);
+
+extern int html_reconvert_fast_style(struct content *c, void *node);
+extern int html_reconvert_fast_inherited_color(struct content *c, void *node);
 
 #endif

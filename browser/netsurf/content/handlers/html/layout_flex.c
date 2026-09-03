@@ -407,6 +407,35 @@ static bool layout_flex_item(
 	 * height too is exactly what makes that stretch re-layout still fire.
 	 * Flex/grid items are block-formatting-context roots, so a skipped
 	 * re-layout has no float-escape side effect on ancestors. */
+	/* fixes1306 (#167, C0) - the FLEXITEM diagnostic (fixes1302/1304)
+	 * shows a nested flex item's base_size (captured right after THIS
+	 * function returns, per fixes1303) disagreeing with that SAME
+	 * box's memoized flex_layout_height moments later inside the SAME
+	 * parent's layout_flex_inner call -- e.g. base=23286 but
+	 * cache_h=1441, both supposedly read from this one box after this
+	 * one function. That should be impossible if layout_flex_item runs
+	 * (for this box, this pass) exactly once before the read. Log every
+	 * call for nested flex/inline-flex items specifically (not every
+	 * box on the page -- bounded to the exact shape of the bug) so the
+	 * next hardware run shows definitively whether it's called more
+	 * than once per pass, memo-hit or not, and what height each call
+	 * sees. */
+	if (b->type == BOX_FLEX || b->type == BOX_INLINE_FLEX) {
+		macsurf_debug_log_writef(
+			"LIFE FLEXITEMCALL box=%p avail_w=%d b_w=%d b_h=%d "
+			"gen=%d cache_gen=%d cache_w=%d cache_h=%d "
+			"memo_hit=%d",
+			(void *)b, available_width, (int)b->width,
+			(int)b->height, (int)macsurf_layout_pass_gen,
+			(int)b->flex_layout_gen, (int)b->flex_layout_width,
+			(int)b->flex_layout_height,
+			(macsurf_flex_layout_cache_enabled &&
+				b->flex_layout_gen == macsurf_layout_pass_gen &&
+				b->flex_layout_width == available_width &&
+				b->flex_layout_width == b->width &&
+				b->flex_layout_height == b->height) ? 1 : 0);
+	}
+
 	if (macsurf_flex_layout_cache_enabled &&
 			b->flex_layout_gen == macsurf_layout_pass_gen &&
 			b->flex_layout_width == available_width &&
@@ -489,6 +518,30 @@ static inline bool layout_flex__base_and_main_sizes(
 	NSLOG(flex, DEEPDEBUG, "box %p: delta_outer_main: %i",
 			b, delta_outer_main);
 
+	/* fixes1308 (#167, C0) - maintainer's own read of the fixes1306
+	 * hardware trace: item->base_size += delta_outer_main (line ~634)
+	 * runs unconditionally right after the fresh post-layout height is
+	 * taken, and delta_outer_main was invariant at 21845 across two
+	 * separate hardware runs with different real content heights (589
+	 * and 1441) -- 22434-589 and 23286-1441 both equal exactly 21845.
+	 * That means this box's own margin/padding/border is resolving to
+	 * something absurd, not the flex algorithm or calc()/inherit
+	 * (already ruled out, fixes1298-1307). Unconditional dump of the
+	 * six raw components lh__delta_outer_height sums, gated on the
+	 * total itself being implausible, to name which one field is
+	 * actually carrying the 21845. */
+	if (!ctx->horizontal && delta_outer_main > 3000) {
+		macsurf_debug_log_writef(
+			"LIFE FLEXOUTER box=%p h=%d mt=%d mb=%d pt=%d "
+			"pb=%d bt=%d bb=%d delta=%d",
+			(void *)b, (int)b->height,
+			(int)lh__non_auto_margin(b, TOP),
+			(int)lh__non_auto_margin(b, BOTTOM),
+			(int)b->padding[TOP], (int)b->padding[BOTTOM],
+			(int)b->border[TOP].width,
+			(int)b->border[BOTTOM].width, delta_outer_main);
+	}
+
 	/* fixes167b - defensive: caller passes a sanitized available_width
 	 * but min/max widths from a degenerate minmax pass can still be
 	 * AUTO or absurd. Clamp before they get folded into base_size. */
@@ -541,7 +594,24 @@ static inline bool layout_flex__base_and_main_sizes(
 		}
 
 	} else if (item->basis == CSS_FLEX_BASIS_AUTO) {
-		item->base_size = ctx->horizontal ? b->width : b->height;
+		/* fixes1303 (#167, C0) - for a vertical (column-direction)
+		 * item, b->height here is PRE-layout: layout_flex_item()
+		 * below is what actually lays this child out and gives it
+		 * its real height. Reading b->height now can capture
+		 * whatever was left over from a previous pass/container
+		 * (fixes1302's hardware log showed a nested flex item with
+		 * base=main=target=22389 -- exactly its own container's
+		 * eventual wrong height -- while its real post-layout height
+		 * (b_h) was 544, and nothing downstream ever corrected it,
+		 * because the refresh below only fires when base_size is
+		 * still AUTO). Defer to AUTO here too, same as the
+		 * CSS_FLEX_BASIS_CONTENT case, so the post-layout_flex_item
+		 * refresh at the bottom of this function -- already correct,
+		 * already proven correct for that case -- is what sets it,
+		 * from the FRESH height. Horizontal (row-direction) items
+		 * are unaffected: b->width there comes from the minmax
+		 * pre-pass, not from this item's own not-yet-run layout. */
+		item->base_size = ctx->horizontal ? b->width : AUTO;
 	} else {
 		item->base_size = AUTO;
 	}
@@ -1191,8 +1261,38 @@ static bool layout_flex__resolve_line(
 	bool grow;
 	size_t i;
 
+	/* fixes1313 (#167, 68kmla regression) - CSS Flexbox SS9.7: flexible
+	 * lengths only ever resolve against a DEFINITE main size. An
+	 * indefinite container (most commonly an auto-height column flex --
+	 * completely ordinary CSS, a container whose height is meant to be
+	 * determined BY its children) has no "free space" concept at all;
+	 * every item's used main size is simply its hypothetical (base)
+	 * size, full stop -- flex-grow/flex-shrink do not apply.
+	 *
+	 * The previous `available_main = INT_MAX` fallback said the
+	 * opposite: "indefinite" became "unlimited room to grow into", so
+	 * any item with a nonzero flex-grow absorbed practically all of
+	 * INT_MAX as free space. Hardware evidence (68kmla.org/bb/, a
+	 * XenForo forum, unrelated to any Facebook-specific CSS): a nested
+	 * flex item's target_main_size came back at 2107582 against a real
+	 * base_size of 10431 -- base_size (via FMUL/FDIV, both already
+	 * proven correct for positive operands; this bug never goes near
+	 * css_add_fixed/css_subtract_fixed, fixes1309's fix, at all) times
+	 * a "remaining free main" that was really INT_MAX in disguise.
+	 *
+	 * Fix: when the container's own available main size is genuinely
+	 * indefinite, skip grow/shrink resolution entirely and freeze every
+	 * item at its base_size, matching how a definite-but-already-fully-
+	 * used line already freezes a zero-grow/zero-shrink item. Every
+	 * other call site of this function -- any container with a real,
+	 * definite available_main -- is completely unaffected. */
 	if (available_main == AUTO) {
-		available_main = INT_MAX;
+		for (i = line->first; i < item_count; i++) {
+			struct flex_item_data *item = &ctx->item.data[i];
+			item->target_main_size = item->base_size;
+			layout_flex__item_freeze(line, item);
+		}
+		return true;
 	}
 
 	grow = (line->main_size < available_main);
@@ -1491,6 +1591,67 @@ static bool layout_flex__place_line_items_main(
 
 			cross_size = box_size_cross + lh__delta_outer_cross(
 					ctx->flex, b);
+
+			/* fixes1315 (#167, 68kmla) - reviewer-designed probe.
+			 * cross_size is box_size_cross (b->height, for a row/
+			 * horizontal flex) PLUS lh__delta_outer_cross -- the
+			 * same lh__delta_outer_height() family that exposed
+			 * fixes1309's 21845px Facebook corruption, so the
+			 * margin/padding/border contribution needs to be
+			 * visible individually, not folded into one number.
+			 * This runs BEFORE layout_flex__place_line_items_cross
+			 * (stretch/align-self), which can still mutate
+			 * box_size_cross and re-layout the item --
+			 * FLEXCROSSFINAL below is the same item's state AFTER
+			 * that phase, diffable directly instead of inferred
+			 * from the final pagemap. */
+			if (cross_size > 3000) {
+				char t1315_flex_id[80];
+				char t1315_item_id[80];
+				int t1315_line_before = line->cross_size;
+
+				if (ctx->flex->node != NULL) {
+					html_pagemap_brief(ctx->flex->node,
+							t1315_flex_id,
+							(int)sizeof t1315_flex_id);
+				} else {
+					t1315_flex_id[0] = '\0';
+				}
+				if (b->node != NULL) {
+					html_pagemap_brief(b->node,
+							t1315_item_id,
+							(int)sizeof t1315_item_id);
+				} else {
+					t1315_item_id[0] = '\0';
+				}
+				macsurf_debug_log_writef(
+					"LIFE FLEXCROSS flex=[%s] item=[%s] "
+					"box=%p horiz=%d h=%d mt=%d mb=%d "
+					"pt=%d pb=%d bt=%d bb=%d outer=%d "
+					"candidate=%d line_before=%d "
+					"line_after=%d align=%d css_h=%d "
+					"gen=%d cache_gen=%d cache_h=%d",
+					t1315_flex_id, t1315_item_id,
+					(void *)b, (int)ctx->horizontal,
+					(int)b->height,
+					(int)lh__non_auto_margin(b, TOP),
+					(int)lh__non_auto_margin(b, BOTTOM),
+					(int)b->padding[TOP],
+					(int)b->padding[BOTTOM],
+					(int)b->border[TOP].width,
+					(int)b->border[BOTTOM].width,
+					cross_size - box_size_cross,
+					cross_size,
+					t1315_line_before,
+					(t1315_line_before < cross_size) ?
+						cross_size : t1315_line_before,
+					(int)lh__box_align_self(ctx->flex, b),
+					(b->style != NULL) ? 1 : 0,
+					(int)macsurf_layout_pass_gen,
+					(int)b->flex_layout_gen,
+					(int)b->flex_layout_height);
+			}
+
 			if (line->cross_size < cross_size) {
 				line->cross_size = cross_size;
 			}
@@ -1545,6 +1706,50 @@ static bool layout_flex__collect_items_into_lines(
 		ctx->cross_size += line->cross_size;
 		if (ctx->main_size < line->main_size) {
 			ctx->main_size = line->main_size;
+		}
+
+		/* fixes1302 (#167, C0) - FLEXMINH (fixes1301) never fired on
+		 * hardware: the real, fully-cascaded min-height for the
+		 * runaway .xpvvgw5-class box stayed sane. So the box's own
+		 * content/line main-size math is the actual source of
+		 * h=23136, not min-height. Unconditional per-item dump, gated
+		 * on the line itself being implausibly tall, to find which
+		 * item (and which of base_size/target_main_size/main_size)
+		 * is carrying the size -- same "generous threshold, real
+		 * numbers, no synthetic repro" approach as FLEXMINH, since
+		 * this is real content whose exact composition isn't in any
+		 * fixture. */
+		if (line->main_size > 3000) {
+			size_t li;
+			size_t li_max = line->first + line->count;
+			if (li_max > line->first + 20)
+				li_max = line->first + 20;
+			macsurf_debug_log_writef(
+				"LIFE FLEXLINE flex=%p line_main=%d "
+				"line_used=%d count=%d horizontal=%d",
+				(void *)ctx->flex, line->main_size,
+				line->used_main_size, (int)line->count,
+				(int)ctx->horizontal);
+			for (li = line->first; li < li_max; li++) {
+				struct flex_item_data *it = &ctx->item.data[li];
+				macsurf_debug_log_writef(
+					"LIFE FLEXITEM flex=%p i=%d box=%p "
+					"type=%d base=%d main=%d target=%d "
+					"b_h=%d b_w=%d basis=%d gen=%d "
+					"cache_gen=%d cache_w=%d cache_h=%d",
+					(void *)ctx->flex, (int)li,
+					(void *)it->box,
+					it->box ? (int)it->box->type : -1,
+					it->base_size, it->main_size,
+					it->target_main_size,
+					it->box ? (int)it->box->height : -1,
+					it->box ? (int)it->box->width : -1,
+					(int)it->basis,
+					(int)macsurf_layout_pass_gen,
+					it->box ? (int)it->box->flex_layout_gen : -1,
+					it->box ? (int)it->box->flex_layout_width : -1,
+					it->box ? (int)it->box->flex_layout_height : -1);
+			}
 		}
 	}
 
@@ -1626,6 +1831,38 @@ static void layout_flex__place_line_items_cross(struct flex_ctx *ctx,
 					lh__non_auto_margin(b, cross_start) +
 					b->border[cross_start].width;
 			break;
+		}
+
+		/* fixes1315 (#167, 68kmla) - reviewer-designed probe, second
+		 * half. This is the SAME item's state after stretch/align-
+		 * self has had its chance to mutate box_size_cross and
+		 * re-layout it (line->cross_size itself is never
+		 * recomputed after this point -- it was already saved
+		 * before this function ran). Gated on the SAVED line cross-
+		 * size (what FLEXCROSS already flagged as suspicious), not
+		 * on this item's own current size, so every item on a
+		 * flagged line reports here even if stretch shrank it back
+		 * down -- exactly the comparison needed to tell "stale
+		 * snapshot, corrected too late" apart from "the container's
+		 * own outer-delta arithmetic is wrong" apart from "the real
+		 * mutation happens even later than this invocation". */
+		if (line->cross_size > 3000) {
+			char t1315_item_id[80];
+			int t1315_h = *box_size_cross;
+			int t1315_outer = lh__delta_outer_cross(ctx->flex, b);
+
+			if (b->node != NULL) {
+				html_pagemap_brief(b->node, t1315_item_id,
+						(int)sizeof t1315_item_id);
+			} else {
+				t1315_item_id[0] = '\0';
+			}
+			macsurf_debug_log_writef(
+				"LIFE FLEXCROSSFINAL item=[%s] box=%p h=%d "
+				"outer=%d candidate=%d saved_line_cross=%d",
+				t1315_item_id, (void *)b, t1315_h,
+				t1315_outer, t1315_h + t1315_outer,
+				line->cross_size);
 		}
 	}
 }
@@ -1948,6 +2185,23 @@ static bool layout_flex_inner(struct box *flex, int available_width,
 			NULL, NULL, &max_height, &min_height,
 			flex->margin, flex->padding, flex->border);
 
+	/* fixes1301 (#167, C0) - Test 96 proved .xpvvgw5's OWN min-height
+	 * calc() resolves to a sane 600px in isolation, but the real box
+	 * (which carries many more atomic classes) renders at h=22723 on
+	 * hardware with overlapkids=0 -- children too small to fill it.
+	 * Unconditional (not budget-capped like LAYOUTPHASE above) so it
+	 * survives however deep into the page this box sits: does the
+	 * REAL, fully-cascaded min-height for this exact box come back
+	 * huge (a different, legitimately-winning atomic class's calc()),
+	 * or does it stay sane and the runaway is in ctx->main_size
+	 * (content/line placement) instead? Threshold generously above any
+	 * plausible real design-token min-height. */
+	if (min_height > 3000) {
+		macsurf_debug_log_writef(
+			"LIFE FLEXMINH box=%p min_height=%d max_height=%d",
+			(void *)flex, min_height, max_height);
+	}
+
 	{
 		/* fixes176 - containing-block-width fallback.
 		 *
@@ -2178,6 +2432,34 @@ static bool layout_flex_inner(struct box *flex, int available_width,
 		if (min_height >  0 && flex->height < min_height) {
 			flex->height = min_height;
 		}
+	}
+
+	/* fixes1314 (#167, 68kmla) - fixes1313 closed the flex-grow-against-
+	 * indefinite-main-size corruption (verified: no more FLEXLINE/
+	 * FLEXITEM target_main_size mismatches anywhere in the next
+	 * hardware log), but the reported "giant space" persisted. The
+	 * SAME page's pagemap dump shows a real, separate gap: #top.
+	 * p-pageWrapper (the outermost flex wrapper) reports h=10646, but
+	 * its own children only account for roughly 2650px combined
+	 * (header 48 + navSticky 70 + sectionLinks 29 + a correctly-hidden
+	 * off-canvas menu 0 + p-body 2436 + footer 67) -- and this
+	 * container never tripped FLEXLINE's own >3000 gate, so the
+	 * runaway isn't in main_size accumulation from real items this
+	 * time. Unconditional dump of every input to the final height
+	 * decision -- ctx->main_size/cross_size (pre-clamp) alongside
+	 * min_height/max_height (the clamp fixes1301's FLEXMINH already
+	 * covers, but only for column/!horizontal containers -- this
+	 * covers both directions) and the actual resulting flex->height --
+	 * gated on the FINAL height being implausible, so whichever of the
+	 * three is actually responsible names itself directly instead of
+	 * needing another guess. */
+	if (flex->height > 3000) {
+		macsurf_debug_log_writef(
+			"LIFE FLEXFINAL box=%p horizontal=%d main=%d "
+			"cross=%d min_h=%d max_h=%d final_h=%d",
+			(void *)flex, (int)ctx->horizontal,
+			(int)ctx->main_size, (int)ctx->cross_size,
+			min_height, max_height, (int)flex->height);
 	}
 
 	success = true;

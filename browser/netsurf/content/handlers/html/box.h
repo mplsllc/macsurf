@@ -71,6 +71,7 @@ typedef enum {
 	BOX_INLINE_FLEX,
 	BOX_GRID,
 	BOX_INLINE_GRID,
+	BOX_CONTENTS,
 } box_type;
 
 
@@ -533,6 +534,22 @@ struct box {
 	 */
 	int obj_w;
 	int obj_h;
+
+	/**
+	 * fixes1268c (#167) - the CSS custom properties ("--name") in force
+	 * for this element, including inherited ones. Reference-counted and
+	 * shared with the parent's environment rather than copied, so a
+	 * page defining several hundred tokens on one ancestor costs one
+	 * pointer per descendant.
+	 *
+	 * The box tree is the carrier because it is the only per-element
+	 * structure with a guaranteed lifetime: css_computed_style is
+	 * interned and therefore shared between unrelated elements, and
+	 * libcss_node_data is an opportunistic cache that is destroyed on
+	 * any DOM change without being rebuilt. Threaded parent->child
+	 * exactly like box->style already is.
+	 */
+	css_custom_env *custom_env;
 
 };
 

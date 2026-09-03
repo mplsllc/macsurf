@@ -18,13 +18,15 @@
  *                "none"
  *   - viewBox + width/height attrs map to box rect
  *
- * V2 deferred:
- *   - <text>, <use>, <symbol>, <image>
- *   - <linearGradient> / <radialGradient> + url(#id) refs
- *   - transform="..." attribute (rotate/translate/scale)
- *   - SVG arc (A) command in <path d>
- *   - stroke-dasharray / linecap / linejoin / fill-rule
- *   - opacity / fill-opacity / stroke-opacity
+ * This V1/V2 split predates several since-shipped rounds - text, use,
+ * gradients, transform= (full translate/scale/rotate/matrix/skewX/
+ * skewY composition via svg__parse_one_transform + svg__matrix_mul),
+ * and fill-opacity/stroke-opacity are all wired into the dispatcher
+ * (svg__paint_subtree) below, not deferred. Treat that dispatcher as
+ * ground truth over this list for what's actually painted.
+ *
+ * Still deferred:
+ *   - <symbol>, <image>
  *   - CSS <style> selectors targeting SVG elements
  *
  * Coordinate transform: maps the SVG viewBox to the box rect.
@@ -67,20 +69,69 @@ struct redraw_context;
  *         catastrophic state (NULL ctx, etc.).
  */
 struct nsurl;
+struct html_content;
 nserror macos9_svg_paint_inline(struct box *box,
 		int x, int y, int w, int h,
 		const struct redraw_context *ctx,
-		struct nsurl *base_url);
+		struct nsurl *base_url,
+		const struct html_content *html);
 
 /**
- * fixes823 (#280): paint a STANDALONE external SVG (img src=*.svg /
- * CSS background url(*.svg)) from its raw source text into (x,y,w,h).
- * V1 coverage: <path d> with per-path fill; viewBox (else width/height
- * attrs) maps to the dest rect. Used by the image/svg+xml content
- * handler's redraw (macos9_image.c).
+ * Paint a STANDALONE external SVG (img src=*.svg / CSS background
+ * url(*.svg)) from its raw source text into (x,y,w,h), clipped to
+ * (the intersection of) clip and that box. Shape/transform/fit coverage
+ * matches the inline DOM renderer (macos9_svg_paint_inline): path, rect,
+ * circle, ellipse, line, polygon, polyline; full affine transform=
+ * composition (translate/scale/rotate/matrix/skewX/skewY) across nested
+ * <g>; preserveAspectRatio (meet/slice/none + 9 alignments). Used by the
+ * image/svg+xml content handler's redraw (macos9_image.c).
  */
 nserror macos9_svg_paint_standalone(const char *src, size_t len,
 		int x, int y, int w, int h,
+		const struct rect *clip,
 		const struct redraw_context *ctx);
+
+/**
+ * Locate the root <svg ...> tag inside a bounded (262144 byte),
+ * NUL-terminated copy of raw SVG source. On success (true), *out_buf is
+ * a malloc'd buffer the caller owns and must free(); *out_root/
+ * *out_root_end bound the opening tag's span within it (for
+ * svg__tag_attr-style lookups). On failure (false, no <svg found), the
+ * buffer has already been freed internally and the outputs are
+ * untouched - nothing for the caller to free.
+ */
+bool macos9_svg_locate_root(const char *src, size_t len,
+		char **out_buf, const char **out_root,
+		const char **out_root_end);
+
+struct macos9_svg_root_dims {
+	int have_vb;
+	float vb_x, vb_y, vb_w, vb_h;
+	int have_width;
+	float width;
+	int have_height;
+	float height;
+};
+
+/**
+ * Pure: parse viewBox (full float precision) and width/height (skipped
+ * if the value contains '%') off an already-located root <svg ...> tag
+ * span. No allocation, no side effects.
+ */
+void macos9_svg_parse_root_dims(const char *root, const char *root_end,
+		struct macos9_svg_root_dims *out);
+
+/**
+ * Compute the viewBox-to-destination affine (uniform/non-uniform scale
+ * + translate) per preserveAspectRatio semantics. par_value is the raw
+ * attribute value (may be NULL/empty for the SVG default, xMidYMid
+ * meet). Shared by the DOM and standalone paint paths so both honour
+ * the same fit rules; has no knowledge of clipping.
+ */
+void macos9_svg_compute_fit(int x, int y, int w, int h,
+		float vb_x, float vb_y, float vb_w, float vb_h,
+		const char *par_value,
+		float *out_scale_x, float *out_scale_y,
+		float *out_tx, float *out_ty);
 
 #endif /* MACOS9_SVG_INLINE_H_ */

@@ -272,6 +272,15 @@ const stringmap_entry stringmap[LAST_KNOWN] = {
 	SMAP("background-clip"),   /* #255 */
 	SMAP("justify-items"),   /* #279 */
 	SMAP("appearance"),   /* #80 */
+	SMAP("justify-self"),   /* #279 follow-up */
+	SMAP("background-origin"),
+	SMAP("background-blend-mode"),
+	SMAP("fill"),
+	SMAP("transition"),
+	SMAP("transition-property"),
+	SMAP("transition-duration"),
+	SMAP("transition-timing-function"),
+	SMAP("transition-delay"),
 	SMAP("inherit"),
 	SMAP("unset"),
 	SMAP("important"),
@@ -530,6 +539,7 @@ const stringmap_entry stringmap[LAST_KNOWN] = {
 	SMAP("infinite"),
 	SMAP("grid"),
 	SMAP("inline-grid"),
+	SMAP("contents"),
 	SMAP("sticky"),
 	SMAP("calc"),
 	SMAP("min"),
@@ -574,6 +584,21 @@ const stringmap_entry stringmap[LAST_KNOWN] = {
 	SMAP("min-content"),
 	SMAP("max-content"),
 	SMAP("fit-content"),
+	SMAP("multiply"),
+	SMAP("screen"),
+	SMAP("overlay"),
+	SMAP("darken"),
+	SMAP("lighten"),
+	SMAP("color-dodge"),
+	SMAP("color-burn"),
+	SMAP("hard-light"),
+	SMAP("soft-light"),
+	SMAP("difference"),
+	SMAP("exclusion"),
+	SMAP("hue"),
+	SMAP("saturation"),
+	SMAP("color"),
+	SMAP("luminosity"),
 
 	/* Named colours */
 	SMAP("aliceblue"),

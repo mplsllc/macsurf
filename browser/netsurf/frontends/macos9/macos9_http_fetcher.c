@@ -509,16 +509,17 @@ static int mfs_open(struct macos9_fetch_ctx *c) {
 	 * to frame Transfer-Encoding: chunked responses so a reused socket
 	 * knows where one response ends. */
 	/* fixes169 (SAFETY_REPORT §3) - bound the request-line write. The
-	 * template constant is 86 chars; the variable part is the URL (or
+	 * template constant is 149 chars; the variable part is the URL (or
 	 * path?query) plus the host. Refuse the fetch if the combined
 	 * length would exceed sizeof(req)-1 so sprintf cannot overrun the
 	 * stack. CW8's MSL has no snprintf, so we size-check first and
 	 * keep sprintf for the actual format. */
 	{
 		/* Length of the constant template (without %-substitutions).
-		 * fixes312 raises this 60→86 reservation when a Content-Length
-		 * and Content-Type are also emitted. */
-		size_t TEMPLATE_LEN = (c->post_body != NULL) ? 160 : 86;
+		 * fixes312 raises the reservation for a Content-Length and
+		 * Content-Type. fixes1304 adds the 63-byte WebP-capable Accept
+		 * field, so retain the same headroom in both cases. */
+		size_t TEMPLATE_LEN = (c->post_body != NULL) ? 223 : 149;
 		const char *method = (c->post_body != NULL) ? "POST" : "GET";
 		/* fixes721 - Content-Type: multipart (with boundary) if a file was
 		 * posted, else the urlencoded default. Built into a buffer since the
@@ -667,7 +668,7 @@ static int mfs_open(struct macos9_fetch_ctx *c) {
 					"POST %s HTTP/1.1\r\n"
 					"Host: %.*s\r\n"
 					"User-Agent: %s\r\n"
-					"Accept: */*\r\n"
+					"Accept: %s\r\n"
 					"%s"              /* cookie_hdr  */
 					"%s"              /* caller_hdrs (fixes835) */
 					"%s"              /* synth       (fixes835) */
@@ -675,20 +676,20 @@ static int mfs_open(struct macos9_fetch_ctx *c) {
 					"Content-Length: %ld\r\n"
 					"Connection: close\r\n\r\n",
 					path_buf, (int)host_len, host_str,
-					ua, cookie_hdr, c->caller_hdrs, synth,
+					ua, macos9_accept_for_path(path_buf), cookie_hdr, c->caller_hdrs, synth,
 					post_extra_hdrs, c->post_body_len);
 			} else {
 				sprintf(req,
 					"GET %s HTTP/1.1\r\n"
 					"Host: %.*s\r\n"
 					"User-Agent: %s\r\n"
-					"Accept: */*\r\n"
+					"Accept: %s\r\n"
 					"%s"              /* cookie_hdr  */
 					"%s"              /* caller_hdrs (fixes835) */
 					"%s"              /* synth       (fixes835) */
 					"Connection: keep-alive\r\n\r\n",
 					path_buf, (int)host_len, host_str,
-					ua, cookie_hdr, c->caller_hdrs, synth);
+					ua, macos9_accept_for_path(path_buf), cookie_hdr, c->caller_hdrs, synth);
 			}
 		}
 	}

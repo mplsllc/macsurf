@@ -39,6 +39,19 @@ typedef struct nscss_select_ctx
 	lwc_string *universal;
 	const css_computed_style *root_style;
 	const css_computed_style *parent_style;
+	/* fixes1268c (#167) - the parent element's custom-property
+	 * environment, threaded exactly like parent_style above because it
+	 * is inherited exactly like one. nscss_get_style hands it to
+	 * libcss before selecting and writes the element's own environment
+	 * back into produced_custom_env afterwards, for the caller to
+	 * store on the box and pass to that box's children.
+	 *
+	 * It cannot ride on css_computed_style: those are interned by
+	 * css__arena_intern_style, so two elements with identical computed
+	 * properties share one struct while their custom environments may
+	 * differ completely. */
+	css_custom_env *parent_custom_env;
+	css_custom_env *produced_custom_env;
 	/* fixes130: dynamic pseudo-class state. The select-handler
 	 * callbacks node_is_hover/active/focus compare candidate DOM
 	 * nodes to these pointers. Set per-cascade in box_construct

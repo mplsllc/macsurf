@@ -1509,6 +1509,14 @@ pump_tls13_consume_record(OSTLSConnection *conn, OSTLSEvent *best_event)
 
     if (conn->tls13_recv_len < 5) return 0;
     reclen = ((UInt32)conn->ssl_iobuf[3] << 8) | (UInt32)conn->ssl_iobuf[4];
+    /* fixes1197 - reject an out-of-spec record length before it reaches
+     * tls13_record_decrypt(), which copies the full length unconditionally
+     * into the fixed-size plain_buf with no bound of its own. */
+    if (reclen > (UInt32)sizeof(conn->hs13->plain_buf)) {
+        ostls_fail(conn, (OSErr)kOSTLSAsync_BearSSLError, noErr, BR_ERR_BAD_PARAM);
+        *best_event = kOSTLSEventFailed;
+        return 1;
+    }
     total = 5 + reclen;
     if (conn->tls13_recv_len < total) return 0;  /* await the rest */
 

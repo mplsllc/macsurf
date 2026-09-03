@@ -272,6 +272,15 @@ struct browser_window {
 		int match; /**< Number of times an idempotent status-set operation was performed. */
 		int miss; /**< Number of times status was really updated. */
 	} status;
+
+	/**
+	 * MacSurf Trace: id of the navigation currently loading / displayed in
+	 * this browser_window. Allocated in browser_window_navigate() after the
+	 * same-document fragment short-circuit; preserved through internal
+	 * redirects and about:query interstitials. 0 before the first nav.
+	 */
+	unsigned long nav_id;
+
 };
 
 

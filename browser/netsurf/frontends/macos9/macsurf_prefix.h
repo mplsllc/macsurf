@@ -176,6 +176,9 @@ void macsurf_assert_failed_(const char *expr, const char *file, int line);
 extern void *macsurf_safe_alloc(size_t size);
 extern void *macsurf_safe_calloc(size_t count, size_t size);
 extern void *macsurf_safe_realloc(void *ptr, size_t size);
+extern void *macsurf_try_alloc(size_t size);
+extern void *macsurf_try_calloc(size_t count, size_t size);
+extern void *macsurf_try_realloc(void *ptr, size_t size);
 #define malloc  macsurf_safe_alloc
 #define calloc  macsurf_safe_calloc
 #define realloc macsurf_safe_realloc
@@ -402,6 +405,13 @@ extern int   memcmp(const void *, const void *, size_t);
  * this only changes the Mac's default. */
 #ifndef MACSURF_JS_FIRE_LOAD
 #define MACSURF_JS_FIRE_LOAD 1
+#endif
+
+/* Shared-build release profile: keep the AppleEvent diagnostics available on
+ * demand, but make the durable Debug.log channel a release stub. Remove this
+ * one define for an explicitly requested diagnostic build. */
+#ifndef MACSURF_RELEASE
+#define MACSURF_RELEASE 1
 #endif
 
 /* fixes305a: enable the file-backed diagnostic log channel by default.

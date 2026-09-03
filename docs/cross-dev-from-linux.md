@@ -139,9 +139,20 @@ Any C99 header that uses `enum foo;` to forward-declare an enum will fail on CW8
 
 ---
 
-## 3. Workflow: Linux → tar → scp → Mac
+## 3. Workflow: Linux → Mac
 
-### Repo layout
+> **Current path: one command.** The whole round — push, build, launch, stuff,
+> deliver to macfiles — is `./forclaude/ship.sh <fixnum> [paths...]`, documented
+> inside-out in [build/automated-ship.md](build/automated-ship.md). It drives
+> CodeWarrior and DropStuff over SSH via AppleScript, so no step happens by hand
+> on the Mac any more.
+>
+> The tar/scp/unpack-by-hand round trip described below is the **historical**
+> route (fixes 100–151 era), retired-not-deleted. The principles under it —
+> delta-only shipments, never editing `.mcp` from Linux, the maintainer owning
+> the fix number, never blaming stale files — all still apply unchanged.
+
+### Repo layout (historical)
 
 ```
 ~/Webs/macsurf/                   primary working tree (Linux git)
@@ -220,6 +231,15 @@ The user's build is what they say it is. If something looks like staleness, the 
 - Format specifiers supported: `%d`, `%ld`, `%p`, `%s`, `%%` (and `%lx` is NOT supported, use `%ld` and decode hex by eye if you need it).
 - Output capped at 255 bytes per call.
 - Gated on `MACSURF_DEBUG` in macsurf_prefix.h. The `#ifdef MACSURF_DEBUG` test happens inside the implementation; if the define is missing, every call site compiles to nothing (fixes149/150/151 silent-instrumentation regression, then fixes305a same vector).
+
+### Bare-page policy check
+
+An unstyled or image-less page is not necessarily a fetch, layout, or paint regression.
+Persisted preferences override the built-in defaults: `author_level_css=0` suppresses author
+stylesheet requests, and `foreground_images=0` / `background_images=0` suppress the
+corresponding image requests. Check the unconditional startup line
+`LIFE PREF render css_author=... fg_images=... bg_images=...` before tracing lower layers.
+`--fresh` means a fresh process/log/run, not a reset of user preferences.
 
 ### Subsystem-init audit checklist
 

@@ -20,6 +20,12 @@
 #include <string.h>
 #include <stdbool.h>
 
+#include "harness_fixture.h"
+
+#include "quickjs.h"	/* Test 93: raw job-queue API, independent of MacSurf's
+			 * js_newthread/js_exec glue (see harness/Makefile's
+			 * -I$(QJS) -> quickjs-macos9/quickjs.h). */
+
 #include <dom/dom.h>
 #include "dom/bindings/hubbub/parser.h"
 
@@ -55,7 +61,17 @@ extern int macsurf_imgdims_lookup(struct nsurl *url, int *w, int *h);	/* fixes92
 #include "libcss/libcss.h"
 #include "libcss/fpmath.h"
 
+/* fixes1268a (#167) - Test 75 probes libcss's PRIVATE stylesheet layout.
+ * Those internal headers cannot be included here: libcss's propstrings.h
+ * and opcodes.h define enumerators (TOP/LEFT/RIGHT/BOTTOM, CONTENT_NONE,
+ * COLUMN_WIDTH_AUTO) that collide with netsurf's own enums already in
+ * this file. The probe therefore lives in its own translation unit,
+ * cssprobe.c, behind the plain C API below. */
+#include "cssprobe.h"
+
 #include "macos9_content_registry.h"
+#include "macsurf_diag.h"
+#include "macsurf_capability.h"
 
 extern int html_reconvert_content(struct content *c);
 /* fixes866 (#292): the real parser hooks html.c uses, so the harness exercises
@@ -155,6 +171,37 @@ static int harness_pump_one(void)
 	return 1;
 }
 
+/* Parse a small independent document for multi-realm tests.  No layout or
+ * content registration is needed: these tests exercise JS/DOM ownership, not
+ * the box tree. */
+static int harness_parse_document(const char *html, dom_document **out)
+{
+	dom_hubbub_parser_params params;
+	dom_hubbub_parser *parser = NULL;
+	dom_document *document = NULL;
+	dom_hubbub_error err;
+
+	if (out == NULL) return 0;
+	*out = NULL;
+	memset(&params, 0, sizeof(params));
+	params.fix_enc = true;
+	params.enable_script = false;
+	err = dom_hubbub_parser_create(&params, &parser, &document);
+	if (err != DOM_HUBBUB_OK || parser == NULL || document == NULL)
+		return 0;
+	err = dom_hubbub_parser_parse_chunk(parser,
+			(const uint8_t *)html, strlen(html));
+	if (err == DOM_HUBBUB_OK)
+		err = dom_hubbub_parser_completed(parser);
+	dom_hubbub_parser_destroy(parser);
+	if (err != DOM_HUBBUB_OK) {
+		dom_node_unref((dom_node *)document);
+		return 0;
+	}
+	*out = document;
+	return 1;
+}
+
 /* ------------------------------------------------------------------ */
 /* guit + nsoptions[] -- real, correctly-typed globals (the earlier    */
 /* auto-gen stubs for these were type-mismatched landmines; see        */
@@ -164,7 +211,9 @@ static int harness_pump_one(void)
 static struct gui_misc_table g_misc_table;
 struct netsurf_table *guit = NULL;
 static struct nsoption_s g_nsoptions_storage[NSOPTION_LISTEND];
+static struct nsoption_s g_nsoptions_default_storage[NSOPTION_LISTEND];
 struct nsoption_s *nsoptions = g_nsoptions_storage;
+struct nsoption_s *nsoptions_default = g_nsoptions_default_storage;
 
 /* ------------------------------------------------------------------ */
 /* Box tree completion callback for the INITIAL build.                  */
@@ -404,6 +453,15 @@ static char *harness_slurp(const char *path)
 	return buf;
 }
 
+static char *harness_fixture_slurp(const char *name)
+{
+	char path[HARNESS_FIXTURE_PATH_MAX];
+
+	if (!harness_fixture_path(name, path, sizeof(path)))
+		return NULL;
+	return harness_slurp(path);
+}
+
 /* Identity of a box, for the dump. */
 static void harness_box_brief(struct box *b, char *out, size_t cap)
 {
@@ -445,6 +503,8 @@ static void harness_dump_boxes(struct box *b, int depth, int maxdepth)
 	char nm[80];
 	int x = 0, y = 0;
 	int fszq = -1;
+	css_color colorq = 0;
+	char colorbuf[16];
 	if (b == NULL || depth > maxdepth) return;
 	harness_box_brief(b, nm, sizeof nm);
 	box_coords(b, &x, &y);
@@ -455,13 +515,29 @@ static void harness_dump_boxes(struct box *b, int depth, int maxdepth)
 				CSS_FONT_SIZE_DIMENSION)
 			fszq = (int)FIXTOINT(fsq);
 	}
-	fprintf(stderr, "%*s%-34s type=%d disp=%d fs=%d x=%d y=%d w=%d h=%d\n",
+	/* fixes1261 (#167) - var()-scope harness verification. Prints the
+	 * computed `color` (0xRRGGBBAA) alongside the existing box dump
+	 * fields so a --layout run can directly show what a var(--x) custom
+	 * property actually resolved to for a given element, without adding
+	 * a whole separate query mechanism. */
+	colorbuf[0] = '-'; colorbuf[1] = '\0';
+	if (b->style != NULL) {
+		css_computed_color(b->style, &colorq);
+		/* fixes1268b: css_color is 0xAARRGGBB - `>> 8` rotated the
+		 * alpha into red and misreported every colour in this dump
+		 * (green printed as FF0080). Mask instead. */
+		sprintf(colorbuf, "#%06lX",
+				(unsigned long)(colorq & 0x00FFFFFFUL));
+	}
+	fprintf(stderr, "%*s%-34s type=%d disp=%d fs=%d x=%d y=%d w=%d h=%d "
+			"color=%s\n",
 			depth * 2, "", nm, (int)b->type,
 			(b->style != NULL) ?
 				(int)css_computed_display_static(b->style) : -1,
 			fszq, x, y,
 			(b->width  >= 1000000 || b->width  < 0) ? -1 : b->width,
-			(b->height >= 1000000 || b->height < 0) ? -1 : b->height);
+			(b->height >= 1000000 || b->height < 0) ? -1 : b->height,
+			colorbuf);
 	for (b = b->children; b != NULL; b = b->next)
 		harness_dump_boxes(b, depth + 1, maxdepth);
 }
@@ -501,9 +577,72 @@ static bool t66_cls_has(struct box *b, const char *cls)
 	return found;
 }
 
+/* fixes1268b (#167) - Test 76 helper. Find the first box carrying `cls`
+ * and report its computed color as 0xRRGGBB, or -1 if not found. */
+static long t76_color_of(struct box *b, const char *cls)
+{
+	long r;
+
+	if (b == NULL)
+		return -1;
+	if (t66_cls_has(b, cls) && b->style != NULL) {
+		css_color c = 0;
+		css_computed_color(b->style, &c);
+		/* css_color is 0xAARRGGBB. Shifting right by 8 rotates the
+		 * alpha into the red slot (green 0xFF008000 reads back as
+		 * 0xFF0080) - the same mistake fixes1263 made in the FBCSS
+		 * report. Mask, don't shift. */
+		return (long)(c & 0x00FFFFFFUL);
+	}
+	for (b = b->children; b != NULL; b = b->next) {
+		r = t76_color_of(b, cls);
+		if (r >= 0)
+			return r;
+	}
+	return -1;
+}
+
+/* fixes1299 (#167) - Test 95 helper. Find the first box carrying `cls`
+ * and report its min-height calc slot via cssprobe, or false if not
+ * found / not calc-valued. */
+static bool t95_calc_of(struct box *b, const char *cls, uint8_t *slot_out)
+{
+	if (b == NULL)
+		return false;
+	if (t66_cls_has(b, cls) && b->style != NULL) {
+		return cssprobe_min_height_calc_slot(b->style, slot_out);
+	}
+	for (b = b->children; b != NULL; b = b->next) {
+		if (t95_calc_of(b, cls, slot_out))
+			return true;
+	}
+	return false;
+}
+
+/* fixes1300 (#167) - Test 96 helper. Find and return the first box
+ * carrying `cls`, or NULL. Unlike t95_calc_of, hands back the box itself
+ * so the caller can read whichever computed properties it needs directly
+ * (min-height here), not just the one cssprobe accessor. */
+static struct box *t96_box_of_class(struct box *b, const char *cls)
+{
+	struct box *found;
+
+	if (b == NULL)
+		return NULL;
+	if (t66_cls_has(b, cls) && b->style != NULL)
+		return b;
+	for (b = b->children; b != NULL; b = b->next) {
+		found = t96_box_of_class(b, cls);
+		if (found != NULL)
+			return found;
+	}
+	return NULL;
+}
+
 /* Record the FIRST box whose class list holds each token. */
 static void t66_walk(struct box *b,
-		int *row_h, int *icon_h, int *avatar_h, int *img_h)
+		int *row_h, int *icon_h, int *avatar_h, int *img_h,
+		int *blend_mode)
 {
 	if (b == NULL)
 		return;
@@ -511,12 +650,34 @@ static void t66_walk(struct box *b,
 		*row_h = b->height;
 	else if (t66_cls_has(b, "node-extra-icon") && *icon_h < 0)
 		*icon_h = b->height;
-	else if (t66_cls_has(b, "avatar") && *avatar_h < 0)
+	else if (t66_cls_has(b, "avatar") && *avatar_h < 0) {
 		*avatar_h = b->height;
+		if (b->style != NULL)
+			*blend_mode = css_computed_background_blend_mode(b->style);
+	}
 	else if (t66_cls_has(b, "avatar-u2-s") && *img_h < 0)
 		*img_h = b->height;
 	for (b = b->children; b != NULL; b = b->next)
-		t66_walk(b, row_h, icon_h, avatar_h, img_h);
+		t66_walk(b, row_h, icon_h, avatar_h, img_h, blend_mode);
+}
+
+/* Test 93: raw QuickJS job-queue callbacks. File-scope because JS_EnqueueJob
+ * needs a real C function pointer (JSJobFunc), not a closure. */
+static int t93_a_fired = 0;
+static int t93_b_fired = 0;
+
+static JSValue t93_job_mark_a(JSContext *ctx, int argc, JSValueConst *argv)
+{
+	(void)ctx; (void)argc; (void)argv;
+	t93_a_fired++;
+	return JS_UNDEFINED;
+}
+
+static JSValue t93_job_mark_b(JSContext *ctx, int argc, JSValueConst *argv)
+{
+	(void)ctx; (void)argc; (void)argv;
+	t93_b_fired++;
+	return JS_UNDEFINED;
 }
 
 int main(int argc, char **argv)
@@ -566,6 +727,17 @@ int main(int argc, char **argv)
 		"if(el){el.textContent='LATE MUTATION during reconvert yield '+i;}"
 		"}"
 		"})();";
+	/* Defined only by the harness build. It injects a post-detach box-build
+	 * failure, so we can prove that the old rendered tree is restored. */
+	extern void macsurf_reconvert_test_fail_once(void);
+	/* The full reconvert harness intentionally exercises unrelated browser
+	 * surfaces before Test 102.  Keep a focused entry point for this bounded
+	 * diagnostics-state test so it remains independently runnable. */
+	if (argc == 2 && strcmp(argv[1], "--diag-phase2") == 0)
+		goto phase2_diag;
+
+	if (argc == 2 && strcmp(argv[1], "--cssprobe") == 0)
+		return cssprobe_test_css_transitions() ? 0 : 1;
 
 	if (argc >= 4 && strcmp(argv[1], "--layout") == 0) {
 		g_layout_html_path = argv[2];
@@ -745,9 +917,10 @@ int main(int argc, char **argv)
 						"(%ld bytes)\n",
 						(long)strlen(ua_real));
 			} else {
-				fprintf(stderr, "WARNING: real default.css not "
-						"found -- layout numbers are "
+				fprintf(stderr, "FAIL: real default.css not "
+						"found -- layout numbers would be "
 						"NOT trustworthy\n");
+				return 1;
 			}
 		}
 
@@ -964,6 +1137,84 @@ int main(int argc, char **argv)
 
 	macsurf_js_set_reconvert_enabled(1);
 
+	/* fixes1274 (#167) - `--js FILE...` : execute real-world scripts through
+	 * the REAL MacSurf engine (this same qjs glue, this same DOM, the same
+	 * shims and the same default switch config the Mac ships), then run a
+	 * final inline probe.
+	 *
+	 * Built because the timer audit closed off the last environment-shaped
+	 * theory: on hardware the pipeline is healthy (pumps=29343, frozen=0,
+	 * owner_skip=0, evicted=0, and the 2 timers that were created both
+	 * fired) while Facebook's requireLazy waiters still never release. Stock
+	 * qjs replays Facebook's real bundles correctly, so the divergence is
+	 * something MacSurf's environment does that bare qjs does not - and
+	 * bisecting that over hardware round trips is far slower than bisecting
+	 * it here.
+	 *
+	 * Usage:
+	 *   ./reconvert_harness --js a.js b.js ... [--probe 'JS']
+	 * Every file runs in order in one realm; --probe runs last. Exit status
+	 * is 0 only if every script executed without throwing. */
+	if (argc >= 3 && strcmp(argv[1], "--js") == 0) {
+		int ji;
+		int jfail = 0;
+		const char *probe = NULL;
+
+		for (ji = 2; ji < argc; ji++) {
+			if (strcmp(argv[ji], "--probe") == 0 && ji + 1 < argc) {
+				probe = argv[ji + 1];
+				break;
+			}
+		}
+		for (ji = 2; ji < argc; ji++) {
+			char *src;
+			unsigned char ok;
+			long t0, t1;
+			extern long macsurf_monotonic_ms(void);
+
+			if (strcmp(argv[ji], "--probe") == 0) break;
+			src = harness_slurp(argv[ji]);
+			if (src == NULL) {
+				fprintf(stderr, "FAIL: --js cannot read %s\n",
+						argv[ji]);
+				return 1;
+			}
+			t0 = macsurf_monotonic_ms();
+			ok = js_exec(thread, (const unsigned char *)src,
+					strlen(src), argv[ji]);
+			t1 = macsurf_monotonic_ms();
+			fprintf(stderr, "--js %-40s bytes=%-9lu ok=%d %ldms\n",
+					argv[ji], (unsigned long)strlen(src),
+					(int)ok, t1 - t0);
+			if (!ok) jfail = 1;
+			free(src);
+			/* let anything the script scheduled actually run, the
+			 * way the event loop would between scripts */
+			{
+				int p;
+				for (p = 0; p < 50; p++) {
+					macsurf_qjs_pump_all();
+					harness_pump_all(1000);
+				}
+			}
+		}
+		if (probe != NULL) {
+			unsigned char ok;
+			int p;
+			for (p = 0; p < 200; p++) {
+				macsurf_qjs_pump_all();
+				harness_pump_all(1000);
+			}
+			ok = js_exec(thread, (const unsigned char *)probe,
+					strlen(probe), "--probe");
+			fprintf(stderr, "--probe ok=%d\n", (int)ok);
+			if (!ok) jfail = 1;
+		}
+		fprintf(stderr, "=== --js MODE DONE (%s) ===\n",
+				jfail ? "a script threw" : "all clean");
+		return jfail;
+	}
+
 	/* --- run the real mutation path: .textContent= / .setAttribute via
 	 * the REAL macsurf_qjs.c C bindings, same functions React would call --- */
 	{
@@ -1022,6 +1273,45 @@ int main(int argc, char **argv)
 
 	fprintf(stderr, "=== Test 1 PASS: no ASan trap through initial-build + "
 			"JS-mutate + reconvert + tree-walk (sequential) ===\n");
+
+	/* --- Test 1b: a failed reconvert must be transactional. Preserve tree
+	 * ownership and DOM->box identity, then fail at the point the replacement
+	 * box build would begin. */
+	{
+		struct box *old_layout = htmlc.layout;
+		void *old_bctx = htmlc.bctx;
+		dom_node *root = NULL;
+		struct box *root_box = NULL;
+		int rc;
+
+		fprintf(stderr, "\n=== Test 1b: failed reconvert restores old tree ===\n");
+		macsurf_reconvert_test_fail_once();
+		rc = html_reconvert_content((struct content *)&htmlc);
+		if (rc == 0) {
+			fprintf(stderr, "FAIL: forced reconvert failure reported success\n");
+			return 1;
+		}
+		if (htmlc.layout != old_layout || htmlc.bctx != old_bctx ||
+			htmlc.layout == NULL) {
+			fprintf(stderr, "FAIL: rollback lost the previous render tree\n");
+			return 1;
+		}
+		if (htmlc.unit_len_ctx.root_style != htmlc.layout->style) {
+			fprintf(stderr, "FAIL: rollback left root_style detached\n");
+			return 1;
+		}
+		if (dom_document_get_document_element(document, (void *)&root) !=
+				DOM_NO_ERR || root == NULL ||
+			dom_node_get_user_data(root,
+					corestring_dom___ns_key_box_node_data,
+					&root_box) != DOM_NO_ERR || root_box != old_layout) {
+			fprintf(stderr, "FAIL: rollback did not restore DOM box identity\n");
+			if (root != NULL) dom_node_unref(root);
+			return 1;
+		}
+		dom_node_unref(root);
+		fprintf(stderr, "=== Test 1b PASS: failed reconvert kept the old tree live ===\n");
+	}
 
 	/* --- Test 2: the interleaved-yield scenario. Queue ANOTHER reconvert,
 	 * pump exactly ONE batch (up to 100 nodes) of its resumable walk, THEN
@@ -1490,16 +1780,12 @@ int main(int argc, char **argv)
 	 * T.createElement() probe threw.  Runs the byte-exact file hackaday
 	 * serves, wrapped in JS try/catch so we can assert on the error TEXT.
 	 *
-	 * This does NOT yet require full jQuery init: the element wrapper's
-	 * traversal API is still hardcoded (cloneNode returns the element
-	 * itself, childNodes=[], firstChild/lastChild=null), so jQuery
-	 * legitimately throws later at
-	 * le.checkClone=xe.cloneNode(!0).cloneNode(!0).lastChild.checked.  What
-	 * must never come back is the document-identity failure.  The test
-	 * tightens itself automatically once real traversal lands. --- */
+	 * The fixture is mandatory and full jQuery initialization is required.
+	 * A missing fixture or any caught exception is a failed test; reporting a
+	 * generic "GAP" followed by PASS made unrelated regressions invisible. */
 	fprintf(stderr, "\n=== Test 7: real jQuery 3.7.1 clears the document probe ===\n");
 	{
-		FILE *jf = fopen("jquery-3.7.1.min.js", "rb");
+		FILE *jf = harness_fixture_open("jquery-3.7.1.min.js", "rb");
 		const char *probe_js =
 			"if(document.nodeType!==9)"
 				"throw new Error('ASSERT FAIL: document.nodeType='+document.nodeType);"
@@ -1517,8 +1803,8 @@ int main(int argc, char **argv)
 		fprintf(stderr, "document.nodeType==9 and documentElement present\n");
 
 		if (jf == NULL) {
-			fprintf(stderr, "SKIP: jquery-3.7.1.min.js not present "
-					"(fetch it to run the real-jQuery leg)\n");
+			fprintf(stderr, "FAIL: jquery-3.7.1.min.js fixture is missing\n");
+			return 1;
 		} else {
 			char *jsrc, *wrapped;
 			long jlen;
@@ -1530,20 +1816,28 @@ int main(int argc, char **argv)
 			const char *verdict_js =
 				"globalThis.__jqOK=(typeof jQuery!=='undefined'&&"
 					"!!(jQuery.fn&&jQuery.fn.jquery));"
-				"if(/createElement/.test(globalThis.__jqErr))"
-					"throw new Error('fixes855 REGRESSED: '+globalThis.__jqErr);";
-			const char *report_js =
-				"globalThis.__jqOK?('OK jQuery '+jQuery.fn.jquery)"
-					":('GAP '+(globalThis.__jqErr||'(no error recorded)'))";
+				"if(!globalThis.__jqOK)"
+					"throw new Error('jQuery did not initialize: '+"
+					"(globalThis.__jqErr||'(no error recorded)'));";
 
 			fseek(jf, 0, SEEK_END); jlen = ftell(jf); fseek(jf, 0, SEEK_SET);
 			jsrc = (char *)malloc((size_t)jlen + 1);
+			if (jsrc == NULL) {
+				fclose(jf);
+				fprintf(stderr, "FAIL: oom reading jQuery fixture\n");
+				return 1;
+			}
 			rd = fread(jsrc, 1, (size_t)jlen, jf);
 			jsrc[rd] = '\0';
 			fclose(jf);
 
 			wn = strlen(pre) + rd + strlen(post) + 1;
 			wrapped = (char *)malloc(wn);
+			if (wrapped == NULL) {
+				free(jsrc);
+				fprintf(stderr, "FAIL: oom wrapping jQuery fixture\n");
+				return 1;
+			}
 			strcpy(wrapped, pre);
 			memcpy(wrapped + strlen(pre), jsrc, rd);
 			strcpy(wrapped + strlen(pre) + rd, post);
@@ -1559,21 +1853,17 @@ int main(int argc, char **argv)
 				return 1;
 			}
 
-			/* Hard-fails ONLY if the fixes855 document-identity error is back. */
+			/* A caught jQuery exception is a test failure, not a PASS-with-GAP. */
 			ok = js_exec(thread, (const unsigned char *)verdict_js,
 					strlen(verdict_js), "driver-jq-verdict.js");
 			if (!ok) {
-				fprintf(stderr, "FAIL: fixes855 REGRESSED -- jQuery is back "
-						"to failing on the document handle\n");
+				fprintf(stderr, "FAIL: real jQuery did not initialize\n");
 				return 1;
 			}
-			(void)js_exec(thread, (const unsigned char *)report_js,
-					strlen(report_js), "driver-jq-report.js");
+			fprintf(stderr, "=== Test 7 PASS: real jQuery initializes "
+					"after the document-identity probe ===\n");
 		}
 	}
-	fprintf(stderr, "=== Test 7 PASS: jQuery clears the document-identity probe "
-			"(fixes855); any remaining throw is the known traversal gap "
-			"(cloneNode/firstChild/lastChild/childNodes) ===\n");
 
 	/* --- Test 7b (DIAGNOSTIC): the REAL XenForo bundles, unstubbed
 	 *
@@ -1615,7 +1905,7 @@ int main(int argc, char **argv)
 		int fi;
 
 		for (fi = 0; fi < 2; fi++) {
-			FILE *bf = fopen(xf_files[fi], "rb");
+			FILE *bf = harness_fixture_open(xf_files[fi], "rb");
 			char *raw, *wrapped;
 			long blen;
 			size_t rd, wn;
@@ -1712,7 +2002,7 @@ int main(int argc, char **argv)
 			};
 			int fi;
 			for (fi = 0; fi < 2; fi++) {
-				FILE *bf = fopen(raw_files[fi], "rb");
+				FILE *bf = harness_fixture_open(raw_files[fi], "rb");
 				char *raw;
 				long blen;
 				size_t rd;
@@ -2229,8 +2519,8 @@ int main(int argc, char **argv)
 					"throw new Error('ASSERT FAIL: createElementNS returned a JS "
 						"FALLBACK object, not a libdom node -- invisible to "
 						"layout, so the form would never paint');"
-				"if(n.tag!=='div')"
-					"throw new Error('ASSERT FAIL: tagName is '+n.tag+', expected div');"
+				"if(n.tag!=='DIV')"
+					"throw new Error('ASSERT FAIL: tagName is '+n.tag+', expected DIV');"
 				"if(n.optObj!==true)"
 					"throw new Error('ASSERT FAIL: createElementNS(ns,tag,PROPS_OBJECT) "
 						"-> '+n.optObj+'. Preact passes `props.is && props`, i.e. "
@@ -2739,7 +3029,7 @@ int main(int argc, char **argv)
 	 * success. --- */
 	fprintf(stderr, "\n=== Test 18 (DIAGNOSTIC): the real verbum-comments.js ===\n");
 	{
-		FILE *vf = fopen("verbum-comments.js", "rb");
+		FILE *vf = harness_fixture_open("verbum-comments.js", "rb");
 		if (vf == NULL) {
 			fprintf(stderr, "SKIP: verbum-comments.js not present next to the "
 					"harness (copy it from the HAR to run this leg)\n");
@@ -3706,8 +3996,9 @@ int main(int argc, char **argv)
 	 *
 	 * build_large_doc's lists/floats/tables (fixes889/890) all exist at PARSE
 	 * time. Preact/jQuery build the mount at RUN time: createElement +
-	 * appendChild grows a NEW subtree that itself carries markers (<li>), floats
-	 * and <img> objects; innerHTML= parses a fragment into it; removeChild drops
+	 * appendChild grows a NEW subtree that itself carries markers (<li>), floats,
+	 * <img> objects, and a form control; innerHTML= parses a fragment into it;
+	 * removeChild drops
 	 * existing text nodes toward refcount 0 -- all BEFORE the reconvert. That is
 	 * the hackaday shape the reproduced HW crash fires on (log dies inside
 	 * dom_to_box, between rc=0 and DONE), and it is exactly what Tests 1/2/26
@@ -3742,6 +4033,10 @@ int main(int argc, char **argv)
 			"m.setAttribute('class','comment-form__verbum');"
 			"feed.appendChild(m);"
 			"m.innerHTML='<span>reply</span><ul><li>a</li><li>b</li></ul>';"
+			"var tf=document.createElement('form');tf.id='t29-form';"
+			"var ta=document.createElement('textarea');ta.id='t29-ta';"
+			"ta.textContent='painted after JS mutation';tf.appendChild(ta);"
+			"feed.appendChild(tf);"
 			"var p0=document.getElementById('p0');if(p0){feed.removeChild(p0);}"
 			"var p1=document.getElementById('p1');if(p1){feed.removeChild(p1);}"
 			"var p2=document.getElementById('p2');"
@@ -3751,9 +4046,12 @@ int main(int argc, char **argv)
 		int rc29;
 		dom_nodelist *all29 = NULL;
 		dom_string *star29 = NULL;
+		dom_string *tid29 = NULL;
 		uint32_t len29 = 0, k29;
 		unsigned long touched29 = 0, live29 = 0;
 		dom_node *root29 = NULL;
+		dom_element *ta29 = NULL;
+		struct box *tab29 = NULL;
 
 		ok29 = js_exec(thread, (const unsigned char *)mutate29,
 				strlen(mutate29), "driver-mutate29.js");
@@ -3775,6 +4073,27 @@ int main(int argc, char **argv)
 		harness_pump_all(100000);
 		fprintf(stderr, "t29 reconvert drained, layout=%p\n",
 				(void *)htmlc.layout);
+
+		/* The dynamic textarea is the form-registry regression: a control
+		 * added by JS must acquire a real box/gadget in the replacement tree,
+		 * not merely leave the previous tree visible on rollback. */
+		if (dom_string_create((const uint8_t *)"t29-ta", 6, &tid29) !=
+				DOM_NO_ERR || tid29 == NULL ||
+			dom_document_get_element_by_id(document, tid29, &ta29) !=
+				DOM_NO_ERR || ta29 == NULL) {
+			fprintf(stderr, "FAIL: t29 dynamic textarea missing\n");
+			if (tid29 != NULL) dom_string_unref(tid29);
+			return 1;
+		}
+		tab29 = box_for_node((dom_node *)ta29);
+		if (tab29 == NULL || tab29->gadget == NULL) {
+			fprintf(stderr, "FAIL: t29 dynamic textarea did not paint\n");
+			dom_node_unref((dom_node *)ta29);
+			dom_string_unref(tid29);
+			return 1;
+		}
+		dom_node_unref((dom_node *)ta29);
+		dom_string_unref(tid29);
 
 		/* sweep box_for_node over the rebuilt tree (the click-crash instrument) */
 		if (dom_string_create((const uint8_t *)"*", 1, &star29) != DOM_NO_ERR) {
@@ -3817,7 +4136,7 @@ int main(int argc, char **argv)
 		}
 	}
 	fprintf(stderr, "=== Test 29 PASS: reconvert over a JS-created subtree "
-			"(markers/floats/img/innerHTML/removeChild) is ASan-clean ===\n");
+		"(markers/floats/img/textarea/innerHTML/removeChild) is ASan-clean ===\n");
 
 	/* --- Test 30 (fixes900): closing an IFRAME heap must NOT free the PARENT
 	 * runtime's DOM wrappers. THE crash the whole reconvert hunt actually kept
@@ -4600,6 +4919,7 @@ int main(int argc, char **argv)
 			fprintf(stderr, "FAIL: Test 37 calloc handle\n"); return 1;
 		}
 		bg->next = NULL;
+		bg->active_counted = true;
 		htmlc.object_list = bg;
 		htmlc.num_objects = 1;
 		htmlc.aborted = false;
@@ -4698,6 +5018,7 @@ int main(int argc, char **argv)
 		dom_element *el22 = NULL, *el23 = NULL;
 		unsigned char ok;
 		int part1_ok = 0;
+		int red_count = 0;
 
 		if (dom_string_create((const uint8_t *)"li22", 4, &id22) != DOM_NO_ERR ||
 		    dom_string_create((const uint8_t *)"li23", 4, &id23) != DOM_NO_ERR) {
@@ -4800,6 +5121,7 @@ int main(int argc, char **argv)
 			ok = js_exec(thread, (const unsigned char *)chk1b,
 					strlen(chk1b), "t38-chk1b.js");
 			if (!ok) {
+				red_count++;
 				fprintf(stderr, "  part 1b RED: target double-fire (see "
 						"assertion above) -- continuing so the round reports "
 						"every finding in one run\n");
@@ -4868,6 +5190,7 @@ int main(int argc, char **argv)
 				ok = js_exec(thread, (const unsigned char *)chk1c,
 						strlen(chk1c), "t38-chk1c.js");
 				if (!ok) {
+					red_count++;
 					fprintf(stderr, "  part 1c RED: capture mirror -- the fix "
 							"is two clauses, not one\n");
 				} else {
@@ -4948,6 +5271,7 @@ int main(int argc, char **argv)
 				ok = js_exec(thread, (const unsigned char *)chk1d,
 						strlen(chk1d), "t38-chk1d.js");
 				if (!ok) {
+					red_count++;
 					fprintf(stderr, "  part 1d RED: click/submit/keydown all "
 							"double-fire -- double form submit confirmed\n");
 				} else {
@@ -5001,6 +5325,7 @@ int main(int argc, char **argv)
 			ok = js_exec(thread, (const unsigned char *)chk2,
 					strlen(chk2), "t38-chk2.js");
 			if (!ok) {
+				red_count++;
 				fprintf(stderr,
 					"=== Test 38 FAILED AS EXPECTED (Phase 0 control) ===\n"
 					"    The positive control passed (part1_ok=%d), so the "
@@ -5010,6 +5335,8 @@ int main(int argc, char **argv)
 					"    This turns green when Phase 1b + 1c land. Until "
 					"then a red suite here is the CORRECT result.\n",
 					part1_ok);
+			}
+			if (red_count != 0) {
 				return 1;
 			}
 		}
@@ -5756,24 +6083,15 @@ box_coords(bx, &cx, &cy);
 				"if(!(rc.width>0))"
 					"throw new Error('ASSERT FAIL: READY rect is '+rc.width+"
 						"'x'+rc.height+' for a boxed element');"
-				/* The fixes1011 guard, unchanged in substance: an element
-				 * with no box must NOT be handed a fabricated number. */
+				/* Standards contract: an element with no box returns 0 */
 				"var d=document.createElement('div');"
-				"if(d.offsetWidth!==undefined)"
-					"throw new Error('ASSERT FAIL: an element with NO box "
-						"answered '+d.offsetWidth+' before DONE -- must be "
-						"undefined. A fabricated 0 gets written back as "
-						"inline width:0 and ERASES page sections; undefined "
-						"propagates as NaN and the write is a no-op.');"
-				"if(d.clientHeight!==undefined||d.scrollWidth!==undefined)"
-					"throw new Error('ASSERT FAIL: unboxed clientHeight/"
-						"scrollWidth not undefined before DONE');";
+				"if(d.offsetWidth!==0||d.clientHeight!==0||d.scrollWidth!==0)"
+					"throw new Error('ASSERT FAIL: unboxed element must answer 0');";
 			ok = js_exec(thread, (const unsigned char *)pre,
 					strlen(pre), "t43-unsettled.js");
 			htmlc.base.status = CONTENT_STATUS_DONE;
 			if (!ok) {
-				fprintf(stderr, "FAIL: Test 43 -- the unsettled window "
-						"answered a fabricated value\n");
+				fprintf(stderr, "FAIL: Test 43 -- unboxed element failed 0 assertion\n");
 				return 1;
 			}
 		}
@@ -5917,7 +6235,7 @@ box_coords(bx, &cx, &cy);
 	 * content survives. This is the method that ended fixes998. */
 	fprintf(stderr, "\n=== Test 45: the REAL dotdotdot plugin on an article entry ===\n");
 	{
-		FILE *bf = fopen("hackaday-bundle.js", "rb");
+		FILE *bf = harness_fixture_open("hackaday-bundle.js", "rb");
 		if (bf == NULL) {
 			fprintf(stderr, "SKIP: hackaday-bundle.js not present\n");
 		} else {
@@ -6305,7 +6623,7 @@ box_coords(bx, &cx, &cy);
 		extern void macos9_reconvert_sync_stats(long *f, long *d, long *us);
 		extern void macos9_reconvert_sync_reset(void);
 		extern int macos9_reconvert_flush_now(void *cv);
-		extern void macos9_js_mark_dom_dirty(struct content *c);
+		
 		struct content_html_object *blocker;
 		struct content_html_object *saved_list = htmlc.object_list;
 		unsigned int saved_n = htmlc.num_objects;
@@ -6321,7 +6639,7 @@ box_coords(bx, &cx, &cy);
 		htmlc.base.active = 1;          /* the html fetch itself, as on a real load */
 		htmlc.object_list = NULL;
 		htmlc.num_objects = 0;
-		macos9_js_mark_dom_dirty((struct content *)&htmlc);
+		macos9_js_mark_dom_dirty((struct content *)&htmlc, NULL, 0);
 		macos9_reconvert_sync_reset();
 		macos9_reconvert_sync_stats(&f0, &d0, &u0);
 		(void) macos9_reconvert_flush_now((void *)&htmlc);
@@ -6348,7 +6666,7 @@ box_coords(bx, &cx, &cy);
 		blocker->next = NULL;
 		htmlc.object_list = blocker;
 		htmlc.num_objects = 1;
-		macos9_js_mark_dom_dirty((struct content *)&htmlc);
+		macos9_js_mark_dom_dirty((struct content *)&htmlc, NULL, 0);
 		macos9_reconvert_sync_reset();
 		macos9_reconvert_sync_stats(&f0, &d0, &u0);
 		(void) macos9_reconvert_flush_now((void *)&htmlc);
@@ -6502,7 +6820,7 @@ box_coords(bx, &cx, &cy);
 		extern int macos9_reconvert_flush_now(void *cv);
 		extern void macos9_reconvert_sync_stats(long *f, long *d, long *us);
 		extern void macos9_reconvert_sync_reset(void);
-		extern void macos9_js_mark_dom_dirty(struct content *c);
+		
 		long f0 = 0, d0 = 0, u0 = 0, f1 = 0, d1 = 0, u1 = 0;
 
 		htmlc.reflowing = false;
@@ -6515,7 +6833,7 @@ box_coords(bx, &cx, &cy);
 		 * the html fetch itself still counted active. */
 		htmlc.base.status = CONTENT_STATUS_LOADING;
 		htmlc.base.active = 1;
-		macos9_js_mark_dom_dirty((struct content *)&htmlc);
+		macos9_js_mark_dom_dirty((struct content *)&htmlc, NULL, 0);
 
 		macos9_reconvert_sync_reset();
 		macos9_reconvert_sync_stats(&f0, &d0, &u0);
@@ -6557,7 +6875,7 @@ box_coords(bx, &cx, &cy);
 	 * this failure -- it was 155 and everything was still broken. */
 	fprintf(stderr, "\n=== Test 60: LOADING answers a real number (#265 C3b) ===\n");
 	{
-		extern void macos9_js_mark_dom_dirty(struct content *c);
+		
 		unsigned char ok;
 
 		htmlc.reflowing = false;
@@ -7888,7 +8206,8 @@ box_coords(bx, &cx, &cy);
 			".node-extra-icon { flex: 0 0 auto; padding-right: 8px; }"
 			".avatar { display: inline-flex; justify-content: center;"
 			" align-items: center; border-radius: 50%;"
-			" vertical-align: top; overflow: hidden; }"
+			" vertical-align: top; overflow: hidden;"
+			" background-blend-mode: multiply; }"
 			".avatar--s { width: 48px; height: 48px; }"
 			".avatar img { text-indent: 100%; overflow: hidden;"
 			" white-space: nowrap; word-wrap: normal; display: block;"
@@ -7907,6 +8226,7 @@ box_coords(bx, &cx, &cy);
 		void *t66_box_ctx = NULL;
 		int t66_row_h = -1, t66_icon_h = -1;
 		int t66_avatar_h = -1, t66_img_h = -1;
+		int t67_blend_mode = -1;
 		nserror t66err;
 		dom_exception t66derr;
 		css_error t66cerr;
@@ -8083,7 +8403,7 @@ box_coords(bx, &cx, &cy);
 			}
 		}
 		t66_walk(t66c.layout, &t66_row_h, &t66_icon_h,
-				&t66_avatar_h, &t66_img_h);
+				&t66_avatar_h, &t66_img_h, &t67_blend_mode);
 		fprintf(stderr, "  row h=%d icon h=%d avatar h=%d img h=%d\n",
 				t66_row_h, t66_icon_h, t66_avatar_h, t66_img_h);
 		if (t66_row_h != 48 || t66_icon_h != 48 ||
@@ -8098,9 +8418,4449 @@ box_coords(bx, &cx, &cy);
 					t66_img_h);
 			return 1;
 		}
+		if (t67_blend_mode != CSS_BACKGROUND_BLEND_MODE_MULTIPLY) {
+			fprintf(stderr, "FAIL: Test 67 background-blend-mode cascade=%d "
+					"expected=%d\n", t67_blend_mode,
+					CSS_BACKGROUND_BLEND_MODE_MULTIPLY);
+			return 1;
+		}
 	}
 	fprintf(stderr, "=== Test 66 PASS: inline-flex avatar heights the "
 			"flex row (row/icon/avatar/img all 48) ===\n");
+	fprintf(stderr, "=== Test 67 PASS: background-blend-mode parsed and "
+			"cascaded to multiply ===\n");
+
+	/* --- Test 68 (fixes1231): ResizeObserver on document.documentElement/
+	 * body must actually FIRE with real size data. Hardware evidence
+	 * (2026-08-20, Facebook Bloks checkpoint pages): the old shared
+	 * no-op _Observer delivered an EMPTY entries array, so a callback
+	 * reading entries[0].contentRect got undefined and the app's
+	 * viewport-size-dependent mount never ran. Observes
+	 * document.documentElement (the pattern every hardware capture
+	 * showed -- target id/tagName logged as "HTML"), pumps the real JS
+	 * timer arena, and asserts the callback fired with a non-empty
+	 * entries array whose contentRect matches the real viewport size. */
+	fprintf(stderr, "\n=== Test 68: ResizeObserver fires with real size "
+			"data ===\n");
+	{
+		extern void macsurf_qjs_pump_all(void);
+		const char *ro_setup_js =
+			"globalThis.__roFired=0;globalThis.__roW=-1;"
+			"globalThis.__roH=-1;globalThis.__roLen=-1;"
+			"(function(){"
+			"var ro=new ResizeObserver(function(entries){"
+				"globalThis.__roFired=1;"
+				"globalThis.__roLen=entries.length;"
+				"if(entries&&entries[0]&&entries[0].contentRect){"
+					"globalThis.__roW=entries[0].contentRect.width;"
+					"globalThis.__roH=entries[0].contentRect.height;"
+				"}"
+			"});"
+			"ro.observe(document.documentElement);"
+			"})();";
+		const char *ro_check_js =
+			"if(!globalThis.__roFired)"
+				"throw new Error('ASSERT FAIL: RO callback never fired');"
+			"if(globalThis.__roLen!==1)"
+				"throw new Error('ASSERT FAIL: RO entries.length='"
+					"+globalThis.__roLen+' expected 1');"
+			"if(globalThis.__roW!==innerWidth||globalThis.__roH!==innerHeight)"
+				"throw new Error('ASSERT FAIL: RO contentRect '"
+					"+globalThis.__roW+'x'+globalThis.__roH+' != viewport '"
+					"+innerWidth+'x'+innerHeight);";
+		unsigned char ok1, ok2;
+		int pump;
+
+		ok1 = js_exec(thread, (const unsigned char *)ro_setup_js,
+				strlen(ro_setup_js), "driver-ro-setup.js");
+		if (!ok1) {
+			fprintf(stderr, "FAIL: RO setup threw\n");
+			return 1;
+		}
+		for (pump = 0; pump < 8; pump++) {
+			macsurf_qjs_pump_all();
+			harness_pump_all(1000);
+		}
+		ok2 = js_exec(thread, (const unsigned char *)ro_check_js,
+				strlen(ro_check_js), "driver-ro-check.js");
+		fprintf(stderr, "js_exec(ro check) ok=%d\n", (int)ok2);
+		if (!ok2) {
+			fprintf(stderr, "FAIL: ResizeObserver did not deliver a real "
+					"sized entry after pumping timers\n");
+			return 1;
+		}
+	}
+	fprintf(stderr, "=== Test 68 PASS: ResizeObserver delivers a real "
+			"contentRect for document.documentElement ===\n");
+
+	/* --- Test 69 (fixes1235): MutationObserver fires after a real
+	 * reconvert, through the REAL html_reconvert_done path -- not a bare
+	 * timer pump like Tests 5/68. Own ISOLATED fixture (Test 66's pattern),
+	 * not the giant shared htmlc/document Tests 1-65 accumulate state on:
+	 * a first attempt reusing that shared content hit reconvert
+	 * DONE-ENTRY success=0 on its 35th cycle for reasons unrelated to this
+	 * feature (34 prior tests' worth of accumulated box-tree/registry
+	 * state), which a clean fixture sidesteps entirely, same reasoning
+	 * Test 66 already established. Registers an observer on
+	 * document.documentElement, appends a real child through the same C binding
+	 * React would call, drives an ACTUAL reconvert through html_reconvert_content,
+	 * and asserts the observer sees that real target and child. This guards the
+	 * bootloader-critical addedNodes path, not merely a synthetic callback. */
+	fprintf(stderr, "\n=== Test 69: MutationObserver fires after a real "
+			"reconvert ===\n");
+	{
+		static const char *t69_html =
+			"<!DOCTYPE html><html><head></head><body>"
+			"<div id=\"root\"><p id=\"p0\">hello</p></div>"
+			"</body></html>";
+		struct html_content t69c;
+		dom_hubbub_parser *t69p = NULL;
+		dom_document *t69doc = NULL;
+		dom_node *t69root = NULL;
+		css_select_ctx *t69ctx = NULL;
+		css_stylesheet *t69ua = NULL;
+		dom_hubbub_parser_params t69params;
+		css_stylesheet_params t69sp;
+		void *t69_box_ctx = NULL;
+		struct jsheap *t69heap = NULL;
+		struct jsthread *t69thread = NULL;
+		nserror t69nerr;
+		dom_exception t69derr;
+		css_error t69cerr;
+		int rc;
+
+		memset(&t69params, 0, sizeof(t69params));
+		t69params.enc = NULL;
+		t69params.fix_enc = true;
+		t69params.enable_script = false;
+		t69params.daf = NULL;
+		t69derr = dom_hubbub_parser_create(&t69params, &t69p, &t69doc);
+		if (t69derr != DOM_HUBBUB_OK || t69p == NULL || t69doc == NULL) {
+			fprintf(stderr, "FAIL: Test 69 parser create %d\n",
+					(int)t69derr);
+			return 1;
+		}
+		t69derr = dom_hubbub_parser_parse_chunk(t69p,
+				(const uint8_t *)t69_html, strlen(t69_html));
+		if (t69derr != DOM_HUBBUB_OK) {
+			fprintf(stderr, "FAIL: Test 69 parse chunk %d\n", (int)t69derr);
+			return 1;
+		}
+		t69derr = dom_hubbub_parser_completed(t69p);
+		if (t69derr != DOM_HUBBUB_OK) {
+			fprintf(stderr, "FAIL: Test 69 parse done %d\n", (int)t69derr);
+			return 1;
+		}
+		dom_hubbub_parser_destroy(t69p);
+
+		memset(&t69c, 0, sizeof(t69c));
+		t69c.base_url = g_base_url;
+		t69c.document = t69doc;
+		t69c.quirks = DOM_DOCUMENT_QUIRKS_MODE_NONE;
+		t69c.enable_scripting = true;
+		if (css_select_ctx_create(&t69ctx) != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 69 select_ctx\n");
+			return 1;
+		}
+		t69c.select_ctx = t69ctx;
+
+		memset(&t69sp, 0, sizeof(t69sp));
+		t69sp.params_version = CSS_STYLESHEET_PARAMS_VERSION_1;
+		t69sp.level = CSS_LEVEL_3;
+		t69sp.charset = "UTF-8";
+		t69sp.url = "resource:default.css";
+		t69sp.title = "default";
+		t69sp.allow_quirks = false;
+		t69sp.inline_style = false;
+		t69sp.resolve = harness_css_resolve_url;
+		t69sp.resolve_pw = NULL;
+		t69cerr = css_stylesheet_create(&t69sp, &t69ua);
+		if (t69cerr != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 69 UA sheet\n");
+			return 1;
+		}
+		{
+			const char *ua_css =
+				"html,body,div,p{display:block}";
+			css_error ae = css_stylesheet_append_data(t69ua,
+					(const uint8_t *)ua_css, strlen(ua_css));
+			if (ae != CSS_OK && ae != CSS_NEEDDATA) {
+				fprintf(stderr, "FAIL: Test 69 UA append=%d\n", (int)ae);
+				return 1;
+			}
+			(void)css_stylesheet_data_done(t69ua);
+		}
+		if (css_select_ctx_append_sheet(t69ctx, t69ua,
+				CSS_ORIGIN_UA, "screen") != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 69 UA append sheet\n");
+			return 1;
+		}
+
+		t69c.media.type = CSS_MEDIA_SCREEN;
+		t69c.media.width = INTTOFIX(993);
+		t69c.media.height = INTTOFIX(600);
+		t69c.media.orientation = CSS_MEDIA_ORIENTATION_LANDSCAPE;
+		t69c.unit_len_ctx.viewport_width = INTTOFIX(993);
+		t69c.unit_len_ctx.viewport_height = INTTOFIX(600);
+		t69c.unit_len_ctx.device_dpi = INTTOFIX(90);
+		t69c.unit_len_ctx.font_size_default = INTTOFIX(16);
+		t69c.unit_len_ctx.font_size_minimum = INTTOFIX(8);
+		if (lwc_intern_string("*", 1, &t69c.universal) != lwc_error_ok) {
+			fprintf(stderr, "FAIL: Test 69 universal\n");
+			return 1;
+		}
+
+		t69c.base.status = CONTENT_STATUS_LOADING;
+		t69c.base.active = 0;
+		t69c.base.handler = &g_dummy_handler;
+		macos9_content_register((struct content *)&t69c);
+
+		t69derr = dom_document_get_document_element(t69doc,
+				(void *)&t69root);
+		if (t69derr != DOM_NO_ERR || t69root == NULL) {
+			fprintf(stderr, "FAIL: Test 69 doc element\n");
+			return 1;
+		}
+		g_initial_build_done = 0;
+		g_initial_build_ok = false;
+		t69nerr = dom_to_box(t69root, &t69c, initial_build_cb,
+				&t69_box_ctx);
+		dom_node_unref(t69root);
+		if (t69nerr != NSERROR_OK) {
+			fprintf(stderr, "FAIL: Test 69 dom_to_box nerr=%d\n",
+					(int)t69nerr);
+			return 1;
+		}
+		harness_pump_all(100000);
+		if (!g_initial_build_done || !g_initial_build_ok) {
+			fprintf(stderr, "FAIL: Test 69 initial build done=%d ok=%d\n",
+					g_initial_build_done, (int)g_initial_build_ok);
+			return 1;
+		}
+		t69c.base.status = CONTENT_STATUS_DONE;
+
+		t69nerr = js_newheap(20000, &t69heap);
+		if (t69nerr != NSERROR_OK || t69heap == NULL) {
+			fprintf(stderr, "FAIL: Test 69 js_newheap nerr=%d\n",
+					(int)t69nerr);
+			return 1;
+		}
+		t69nerr = js_newthread(t69heap, NULL, (void *)&t69c, &t69thread);
+		if (t69nerr != NSERROR_OK || t69thread == NULL) {
+			fprintf(stderr, "FAIL: Test 69 js_newthread nerr=%d\n",
+					(int)t69nerr);
+			return 1;
+		}
+		t69c.js_thread = t69thread;
+		macsurf_js_set_reconvert_enabled(1);
+
+		{
+			const char *mo_setup_js =
+				"globalThis.__moFired=0;globalThis.__moLen=-1;"
+				"globalThis.__moTargetOk=0;globalThis.__moAddedOk=0;"
+				"globalThis.__moInnerTargetOk=0;"
+				"globalThis.__moInnerAddedOk=0;"
+				"globalThis.__moInnerRemovedOk=0;"
+				"globalThis.__moAttrClassOk=0;"
+				"globalThis.__moAttrDataOk=0;"
+				"(function(){"
+				"var mo=new MutationObserver(function(records){"
+					"globalThis.__moFired=1;"
+					"globalThis.__moLen=records.length;"
+					"for(var i=0;i<records.length;i++){var r=records[i];"
+						"if(r.target!==document.getElementById('p0'))continue;"
+						"for(var a=0;a<r.addedNodes.length;a++){"
+							"if(r.addedNodes[a].id==='t69-added')"
+								"globalThis.__moAddedOk=1;"
+							"if(r.addedNodes[a].id==='t69-inner'){"
+								"globalThis.__moInnerTargetOk=1;"
+								"globalThis.__moInnerAddedOk=1;}}"
+						"for(var d=0;d<r.removedNodes.length;d++)"
+							"if(r.removedNodes[d].id==='t69-added')"
+								"globalThis.__moInnerRemovedOk=1;"
+						"if(r.type==='attributes'&&r.attributeName==='class')"
+							"globalThis.__moAttrClassOk=1;"
+						"if(r.type==='attributes'&&r.attributeName==='data-t69')"
+							"globalThis.__moAttrDataOk=1;}"
+					"if(globalThis.__moAddedOk)"
+						"globalThis.__moTargetOk=1;"
+				"});"
+				"mo.observe(document.documentElement,"
+					"{childList:true,subtree:true,attributes:true});"
+				"})();";
+			const char *mo_mutate_js =
+				"(function(){var n=document.createElement('i');"
+				"n.id='t69-added';document.getElementById('p0').appendChild(n);})();";
+			const char *mo_check_js =
+				"if(!globalThis.__moFired)"
+					"throw new Error('ASSERT FAIL: MO callback never "
+						"fired');"
+				"if(globalThis.__moLen<1)"
+					"throw new Error('ASSERT FAIL: MO records.length='"
+						"+globalThis.__moLen+' expected >=1');"
+				"if(!globalThis.__moTargetOk)"
+					"throw new Error('ASSERT FAIL: MO record target was "
+						"not the appended-to element');"
+				"if(!globalThis.__moAddedOk)"
+					"throw new Error('ASSERT FAIL: MO addedNodes lost the "
+						"real appended child');";
+			const char *mo_inner_mutate_js =
+				"document.getElementById('p0').innerHTML="
+				"'<b id=\"t69-inner\">innerHTML child</b>';";
+			const char *mo_inner_check_js =
+				"if(!globalThis.__moInnerTargetOk)"
+					"throw new Error('ASSERT FAIL: innerHTML MO record target "
+						"was not the replaced element');"
+				"if(!globalThis.__moInnerAddedOk)"
+					"throw new Error('ASSERT FAIL: innerHTML addedNodes lost "
+						"the parsed child');"
+				"if(!globalThis.__moInnerRemovedOk)"
+					"throw new Error('ASSERT FAIL: innerHTML removedNodes lost "
+						"the detached child');";
+			const char *mo_attr_mutate_js =
+				"(function(){var p=document.getElementById('p0');"
+				"p.className='t69-observed';"
+				"p.setAttribute('data-t69','observed');})();";
+			const char *mo_attr_check_js =
+				"if(!globalThis.__moAttrClassOk)"
+					"throw new Error('ASSERT FAIL: MO did not report class');"
+				"if(!globalThis.__moAttrDataOk)"
+					"throw new Error('ASSERT FAIL: MO did not report data-t69');";
+			unsigned char ok1, ok2, ok3;
+
+			ok1 = js_exec(t69thread, (const unsigned char *)mo_setup_js,
+					strlen(mo_setup_js), "driver-mo-setup.js");
+			if (!ok1) {
+				fprintf(stderr, "FAIL: MO setup threw\n");
+				return 1;
+			}
+
+			ok2 = js_exec(t69thread, (const unsigned char *)mo_mutate_js,
+					strlen(mo_mutate_js), "driver-mo-mutate.js");
+			if (!ok2) {
+				fprintf(stderr, "FAIL: MO mutate threw\n");
+				return 1;
+			}
+			harness_pump_all(100000);
+
+			t69c.reflowing = false;
+			t69c.box_conversion_context = NULL;
+			t69c.aborted = false;
+			t69c.base.active = 0;
+			rc = html_reconvert_content((struct content *)&t69c);
+			fprintf(stderr,
+					"Test 69 html_reconvert_content rc=%d (0=queued)\n",
+					rc);
+			if (rc != 0) {
+				fprintf(stderr, "FAIL: Test 69 reconvert did not queue\n");
+				return 1;
+			}
+			harness_pump_all(100000);
+
+			ok3 = js_exec(t69thread, (const unsigned char *)mo_check_js,
+					strlen(mo_check_js), "driver-mo-check.js");
+			fprintf(stderr, "js_exec(mo check) ok=%d\n", (int)ok3);
+			if (!ok3) {
+				fprintf(stderr, "FAIL: MutationObserver did not deliver "
+						"a real record after reconvert completed\n");
+				return 1;
+			}
+
+			ok2 = js_exec(t69thread,
+					(const unsigned char *)mo_inner_mutate_js,
+					strlen(mo_inner_mutate_js), "driver-mo-innerhtml.js");
+			if (!ok2) {
+				fprintf(stderr, "FAIL: MO innerHTML mutation threw\n");
+				return 1;
+			}
+			harness_pump_all(100000);
+
+			t69c.reflowing = false;
+			t69c.box_conversion_context = NULL;
+			t69c.aborted = false;
+			t69c.base.active = 0;
+			rc = html_reconvert_content((struct content *)&t69c);
+			if (rc != 0) {
+				fprintf(stderr, "FAIL: Test 69 innerHTML reconvert did not "
+						"queue\n");
+				return 1;
+			}
+			harness_pump_all(100000);
+
+			ok3 = js_exec(t69thread,
+					(const unsigned char *)mo_inner_check_js,
+					strlen(mo_inner_check_js),
+					"driver-mo-innerhtml-check.js");
+			if (!ok3) {
+				fprintf(stderr, "FAIL: MutationObserver did not report "
+						"innerHTML's real replacement\n");
+				return 1;
+			}
+
+			ok2 = js_exec(t69thread,
+					(const unsigned char *)mo_attr_mutate_js,
+					strlen(mo_attr_mutate_js), "driver-mo-attributes.js");
+			if (!ok2) {
+				fprintf(stderr, "FAIL: MO attribute mutation threw\n");
+				return 1;
+			}
+			harness_pump_all(100000);
+
+			t69c.reflowing = false;
+			t69c.box_conversion_context = NULL;
+			t69c.aborted = false;
+			t69c.base.active = 0;
+			rc = html_reconvert_content((struct content *)&t69c);
+			if (rc != 0) {
+				fprintf(stderr, "FAIL: Test 69 attribute reconvert did not "
+						"queue\n");
+				return 1;
+			}
+			harness_pump_all(100000);
+
+			ok3 = js_exec(t69thread,
+					(const unsigned char *)mo_attr_check_js,
+					strlen(mo_attr_check_js),
+					"driver-mo-attributes-check.js");
+			if (!ok3) {
+				fprintf(stderr, "FAIL: MutationObserver did not report "
+						"attributes after a real reconvert\n");
+				return 1;
+			}
+		}
+		/* --- Test 69a (Round 1A): MediaQueryList must use libcss's media
+		 * parser/matcher, retain a live per-document result, and notify every
+		 * supported listener form when a completed layout publishes a changed
+		 * media state.  This shares Test 69's real html_content so the native
+		 * matchMedia binding reads the same css_media/unit context as @media. */
+		{
+			const char *mql_setup_js =
+				"globalThis.__mqlEvents=[];"
+				"(function(){var m=matchMedia('screen and (min-width: 900px)');"
+				"globalThis.__mql=m;"
+				"if(!(m instanceof MediaQueryList))throw new Error('ASSERT FAIL: MQL prototype');"
+				"if(!m.matches)throw new Error('ASSERT FAIL: initial libcss match');"
+				"if(m.media!=='screen and (min-width: 900px)')throw new Error('ASSERT FAIL: media text='+m.media);"
+				"m.addEventListener('change',function(e){__mqlEvents.push('event:'+e.matches+':'+e.media);});"
+				"m.addListener(function(e){__mqlEvents.push('legacy:'+e.matches);});"
+				"m.onchange=function(e){__mqlEvents.push('property:'+e.matches);};"
+				"})();";
+			const char *mql_check_false_js =
+				"if(__mql.matches)throw new Error('ASSERT FAIL: changed MQL still true');"
+				"if(__mqlEvents.join('|')!=='event:false:screen and (min-width: 900px)|legacy:false|property:false')"
+				"throw new Error('ASSERT FAIL: MQL false events='+__mqlEvents.join('|'));";
+			const char *mql_check_true_js =
+				"if(!__mql.matches)throw new Error('ASSERT FAIL: restored MQL still false');"
+				"if(__mqlEvents.join('|')!=='event:false:screen and (min-width: 900px)|legacy:false|property:false|event:true:screen and (min-width: 900px)|legacy:true|property:true')"
+				"throw new Error('ASSERT FAIL: MQL true events='+__mqlEvents.join('|'));";
+			unsigned char mql_ok;
+
+			/* The preceding reconvert deliberately exercises an un-sized
+			 * fixture. Publish the viewport state a completed html_reformat
+			 * would provide before asking the native MQL evaluator. */
+			t69c.media.type = CSS_MEDIA_SCREEN;
+			t69c.media.width = INTTOFIX(993);
+			t69c.media.height = INTTOFIX(600);
+			t69c.media.orientation = CSS_MEDIA_ORIENTATION_LANDSCAPE;
+			t69c.unit_len_ctx.viewport_width = INTTOFIX(993);
+			t69c.unit_len_ctx.viewport_height = INTTOFIX(600);
+			mql_ok = js_exec(t69thread,
+					(const unsigned char *)mql_setup_js,
+					strlen(mql_setup_js), "driver-mql-setup.js");
+			if (!mql_ok) {
+				fprintf(stderr, "FAIL: MediaQueryList setup threw\n");
+				return 1;
+			}
+			t69c.media.width = INTTOFIX(700);
+			t69c.unit_len_ctx.viewport_width = INTTOFIX(700);
+			js_media_state_changed(t69thread);
+			mql_ok = js_exec(t69thread,
+					(const unsigned char *)mql_check_false_js,
+					strlen(mql_check_false_js), "driver-mql-false-check.js");
+			if (!mql_ok) {
+				fprintf(stderr, "FAIL: MediaQueryList false transition failed\n");
+				return 1;
+			}
+			t69c.media.width = INTTOFIX(993);
+			t69c.unit_len_ctx.viewport_width = INTTOFIX(993);
+			js_media_state_changed(t69thread);
+			mql_ok = js_exec(t69thread,
+					(const unsigned char *)mql_check_true_js,
+					strlen(mql_check_true_js), "driver-mql-true-check.js");
+			if (!mql_ok) {
+				fprintf(stderr, "FAIL: MediaQueryList true transition failed\n");
+				return 1;
+			}
+		}
+		/* fixes1243 - MUST destroy before t69c (this block's stack-local
+		 * html_content) goes out of scope. Without this, t69heap stays
+		 * linked in g_heap_list forever and any LATER test that calls the
+		 * bare macsurf_qjs_pump_all() (which walks every live heap, not
+		 * just its own) dereferences t69c/t69ctx through a dangling stack
+		 * pointer -- confirmed in the harness: an ASan
+		 * stack-use-after-scope inside macos9_reconvert_flush_now, three
+		 * tests later, that had nothing to do with whatever test actually
+		 * triggered the pump.
+		 *
+		 * Realm owner records also retain raw content pointers until the normal
+		 * death-row notification clears them. This stack-local fixture does not
+		 * go through that lifecycle, so notify before the frame ends. */
+		{
+			extern void macsurf_js_notify_content_freed(
+					struct content *c);
+			macsurf_js_notify_content_freed((struct content *)&t69c);
+		}
+		js_destroyheap(t69heap);
+	}
+	fprintf(stderr, "=== Test 69 PASS: MutationObserver delivers a real "
+			"record after html_reconvert_done ===\n");
+
+	fprintf(stderr, "\n=== Test 70: querySelectorAll + textContent + :not() "
+			"+ comma-lists read a real "
+			"<script type=\"application/json\"> data island "
+			"(#167 Facebook SSR) ===\n");
+	{
+		/* fixes1240 - the 2026-08-20 Facebook investigation found the
+		 * page's splash-screen reveal depends on already-running JS
+		 * reading 170 <script type="application/json"> "data island"
+		 * elements via document.querySelectorAll + .textContent (the
+		 * elements are never EXECUTED -- application/json is not a JS
+		 * mimetype in any browser, ours included, and script.c already
+		 * correctly skips them: LIFE script_exec: SKIP inline
+		 * unsupported mimetype=application/json). Both
+		 * qjs_sel_parse/qjs_collect_by_sel's attribute-selector support
+		 * (fixes1090c) and qjs_el_get_text_content_data looked complete
+		 * by inspection; this proves it end-to-end against a real
+		 * parsed DOM rather than trusting the read. */
+		static const char *t70_html =
+			"<!DOCTYPE html><html><head></head><body>"
+			"<script type=\"application/json\" data-sjs=\"1\">"
+			"{\"hello\":\"world\",\"n\":42}</script>"
+			"<script type=\"application/json\" data-sjs=\"1\" "
+			"data-processed=\"1\">{\"already\":\"done\"}</script>"
+			"<div id=\"root\"><p id=\"p0\">hello</p>"
+			"<p class=\"skip\">skip me</p>"
+			"<p class=\"keep\">keep me</p></div>"
+			"</body></html>";
+		struct html_content t70c;
+		dom_hubbub_parser *t70p = NULL;
+		dom_document *t70doc = NULL;
+		dom_node *t70root = NULL;
+		css_select_ctx *t70ctx = NULL;
+		css_stylesheet *t70ua = NULL;
+		dom_hubbub_parser_params t70params;
+		css_stylesheet_params t70sp;
+		void *t70_box_ctx = NULL;
+		struct jsheap *t70heap = NULL;
+		struct jsthread *t70thread = NULL;
+		nserror t70nerr;
+		dom_exception t70derr;
+		css_error t70cerr;
+
+		memset(&t70params, 0, sizeof(t70params));
+		t70params.enc = NULL;
+		t70params.fix_enc = true;
+		t70params.enable_script = false;
+		t70params.daf = NULL;
+		t70derr = dom_hubbub_parser_create(&t70params, &t70p, &t70doc);
+		if (t70derr != DOM_HUBBUB_OK || t70p == NULL || t70doc == NULL) {
+			fprintf(stderr, "FAIL: Test 70 parser create %d\n",
+					(int)t70derr);
+			return 1;
+		}
+		t70derr = dom_hubbub_parser_parse_chunk(t70p,
+				(const uint8_t *)t70_html, strlen(t70_html));
+		if (t70derr != DOM_HUBBUB_OK) {
+			fprintf(stderr, "FAIL: Test 70 parse chunk %d\n", (int)t70derr);
+			return 1;
+		}
+		t70derr = dom_hubbub_parser_completed(t70p);
+		if (t70derr != DOM_HUBBUB_OK) {
+			fprintf(stderr, "FAIL: Test 70 parse done %d\n", (int)t70derr);
+			return 1;
+		}
+		dom_hubbub_parser_destroy(t70p);
+
+		memset(&t70c, 0, sizeof(t70c));
+		t70c.base_url = g_base_url;
+		t70c.document = t70doc;
+		t70c.quirks = DOM_DOCUMENT_QUIRKS_MODE_NONE;
+		t70c.enable_scripting = true;
+		if (css_select_ctx_create(&t70ctx) != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 70 select_ctx\n");
+			return 1;
+		}
+		t70c.select_ctx = t70ctx;
+
+		memset(&t70sp, 0, sizeof(t70sp));
+		t70sp.params_version = CSS_STYLESHEET_PARAMS_VERSION_1;
+		t70sp.level = CSS_LEVEL_3;
+		t70sp.charset = "UTF-8";
+		t70sp.url = "resource:default.css";
+		t70sp.title = "default";
+		t70sp.allow_quirks = false;
+		t70sp.inline_style = false;
+		t70sp.resolve = harness_css_resolve_url;
+		t70sp.resolve_pw = NULL;
+		t70cerr = css_stylesheet_create(&t70sp, &t70ua);
+		if (t70cerr != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 70 UA sheet\n");
+			return 1;
+		}
+		{
+			const char *ua_css =
+				"html,body,div,p,script{display:block}";
+			css_error ae = css_stylesheet_append_data(t70ua,
+					(const uint8_t *)ua_css, strlen(ua_css));
+			if (ae != CSS_OK && ae != CSS_NEEDDATA) {
+				fprintf(stderr, "FAIL: Test 70 UA append=%d\n", (int)ae);
+				return 1;
+			}
+			(void)css_stylesheet_data_done(t70ua);
+		}
+		if (css_select_ctx_append_sheet(t70ctx, t70ua,
+				CSS_ORIGIN_UA, "screen") != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 70 UA append sheet\n");
+			return 1;
+		}
+
+		t70c.media.type = CSS_MEDIA_SCREEN;
+		t70c.media.width = INTTOFIX(993);
+		t70c.media.height = INTTOFIX(600);
+		t70c.media.orientation = CSS_MEDIA_ORIENTATION_LANDSCAPE;
+		t70c.unit_len_ctx.viewport_width = INTTOFIX(993);
+		t70c.unit_len_ctx.viewport_height = INTTOFIX(600);
+		t70c.unit_len_ctx.device_dpi = INTTOFIX(90);
+		t70c.unit_len_ctx.font_size_default = INTTOFIX(16);
+		t70c.unit_len_ctx.font_size_minimum = INTTOFIX(8);
+		if (lwc_intern_string("*", 1, &t70c.universal) != lwc_error_ok) {
+			fprintf(stderr, "FAIL: Test 70 universal\n");
+			return 1;
+		}
+
+		t70c.base.status = CONTENT_STATUS_LOADING;
+		t70c.base.active = 0;
+		t70c.base.handler = &g_dummy_handler;
+		macos9_content_register((struct content *)&t70c);
+
+		t70derr = dom_document_get_document_element(t70doc,
+				(void *)&t70root);
+		if (t70derr != DOM_NO_ERR || t70root == NULL) {
+			fprintf(stderr, "FAIL: Test 70 doc element\n");
+			return 1;
+		}
+		g_initial_build_done = 0;
+		g_initial_build_ok = false;
+		t70nerr = dom_to_box(t70root, &t70c, initial_build_cb,
+				&t70_box_ctx);
+		dom_node_unref(t70root);
+		if (t70nerr != NSERROR_OK) {
+			fprintf(stderr, "FAIL: Test 70 dom_to_box nerr=%d\n",
+					(int)t70nerr);
+			return 1;
+		}
+		harness_pump_all(100000);
+		if (!g_initial_build_done || !g_initial_build_ok) {
+			fprintf(stderr, "FAIL: Test 70 initial build done=%d ok=%d\n",
+					g_initial_build_done, (int)g_initial_build_ok);
+			return 1;
+		}
+		t70c.base.status = CONTENT_STATUS_DONE;
+
+		t70nerr = js_newheap(20000, &t70heap);
+		if (t70nerr != NSERROR_OK || t70heap == NULL) {
+			fprintf(stderr, "FAIL: Test 70 js_newheap nerr=%d\n",
+					(int)t70nerr);
+			return 1;
+		}
+		t70nerr = js_newthread(t70heap, NULL, (void *)&t70c, &t70thread);
+		if (t70nerr != NSERROR_OK || t70thread == NULL) {
+			fprintf(stderr, "FAIL: Test 70 js_newthread nerr=%d\n",
+					(int)t70nerr);
+			return 1;
+		}
+		t70c.js_thread = t70thread;
+
+		{
+			const char *check_js =
+				"globalThis.__t70ok=0;"
+				"(function(){"
+				"var els=document.querySelectorAll("
+					"'script[type=\"application/json\"]');"
+				"if(!els||els.length!==2)"
+				"throw new Error('ASSERT FAIL: qsa[type=json] found '"
+					"+(els?els.length:'null')+' expected 2');"
+				"var byAttr=document.querySelectorAll('[data-sjs]');"
+				"if(!byAttr||byAttr.length!==2)"
+				"throw new Error('ASSERT FAIL: qsa[data-sjs] found '"
+					"+(byAttr?byAttr.length:'null')+' expected 2');"
+				"var txt=els[0].textContent;"
+				"if(typeof txt!=='string'||txt.indexOf('hello')===-1)"
+				"throw new Error('ASSERT FAIL: textContent='"
+					"+JSON.stringify(txt));"
+				"var parsed=JSON.parse(txt);"
+				"if(parsed.hello!=='world'||parsed.n!==42)"
+				"throw new Error('ASSERT FAIL: parsed wrong: '"
+					"+JSON.stringify(parsed));"
+				/* fixes1240 (#167) - the ACTUAL Facebook selector
+				 * (ServerJSPayloadListener_NEW): compound attribute
+				 * selector + :not([attr]). Must exclude the
+				 * data-processed one and keep only the real payload. */
+				"var un=document.querySelectorAll("
+					"'script[data-sjs]:not([data-processed])');"
+				"if(!un||un.length!==1)"
+				"throw new Error('ASSERT FAIL: qsa :not([data-processed]) "
+					"found '+(un?un.length:'null')+' expected 1');"
+				"if(JSON.parse(un[0].textContent).hello!=='world')"
+				"throw new Error('ASSERT FAIL: :not() selected the "
+					"WRONG script element');"
+				/* :not(.class) on a plain element, no attribute
+				 * involved -- a different code path (qjs_class_has vs
+				 * the attr matcher) through the same qjs_simple_match. */
+				"var kept=document.querySelectorAll('p:not(.skip)');"
+				"if(!kept||kept.length!==2)"
+				"throw new Error('ASSERT FAIL: p:not(.skip) found '"
+					"+(kept?kept.length:'null')+' expected 2 (p0, "
+					"p.keep)');"
+				"for(var i=0;i<kept.length;i++)"
+				"if(kept[i].className==='skip')"
+				"throw new Error('ASSERT FAIL: p:not(.skip) "
+					"included the excluded element');"
+				/* fixes1242 (#167) - comma-separated selector LISTS,
+				 * e.g. Facebook's own
+				 * `querySelectorAll('button, [role="button"], "
+				 * "[tabindex="0"]')`. Two distinct alternatives that
+				 * each match a DIFFERENT element. */
+				"var two=document.querySelectorAll('#p0, .keep');"
+				"if(!two||two.length!==2)"
+				"throw new Error('ASSERT FAIL: qsa(#p0, .keep) found '"
+					"+(two?two.length:'null')+' expected 2');"
+				/* dedup: an element matching BOTH alternatives must
+				 * appear once, not twice -- .keep is also a <p>. */
+				"var ded=document.querySelectorAll('p, .keep');"
+				"if(!ded||ded.length!==3)"
+				"throw new Error('ASSERT FAIL: qsa(p, .keep) found '"
+					"+(ded?ded.length:'null')+' expected 3 (no dupes)');"
+				/* querySelector (singular): the #id fast path must NOT
+				 * fire for a multi-alternative list -- '#nope' alone
+				 * matches nothing, so if the fast path wrongly fired on
+				 * just the first alternative this would wrongly return
+				 * null instead of falling through to find #p0 via the
+				 * second alternative. */
+				"var one=document.querySelector('#nope, #p0');"
+				"if(!one||one.id!=='p0')"
+				"throw new Error('ASSERT FAIL: qs(#nope, #p0) = '"
+					"+(one?one.id:'null')+' expected p0');"
+				"globalThis.__t70ok=1;"
+				"})();"
+				"if(!globalThis.__t70ok)"
+				"throw new Error('ASSERT FAIL: t70ok flag not set');";
+			unsigned char ok;
+
+			ok = js_exec(t70thread, (const unsigned char *)check_js,
+					strlen(check_js), "driver-t70-check.js");
+			fprintf(stderr, "js_exec(t70 check) ok=%d\n", (int)ok);
+			if (!ok) {
+				fprintf(stderr, "FAIL: Test 70 querySelectorAll/"
+						"textContent/:not()/comma-list did not "
+						"read the JSON island correctly\n");
+				return 1;
+			}
+		}
+		/* Same realm-owner lifetime rule as Test 69: clear this stack-local
+		 * fixture before leaving its scope. */
+		{
+			extern void macsurf_js_notify_content_freed(
+					struct content *c);
+			macsurf_js_notify_content_freed((struct content *)&t70c);
+		}
+		js_destroyheap(t70heap);
+	}
+	fprintf(stderr, "=== Test 70 PASS: querySelectorAll + textContent + "
+			":not() + comma-lists read a real JSON data island ===\n");
+
+	fprintf(stderr, "\n=== Test 71: real AbortController/AbortSignal, wired "
+			"into fetch() (#167) ===\n");
+	{
+		/* fixes1243 - the network-dependent half (aborting a REAL
+		 * in-flight XHR mid-flight) delegates to XMLHttpRequest.abort(),
+		 * already real and already exercised (Test 3, Test 61) --
+		 * calling __xhrNativeAbort natively. What's new and needs its own
+		 * proof here is the JS-level AbortController/AbortSignal object
+		 * itself (construction, event delivery, reason propagation) and
+		 * fetch()'s handling of an ALREADY-aborted signal, which is
+		 * network-free by design (fetch must never even open the XHR) and
+		 * so is safe to assert against in a harness with no real network
+		 * mock. */
+		const char *ac_js =
+			"(function(){"
+			"var c=new AbortController();"
+			"if(!c.signal)throw new Error('ASSERT FAIL: no .signal');"
+			"if(c.signal.aborted)"
+			"throw new Error('ASSERT FAIL: aborted=true before abort()');"
+			"var fired=0,seen=null;"
+			"c.signal.addEventListener('abort',function(ev){"
+				"fired++;seen=ev;});"
+			"var oaFired=0;"
+			"c.signal.onabort=function(){oaFired++;};"
+			"c.abort('custom reason');"
+			"if(!c.signal.aborted)"
+			"throw new Error('ASSERT FAIL: aborted still false after "
+				"abort()');"
+			"if(c.signal.reason!=='custom reason')"
+			"throw new Error('ASSERT FAIL: reason='+c.signal.reason);"
+			"if(fired!==1)"
+			"throw new Error('ASSERT FAIL: abort listener fired '"
+				"+fired+' times, expected 1');"
+			"if(!seen||seen.type!=='abort'||seen.target!==c.signal)"
+			"throw new Error('ASSERT FAIL: abort event shape wrong');"
+			"if(oaFired!==1)"
+			"throw new Error('ASSERT FAIL: onabort fired '+oaFired"
+				"+' times, expected 1');"
+			"c.abort('second call');"
+			"if(fired!==1)"
+			"throw new Error('ASSERT FAIL: second abort() re-fired "
+				"the listener (fired='+fired+')');"
+			"if(c.signal.reason!=='custom reason')"
+			"throw new Error('ASSERT FAIL: second abort() overwrote "
+				"the reason: '+c.signal.reason);"
+			/* default reason shape when none given -- real code checks
+			 * err.name==='AbortError'. */
+			"var c2=new AbortController();"
+			"c2.abort();"
+			"if(!c2.signal.reason||c2.signal.reason.name!=='AbortError')"
+			"throw new Error('ASSERT FAIL: default reason.name='"
+				"+(c2.signal.reason&&c2.signal.reason.name));"
+			/* AbortSignal.abort() static. */
+			"var s=AbortSignal.abort('pre-aborted');"
+			"if(!s.aborted||s.reason!=='pre-aborted')"
+			"throw new Error('ASSERT FAIL: AbortSignal.abort() static "
+				"wrong: aborted='+s.aborted+' reason='+s.reason);"
+			"globalThis.__t71sync=1;"
+			"})();"
+			"if(!globalThis.__t71sync)"
+			"throw new Error('ASSERT FAIL: t71sync flag not set');"
+			/* fetch() with an ALREADY-aborted signal: must reject with
+			 * the signal's reason, and (by construction -- the check
+			 * runs before the XHR is ever created) never touch the
+			 * network. globalThis flags because js_exec is synchronous
+			 * but the promise settles on a later microtask pump. */
+			"globalThis.__t71fetchDone=0;globalThis.__t71fetchErr=null;"
+			"fetch('https://example.invalid/should-never-be-requested',"
+				"{signal:AbortSignal.abort('nope')})"
+			".then(function(){globalThis.__t71fetchDone=2;},"
+				"function(e){globalThis.__t71fetchDone=1;"
+					"globalThis.__t71fetchErr=e;});";
+		unsigned char ok;
+
+		ok = js_exec(thread, (const unsigned char *)ac_js,
+				strlen(ac_js), "driver-t71-ac.js");
+		fprintf(stderr, "js_exec(t71 abortcontroller) ok=%d\n", (int)ok);
+		if (!ok) {
+			fprintf(stderr, "FAIL: Test 71 AbortController/AbortSignal "
+					"assertions threw\n");
+			return 1;
+		}
+		/* fixes1243 - harness_pump_all drains the HARNESS's own mock
+		 * scheduler queue (macos9_schedule-style callbacks), not
+		 * QuickJS's promise job queue -- the .then() reaction is a
+		 * pending JOB, drained only by the real engine pump (Test 12's
+		 * pattern), same as every other Promise-based harness test. */
+		{
+			extern void macsurf_qjs_pump_all(void);
+			int pump;
+			for (pump = 0; pump < 8; pump++) macsurf_qjs_pump_all();
+		}
+		{
+			const char *check2_js =
+				"if(globalThis.__t71fetchDone!==1)"
+				"throw new Error('ASSERT FAIL: fetch(aborted signal) "
+					"settled as '+globalThis.__t71fetchDone"
+					"+' (0=never settled, 2=wrongly resolved), "
+					"expected 1 (rejected)');"
+				"if(globalThis.__t71fetchErr!=='nope')"
+				"throw new Error('ASSERT FAIL: fetch rejection reason='"
+					"+globalThis.__t71fetchErr+' expected \"nope\"');";
+			unsigned char ok2 = js_exec(thread,
+					(const unsigned char *)check2_js,
+					strlen(check2_js), "driver-t71-fetch-check.js");
+			fprintf(stderr, "js_exec(t71 fetch check) ok=%d\n", (int)ok2);
+			if (!ok2) {
+				fprintf(stderr, "FAIL: Test 71 fetch() did not reject "
+						"an already-aborted signal correctly\n");
+				return 1;
+			}
+		}
+	}
+	fprintf(stderr, "=== Test 71 PASS: AbortController/AbortSignal real, "
+			"fetch() honours an already-aborted signal ===\n");
+
+	fprintf(stderr, "\n=== Test 72: canvas 2D getContext -- real measureText, "
+			"honest no-op drawing (#167) ===\n");
+	{
+		/* fixes1245 - the real point of this test is measureText: proof
+		 * that it is a genuine, hardware-backed measurement (scales with
+		 * string length and font size) rather than a fabricated
+		 * constant, which would be exactly the "confidently wrong
+		 * answer" class of bug this project has hit before. Everything
+		 * else just needs to not throw. */
+		const char *canvas_js =
+			"(function(){"
+			"var c=document.createElement('canvas');"
+			"c.width=200;c.height=100;"
+			"var ctx=c.getContext('2d');"
+			"if(!ctx)throw new Error('ASSERT FAIL: getContext(2d) "
+				"returned falsy');"
+			"if(ctx.canvas!==c)"
+			"throw new Error('ASSERT FAIL: ctx.canvas !== the canvas "
+				"element');"
+			"if(ctx!==c.getContext('2d'))"
+			"throw new Error('ASSERT FAIL: getContext(2d) did not "
+				"return the SAME context on a second call');"
+			"if(c.getContext('webgl')!==null)"
+			"throw new Error('ASSERT FAIL: getContext(webgl) should "
+				"be null (honest -- genuinely unsupported), got '"
+					"+c.getContext('webgl'));"
+			/* real measurement: longer string -> bigger width, at
+			 * least roughly proportional (a fabricated constant width
+			 * would fail this outright). */
+			"var w1=ctx.measureText('a').width;"
+			"var w10=ctx.measureText('aaaaaaaaaa').width;"
+			"if(!(w1>0))"
+			"throw new Error('ASSERT FAIL: measureText(\"a\").width='"
+				"+w1+' expected >0');"
+			"if(!(w10>w1*3))"
+			"throw new Error('ASSERT FAIL: measureText(\"aaaaaaaaaa\")."
+				"width='+w10+' vs \"a\"='+w1+' -- expected roughly "
+				"10x, not a flat per-call constant');"
+			/* real measurement: bigger font -> bigger width for the
+			 * SAME text (proves the font string is actually parsed and
+			 * fed into the query, not ignored). */
+			"ctx.font='10px sans-serif';"
+			"var wSmall=ctx.measureText('hello world').width;"
+			"ctx.font='40px sans-serif';"
+			"var wBig=ctx.measureText('hello world').width;"
+			"if(!(wBig>wSmall*2))"
+			"throw new Error('ASSERT FAIL: 40px width='+wBig+' vs "
+				"10px width='+wSmall+' -- font size not honoured');"
+			/* honest no-op drawing surface: every method callable,
+			 * none throw, state properties settable. */
+			"ctx.fillStyle='#ff0000';ctx.strokeStyle='blue';"
+			"ctx.lineWidth=3;"
+			"ctx.beginPath();ctx.moveTo(0,0);ctx.lineTo(10,10);"
+			"ctx.arc(5,5,5,0,Math.PI*2);ctx.closePath();"
+			"ctx.fill();ctx.stroke();"
+			"ctx.fillRect(0,0,10,10);ctx.strokeRect(0,0,10,10);"
+			"ctx.clearRect(0,0,10,10);"
+			"ctx.save();ctx.translate(1,1);ctx.scale(2,2);ctx.restore();"
+			"ctx.fillText('hi',0,0);ctx.strokeText('hi',0,0);"
+			"ctx.drawImage(c,0,0);"
+			/* real-shaped pixel buffers. */
+			"var id=ctx.createImageData(4,3);"
+			"if(id.width!==4||id.height!==3)"
+			"throw new Error('ASSERT FAIL: createImageData(4,3) size='"
+				"+id.width+'x'+id.height);"
+			"if(!(id.data instanceof Uint8ClampedArray))"
+			"throw new Error('ASSERT FAIL: ImageData.data is not a "
+				"Uint8ClampedArray');"
+			"if(id.data.length!==4*3*4)"
+			"throw new Error('ASSERT FAIL: ImageData.data.length='"
+				"+id.data.length+' expected '+(4*3*4));"
+			"ctx.putImageData(id,0,0);"
+			"var id2=ctx.getImageData(0,0,5,5);"
+			"if(id2.width!==5||id2.height!==5)"
+			"throw new Error('ASSERT FAIL: getImageData(0,0,5,5) size='"
+				"+id2.width+'x'+id2.height);"
+			/* toDataURL must never throw/return non-string. */
+			"var durl=c.toDataURL();"
+			"if(typeof durl!=='string'||durl.indexOf('data:image/png')"
+				"!==0)"
+			"throw new Error('ASSERT FAIL: toDataURL()='+durl);"
+			"globalThis.__t72sync=1;"
+			/* No Blob byte backend exists: callback reports null, not a
+			 * synthetic zero-byte Blob that claims it encoded this canvas. */
+			"globalThis.__t72blobResult='not-called';"
+			"c.toBlob(function(b){"
+				"globalThis.__t72blobResult=(b===null)?'null':'non-null';"
+			"},'image/png');"
+			"})();"
+			"if(!globalThis.__t72sync)"
+			"throw new Error('ASSERT FAIL: t72sync flag not set');";
+		unsigned char ok;
+		int pump;
+
+		ok = js_exec(thread, (const unsigned char *)canvas_js,
+				strlen(canvas_js), "driver-t72-canvas.js");
+		fprintf(stderr, "js_exec(t72 canvas) ok=%d\n", (int)ok);
+		if (!ok) {
+			fprintf(stderr, "FAIL: Test 72 canvas 2D assertions threw\n");
+			return 1;
+		}
+		{
+			extern void macsurf_qjs_pump_all(void);
+			for (pump = 0; pump < 8; pump++) macsurf_qjs_pump_all();
+		}
+		{
+			const char *check_js =
+				"if(globalThis.__t72blobResult!=='null')"
+				"throw new Error('ASSERT FAIL: toBlob result='"
+					"+globalThis.__t72blobResult"
+					"+' (must report unavailable byte encoding as null)');";
+			unsigned char ok2 = js_exec(thread,
+					(const unsigned char *)check_js,
+					strlen(check_js), "driver-t72-blob-check.js");
+			fprintf(stderr, "js_exec(t72 blob check) ok=%d\n", (int)ok2);
+			if (!ok2) {
+				fprintf(stderr, "FAIL: Test 72 toBlob callback did not "
+						"fire correctly\n");
+				return 1;
+			}
+		}
+	}
+	fprintf(stderr, "=== Test 72 PASS: canvas 2D real measureText, honest "
+			"no-op drawing surface ===\n");
+
+	fprintf(stderr, "\n=== Test 73: console.error/warn are LIFE-visible and "
+			"budget-capped (#167) ===\n");
+	{
+		/* fixes1246 - the harness's own macsurf_debug_log_write
+		 * (harness_stubs.c) prints unconditionally to stderr; it does not
+		 * simulate the release-build crash-only gate, so this test can't
+		 * observe THAT filtering directly. What it CAN and does verify:
+		 * the calls don't throw, and the new budget counter
+		 * (g_console_err_audit) decrements exactly once per LIFE-tagged
+		 * call and floors at 0 rather than going negative or uncapped --
+		 * the actual new logic this round added, as opposed to the
+		 * string-prefix constant, which a compile already proves correct. */
+		extern long g_console_err_audit;
+		long before = g_console_err_audit;
+		const char *js1 =
+			"console.error('Warning: something recoverable failed');"
+			"console.warn('a deprecation notice');"
+			"console.log('ordinary log, not budgeted');"
+			"console.info('ordinary info, not budgeted');";
+		unsigned char ok;
+		long after;
+		long i;
+
+		ok = js_exec(thread, (const unsigned char *)js1, strlen(js1),
+				"driver-t73-console.js");
+		fprintf(stderr, "js_exec(t73 console) ok=%d\n", (int)ok);
+		if (!ok) {
+			fprintf(stderr, "FAIL: Test 73 console.error/warn threw\n");
+			return 1;
+		}
+		after = g_console_err_audit;
+		if (before - after != 2) {
+			fprintf(stderr, "FAIL: Test 73 budget moved by %ld, "
+					"expected exactly 2 (one error + one warn; "
+					"log/info must NOT consume it)\n",
+					before - after);
+			return 1;
+		}
+		/* Drain the rest of the budget, then confirm it floors at 0 (and
+		 * that going past it still doesn't throw). */
+		for (i = 0; i < before + 10; i++) {
+			const char *js2 = "console.error('spam');";
+			ok = js_exec(thread, (const unsigned char *)js2,
+					strlen(js2), "driver-t73-spam.js");
+			if (!ok) {
+				fprintf(stderr, "FAIL: Test 73 console.error threw "
+						"on iteration %ld\n", i);
+				return 1;
+			}
+		}
+		if (g_console_err_audit != 0) {
+			fprintf(stderr, "FAIL: Test 73 budget=%ld after "
+					"over-spending, expected floored at 0\n",
+					g_console_err_audit);
+			return 1;
+		}
+	}
+	fprintf(stderr, "=== Test 73 PASS: console.error/warn LIFE-visible, "
+			"budget floors at 0, log/info unaffected ===\n");
+
+	/* Tests 74--83 cover the opt-in Facebook loader diagnostic traps.  Those
+	 * traps are intentionally not part of a production browser realm: the page
+	 * must own its loader globals. Build the harness with
+	 * -DMACSURF_JS_FB_LOADER_TRAP=1 when specifically auditing that diagnostic
+	 * instrumentation. */
+#if MACSURF_JS_FB_LOADER_TRAP
+	fprintf(stderr, "\n=== Test 74: __onBeforeModuleFactory require-trace "
+			"survives the page's own reset and never throws (#167) ===\n");
+	{
+		/* fixes1247 - simulates the exact real-world shape confirmed in
+		 * Facebook's own bundle: the page's bootstrap does
+		 * `t.__onBeforeModuleFactory=null;` as part of its OWN init
+		 * (unconditional, no guard), then its require() dispatch calls
+		 * `t.__onBeforeModuleFactory==null||t.__onBeforeModuleFactory(l)`
+		 * for every module -- WITH NO TRY/CATCH AROUND THAT CALL. Both
+		 * properties matter: our defineProperty trap must survive the
+		 * plain-assignment reset, AND the hook itself must never throw
+		 * no matter what `l` looks like (malformed module records
+		 * included), since a throw here would abort the PAGE's own
+		 * require() call, not just this diagnostic. */
+		const char *js =
+			"(function(){"
+			/* the page's own reset attempt -- must NOT actually null
+			 * out our hook. */
+			"window.__onBeforeModuleFactory=null;"
+			"if(typeof window.__onBeforeModuleFactory!=='function')"
+			"throw new Error('ASSERT FAIL: page\\'s own \"=null\" "
+				"reset defeated the require-trace hook');"
+			/* normal calls: a watched id, an unwatched id, the same "
+			 * watched id again (dedup path). None may throw. */
+			"window.__onBeforeModuleFactory({id:'ServerJSPayloadListener_NEW'});"
+			"window.__onBeforeModuleFactory({id:'SomeUnrelatedModule'});"
+			"window.__onBeforeModuleFactory({id:'ServerJSPayloadListener_NEW'});"
+			/* malformed records: null, undefined, no .id, a non-string "
+			 * .id, and calling with no argument at all. Every one of
+			 * these must be swallowed silently, not thrown. */
+			"window.__onBeforeModuleFactory(null);"
+			"window.__onBeforeModuleFactory(undefined);"
+			"window.__onBeforeModuleFactory({});"
+			"window.__onBeforeModuleFactory({id:42});"
+			"window.__onBeforeModuleFactory({id:null});"
+			"window.__onBeforeModuleFactory();"
+			"globalThis.__t74sync=1;"
+			"})();"
+			"if(!globalThis.__t74sync)"
+			"throw new Error('ASSERT FAIL: t74sync flag not set');";
+		unsigned char ok;
+
+		ok = js_exec(thread, (const unsigned char *)js, strlen(js),
+				"driver-t74-requiretrace.js");
+		fprintf(stderr, "js_exec(t74 require-trace) ok=%d\n", (int)ok);
+		if (!ok) {
+			fprintf(stderr, "FAIL: Test 74 require-trace hook threw "
+					"(would have broken the page's own "
+					"require() in real use)\n");
+			return 1;
+		}
+		{
+			const char *js2 =
+				"var t=globalThis.__msRequireTraceTotal();"
+				"if(t!==9)"
+				"throw new Error('ASSERT FAIL: total='+t+' expected 9 "
+					"(every call counts, watched or not, "
+					"well-formed or not)');";
+			unsigned char ok2 = js_exec(thread,
+					(const unsigned char *)js2, strlen(js2),
+					"driver-t74-total-check.js");
+			fprintf(stderr, "js_exec(t74 total check) ok=%d\n",
+					(int)ok2);
+			if (!ok2) {
+				fprintf(stderr, "FAIL: Test 74 __msRequireTraceTotal() "
+						"assertion failed\n");
+				return 1;
+			}
+		}
+	}
+	fprintf(stderr, "=== Test 74 PASS: require-trace hook survives the "
+			"page's own reset, never throws on any input ===\n");
+
+	/* ---------------------------------------------------------------
+	 * fixes1268a (#167) - custom-property definitions are retained
+	 * PER RULE, not collapsed into one per-sheet bucket.
+	 *
+	 * This is the storage-layer control for the 1268 series. Before
+	 * 1268a the only store was css_stylesheet::custom_properties, a
+	 * single last-write-wins list per sheet: three rules defining
+	 * "--x" left exactly ONE surviving value, so the selector and
+	 * @media scope each definition was written under were gone before
+	 * selection ever ran. That is what hands facebook.com the dark
+	 * --web-wash on a light-mode page.
+	 *
+	 * The assertion is a COUNT (three distinct retained values), not a
+	 * boolean: a boolean "did we keep any" passes on the broken build.
+	 * Pre-1268a this test finds 0 rule-scoped entries and fails.
+	 * ------------------------------------------------------------- */
+	fprintf(stderr, "\n=== Test 75: custom-property definitions are "
+			"rule-scoped, not sheet-global (fixes1268a) ===\n");
+	{
+		const char *t75_css =
+			".light { --x: green; color: black }"
+			".dark  { --x: white }"
+			"@media print { .mq { --x: black } }";
+		css_stylesheet *t75sheet = NULL;
+		css_stylesheet_params t75sp;
+		css_error t75err;
+		char t75vals[8][64];
+		int t75n = 0;
+		int t75distinct = 0;
+		int i, j;
+		int t75sheet_global = 0;
+
+		memset(&t75sp, 0, sizeof(t75sp));
+		t75sp.params_version = CSS_STYLESHEET_PARAMS_VERSION_1;
+		t75sp.level = CSS_LEVEL_3;
+		t75sp.charset = "UTF-8";
+		t75sp.url = "http://local/t75.css";
+		t75sp.title = "t75";
+		t75sp.allow_quirks = false;
+		t75sp.inline_style = false;
+		t75sp.resolve = harness_css_resolve_url;
+		t75sp.resolve_pw = NULL;
+
+		if (css_stylesheet_create(&t75sp, &t75sheet) != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 75 sheet create\n");
+			return 1;
+		}
+		t75err = css_stylesheet_append_data(t75sheet,
+				(const uint8_t *)t75_css, strlen(t75_css));
+		if (t75err != CSS_OK && t75err != CSS_NEEDDATA) {
+			fprintf(stderr, "FAIL: Test 75 append=%d\n",
+					(int)t75err);
+			return 1;
+		}
+		if (css_stylesheet_data_done(t75sheet) != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 75 data_done\n");
+			return 1;
+		}
+
+		/* Walk every rule in the sheet, descending into @media, and
+		 * collect the rule-scoped "--x" values. */
+		t75n = cssprobe_rule_custom_props(t75sheet, "x", t75vals,
+				(int)(sizeof(t75vals) / sizeof(t75vals[0])));
+
+		for (i = 0; i < t75n; i++) {
+			int seen = 0;
+			for (j = 0; j < i; j++)
+				if (strcmp(t75vals[i], t75vals[j]) == 0)
+					seen = 1;
+			if (!seen)
+				t75distinct++;
+			fprintf(stderr, "  rule-scoped --x[%d] = '%s'\n",
+					i, t75vals[i]);
+		}
+
+		t75sheet_global = cssprobe_sheet_custom_props(t75sheet, "x");
+		fprintf(stderr, "  rule-scoped entries=%d distinct=%d, "
+				"sheet-global entries=%d\n",
+				t75n, t75distinct, t75sheet_global);
+
+		if (t75n != 3 || t75distinct != 3) {
+			fprintf(stderr, "FAIL: Test 75 -- expected 3 rule-scoped "
+					"--x definitions with 3 distinct values, "
+					"got n=%d distinct=%d. Pre-fixes1268a "
+					"this is 0/0: definitions went only to "
+					"the per-sheet last-write-wins list, "
+					"discarding the selector and @media "
+					"scope each was written under.\n",
+					t75n, t75distinct);
+			return 1;
+		}
+		if (t75sheet_global != 1) {
+			fprintf(stderr, "FAIL: Test 75 -- the legacy sheet-global "
+					"list should still hold exactly 1 "
+					"surviving --x (last-write-wins) while "
+					"1268a dual-writes; got %d. If this "
+					"changed, resolution semantics moved "
+					"before 1268b/1268e intended them to.\n",
+					t75sheet_global);
+			return 1;
+		}
+
+		css_stylesheet_destroy(t75sheet);
+	}
+	fprintf(stderr, "=== Test 75 PASS: 3 rules retain 3 distinct --x "
+			"values, incl. the one inside @media print ===\n");
+
+	/* ---------------------------------------------------------------
+	 * fixes1268b (#167) - custom properties resolve against the
+	 * ELEMENT's environment, so selector scope and @media scope are
+	 * both honoured.
+	 *
+	 * Both cases here have their definition and their consumer on the
+	 * SAME element, which is exactly what 1268b alone can fix:
+	 * inheritance from an ancestor is 1268c, and a definition from a
+	 * rule that cascades later is 1268d.
+	 *
+	 * Each case is chosen so the OLD per-sheet last-write-wins store
+	 * gives a different, wrong answer:
+	 *   .light expects green, but the sheet-global store's last --x is
+	 *          .dark's blue, so a broken build paints it blue;
+	 *   .mq    expects white, but the sheet-global store's last --w is
+	 *          the one inside @media print (black), which must never
+	 *          apply on screen.
+	 * ------------------------------------------------------------- */
+	fprintf(stderr, "\n=== Test 76: custom properties honour selector "
+			"scope and @media scope (fixes1268b) ===\n");
+	{
+		const char *t76_html =
+			"<html><body>"
+			"<div class=\"light\">L</div>"
+			"<div class=\"dark\">D</div>"
+			"<p class=\"mq\">M</p>"
+			"</body></html>";
+		const char *t76_css =
+			".light { --x: rgb(0,128,0); color: var(--x) }"
+			".dark  { --x: rgb(0,0,255); color: var(--x) }"
+			".mq    { --w: rgb(255,255,255); color: var(--w) }"
+			"@media print { .mq { --w: rgb(0,0,0) } }";
+		struct html_content t76c;
+		dom_hubbub_parser *t76p = NULL;
+		dom_document *t76doc = NULL;
+		dom_node *t76root = NULL;
+		css_select_ctx *t76ctx = NULL;
+		css_stylesheet *t76ua = NULL;
+		css_stylesheet *t76auth = NULL;
+		dom_hubbub_parser_params t76params;
+		css_stylesheet_params t76sp;
+		void *t76_box_ctx = NULL;
+		long t76_light, t76_dark, t76_mq;
+		int t76_bad = 0;
+		nserror t76err;
+		dom_exception t76derr;
+
+		memset(&t76params, 0, sizeof(t76params));
+		t76params.fix_enc = true;
+		t76derr = dom_hubbub_parser_create(&t76params, &t76p, &t76doc);
+		if (t76derr != DOM_HUBBUB_OK || t76p == NULL) {
+			fprintf(stderr, "FAIL: Test 76 parser create %d\n",
+					(int)t76derr);
+			return 1;
+		}
+		if (dom_hubbub_parser_parse_chunk(t76p,
+				(const uint8_t *)t76_html,
+				strlen(t76_html)) != DOM_HUBBUB_OK ||
+				dom_hubbub_parser_completed(t76p) !=
+					DOM_HUBBUB_OK) {
+			fprintf(stderr, "FAIL: Test 76 parse\n");
+			return 1;
+		}
+		dom_hubbub_parser_destroy(t76p);
+
+		memset(&t76c, 0, sizeof(t76c));
+		t76c.base_url = g_base_url;
+		t76c.document = t76doc;
+		t76c.quirks = DOM_DOCUMENT_QUIRKS_MODE_NONE;
+		t76c.enable_scripting = false;
+		if (css_select_ctx_create(&t76ctx) != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 76 select_ctx\n");
+			return 1;
+		}
+		t76c.select_ctx = t76ctx;
+
+		memset(&t76sp, 0, sizeof(t76sp));
+		t76sp.params_version = CSS_STYLESHEET_PARAMS_VERSION_1;
+		t76sp.level = CSS_LEVEL_3;
+		t76sp.charset = "UTF-8";
+		t76sp.url = "resource:default.css";
+		t76sp.title = "default";
+		t76sp.resolve = harness_css_resolve_url;
+		if (css_stylesheet_create(&t76sp, &t76ua) != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 76 UA sheet\n");
+			return 1;
+		}
+		{
+			const char *ua = "html,body,div,p{display:block}";
+			(void)css_stylesheet_append_data(t76ua,
+					(const uint8_t *)ua, strlen(ua));
+			(void)css_stylesheet_data_done(t76ua);
+		}
+		if (css_select_ctx_append_sheet(t76ctx, t76ua,
+				CSS_ORIGIN_UA, "screen") != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 76 UA append\n");
+			return 1;
+		}
+
+		memset(&t76sp, 0, sizeof(t76sp));
+		t76sp.params_version = CSS_STYLESHEET_PARAMS_VERSION_1;
+		t76sp.level = CSS_LEVEL_3;
+		t76sp.charset = "UTF-8";
+		t76sp.url = "http://local/t76.css";
+		t76sp.title = "author";
+		t76sp.resolve = harness_css_resolve_url;
+		if (css_stylesheet_create(&t76sp, &t76auth) != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 76 author sheet\n");
+			return 1;
+		}
+		{
+			css_error ae = css_stylesheet_append_data(t76auth,
+					(const uint8_t *)t76_css,
+					strlen(t76_css));
+			if (ae != CSS_OK && ae != CSS_NEEDDATA) {
+				fprintf(stderr, "FAIL: Test 76 author append=%d\n",
+						(int)ae);
+				return 1;
+			}
+			(void)css_stylesheet_data_done(t76auth);
+		}
+		if (css_select_ctx_append_sheet(t76ctx, t76auth,
+				CSS_ORIGIN_AUTHOR, "screen") != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 76 author append sheet\n");
+			return 1;
+		}
+
+		/* CSS_MEDIA_SCREEN + sheets appended as "screen": without
+		 * both, the cascade silently yields initial values. */
+		t76c.media.type = CSS_MEDIA_SCREEN;
+		t76c.media.width = INTTOFIX(800);
+		t76c.media.height = INTTOFIX(600);
+		t76c.media.orientation = CSS_MEDIA_ORIENTATION_LANDSCAPE;
+		t76c.unit_len_ctx.viewport_width = INTTOFIX(800);
+		t76c.unit_len_ctx.viewport_height = INTTOFIX(600);
+		t76c.unit_len_ctx.device_dpi = INTTOFIX(90);
+		t76c.unit_len_ctx.font_size_default = INTTOFIX(16);
+		t76c.unit_len_ctx.font_size_minimum = INTTOFIX(8);
+		if (lwc_intern_string("*", 1, &t76c.universal) !=
+				lwc_error_ok) {
+			fprintf(stderr, "FAIL: Test 76 universal\n");
+			return 1;
+		}
+		t76c.base.status = CONTENT_STATUS_LOADING;
+		t76c.base.active = 0;
+		t76c.base.handler = &g_dummy_handler;
+
+		if (dom_document_get_document_element(t76doc,
+				(void *)&t76root) != DOM_NO_ERR ||
+				t76root == NULL) {
+			fprintf(stderr, "FAIL: Test 76 doc element\n");
+			return 1;
+		}
+		g_initial_build_done = 0;
+		g_initial_build_ok = false;
+		t76err = dom_to_box(t76root, &t76c, initial_build_cb,
+				&t76_box_ctx);
+		dom_node_unref(t76root);
+		if (t76err != NSERROR_OK) {
+			fprintf(stderr, "FAIL: Test 76 dom_to_box=%d\n",
+					(int)t76err);
+			return 1;
+		}
+		harness_pump_all(100000);
+		if (!g_initial_build_done || !g_initial_build_ok) {
+			fprintf(stderr, "FAIL: Test 76 build done=%d ok=%d\n",
+					g_initial_build_done,
+					(int)g_initial_build_ok);
+			return 1;
+		}
+
+		t76_light = t76_color_of(t76c.layout, "light");
+		t76_dark  = t76_color_of(t76c.layout, "dark");
+		t76_mq    = t76_color_of(t76c.layout, "mq");
+		fprintf(stderr, "  .light=#%06lX (want #008000)  "
+				".dark=#%06lX (want #0000FF)  "
+				".mq=#%06lX (want #FFFFFF)\n",
+				t76_light, t76_dark, t76_mq);
+
+		if (t76_light != 0x008000L) {
+			fprintf(stderr, "FAIL: Test 76 selector scoping -- "
+					".light resolved var(--x) to #%06lX, "
+					"expected #008000. #0000FF means the "
+					"per-sheet last-write-wins store "
+					"answered with .dark's definition, "
+					"which is the facebook.com "
+					"--web-wash defect exactly.\n",
+					t76_light);
+			t76_bad = 1;
+		}
+		if (t76_dark != 0x0000FFL) {
+			fprintf(stderr, "FAIL: Test 76 selector scoping -- "
+					".dark resolved var(--x) to #%06lX, "
+					"expected #0000FF\n", t76_dark);
+			t76_bad = 1;
+		}
+		if (t76_mq != 0xFFFFFFL) {
+			fprintf(stderr, "FAIL: Test 76 media scoping -- "
+					".mq resolved var(--w) to #%06lX, "
+					"expected #FFFFFF. #000000 means a "
+					"definition inside @media print "
+					"reached a screen cascade.\n",
+					t76_mq);
+			t76_bad = 1;
+		}
+		if (t76_bad)
+			return 1;
+	}
+	fprintf(stderr, "=== Test 76 PASS: selector scope and @media scope "
+			"both honoured by var() resolution ===\n");
+
+	/* ---------------------------------------------------------------
+	 * fixes1268c (#167) - custom properties INHERIT, with the
+	 * computed-value semantics CSS Variables 1 requires.
+	 *
+	 * Cases, in fixture order:
+	 *   .child      basic inheritance from an ancestor
+	 *   .ovr        a local definition overrides the inherited one
+	 *   .isoA/.isoB sibling isolation - two subtrees, same name
+	 *   .leaf       inheritance through an intermediate element
+	 *   .other      NEGATIVE: a non-descendant must NOT see the value
+	 *               and must fall back to the var() fallback. This is
+	 *               the test that catches an accidental document-global
+	 *               carry-over, which is exactly what the old per-sheet
+	 *               store was.
+	 *   .vc         computed-value timing: the parent's "--b: var(--a)"
+	 *               is substituted AT THE PARENT, so the child gets the
+	 *               PARENT's --a even though it redefines --a itself.
+	 *               Verified against Chrome, which returns red here.
+	 * ------------------------------------------------------------- */
+	fprintf(stderr, "\n=== Test 77: custom-property inheritance and "
+			"computed-value timing (fixes1268c) ===\n");
+	{
+		const char *t77_html =
+			"<html><body>"
+			"<div class=\"parent\"><p class=\"child\">C</p>"
+			"<p class=\"ovr\">O</p></div>"
+			"<div class=\"isoA\"><p class=\"ia\">A</p></div>"
+			"<div class=\"isoB\"><p class=\"ib\">B</p></div>"
+			"<div class=\"root\"><div class=\"mid\">"
+			"<p class=\"leaf\">L</p></div></div>"
+			"<p class=\"other\">N</p>"
+			"<div class=\"vp\"><p class=\"vc\">V</p></div>"
+			"<p class=\"use scope\">U</p>"
+			"</body></html>";
+		const char *t77_css =
+			".parent { --x: rgb(255,0,0) }"
+			".child  { color: var(--x) }"
+			".ovr    { --x: rgb(0,0,255); color: var(--x) }"
+			".isoA   { --y: rgb(0,128,0) }"
+			".isoB   { --y: rgb(0,0,255) }"
+			".ia     { color: var(--y) }"
+			".ib     { color: var(--y) }"
+			".root   { --z: rgb(128,0,128) }"
+			".leaf   { color: var(--z) }"
+			".other  { color: var(--x, rgb(0,128,0)) }"
+			".vp     { --a: rgb(255,0,0); --b: var(--a) }"
+			".vc     { --a: rgb(0,0,255); color: var(--b) }"
+			/* fixes1268d - the consumer's rule cascades BEFORE
+			 * the rule that defines the property. Resolving
+			 * var() inline during cascade_style could never see
+			 * .scope; the second pass can. */
+			".use    { color: var(--w, rgb(255,0,0)) }"
+			".scope  { --w: rgb(0,0,255) }";
+		struct html_content t77c;
+		dom_hubbub_parser *t77p = NULL;
+		dom_document *t77doc = NULL;
+		dom_node *t77root = NULL;
+		css_select_ctx *t77ctx = NULL;
+		css_stylesheet *t77ua = NULL;
+		css_stylesheet *t77auth = NULL;
+		dom_hubbub_parser_params t77params;
+		css_stylesheet_params t77sp;
+		void *t77_box_ctx = NULL;
+		int t77_bad = 0;
+		int k;
+		nserror t77err;
+		static const struct {
+			const char *cls;
+			long want;
+			const char *what;
+		} t77_want[] = {
+			{ "child", 0xFF0000L, "basic inheritance" },
+			{ "ovr",   0x0000FFL, "local override" },
+			{ "ia",    0x008000L, "sibling isolation A" },
+			{ "ib",    0x0000FFL, "sibling isolation B" },
+			{ "leaf",  0x800080L, "inheritance through mid" },
+			{ "other", 0x008000L, "NEGATIVE: non-descendant "
+					"falls back" },
+			{ "vc",    0xFF0000L, "computed-value timing "
+					"(parent's --a, not child's)" },
+			{ "use",   0x0000FFL, "later rule's definition "
+					"reaches an earlier consumer" }
+		};
+
+		memset(&t77params, 0, sizeof(t77params));
+		t77params.fix_enc = true;
+		if (dom_hubbub_parser_create(&t77params, &t77p, &t77doc) !=
+				DOM_HUBBUB_OK) {
+			fprintf(stderr, "FAIL: Test 77 parser create\n");
+			return 1;
+		}
+		if (dom_hubbub_parser_parse_chunk(t77p,
+				(const uint8_t *)t77_html,
+				strlen(t77_html)) != DOM_HUBBUB_OK ||
+				dom_hubbub_parser_completed(t77p) !=
+					DOM_HUBBUB_OK) {
+			fprintf(stderr, "FAIL: Test 77 parse\n");
+			return 1;
+		}
+		dom_hubbub_parser_destroy(t77p);
+
+		memset(&t77c, 0, sizeof(t77c));
+		t77c.base_url = g_base_url;
+		t77c.document = t77doc;
+		t77c.quirks = DOM_DOCUMENT_QUIRKS_MODE_NONE;
+		t77c.enable_scripting = false;
+		if (css_select_ctx_create(&t77ctx) != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 77 select_ctx\n");
+			return 1;
+		}
+		t77c.select_ctx = t77ctx;
+
+		memset(&t77sp, 0, sizeof(t77sp));
+		t77sp.params_version = CSS_STYLESHEET_PARAMS_VERSION_1;
+		t77sp.level = CSS_LEVEL_3;
+		t77sp.charset = "UTF-8";
+		t77sp.url = "resource:default.css";
+		t77sp.title = "default";
+		t77sp.resolve = harness_css_resolve_url;
+		if (css_stylesheet_create(&t77sp, &t77ua) != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 77 UA sheet\n");
+			return 1;
+		}
+		{
+			const char *ua = "html,body,div,p{display:block}";
+			(void)css_stylesheet_append_data(t77ua,
+					(const uint8_t *)ua, strlen(ua));
+			(void)css_stylesheet_data_done(t77ua);
+		}
+		(void)css_select_ctx_append_sheet(t77ctx, t77ua,
+				CSS_ORIGIN_UA, "screen");
+
+		memset(&t77sp, 0, sizeof(t77sp));
+		t77sp.params_version = CSS_STYLESHEET_PARAMS_VERSION_1;
+		t77sp.level = CSS_LEVEL_3;
+		t77sp.charset = "UTF-8";
+		t77sp.url = "http://local/t77.css";
+		t77sp.title = "author";
+		t77sp.resolve = harness_css_resolve_url;
+		if (css_stylesheet_create(&t77sp, &t77auth) != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 77 author sheet\n");
+			return 1;
+		}
+		{
+			css_error ae = css_stylesheet_append_data(t77auth,
+					(const uint8_t *)t77_css,
+					strlen(t77_css));
+			if (ae != CSS_OK && ae != CSS_NEEDDATA) {
+				fprintf(stderr, "FAIL: Test 77 append=%d\n",
+						(int)ae);
+				return 1;
+			}
+			(void)css_stylesheet_data_done(t77auth);
+		}
+		(void)css_select_ctx_append_sheet(t77ctx, t77auth,
+				CSS_ORIGIN_AUTHOR, "screen");
+
+		t77c.media.type = CSS_MEDIA_SCREEN;
+		t77c.media.width = INTTOFIX(800);
+		t77c.media.height = INTTOFIX(600);
+		t77c.media.orientation = CSS_MEDIA_ORIENTATION_LANDSCAPE;
+		t77c.unit_len_ctx.viewport_width = INTTOFIX(800);
+		t77c.unit_len_ctx.viewport_height = INTTOFIX(600);
+		t77c.unit_len_ctx.device_dpi = INTTOFIX(90);
+		t77c.unit_len_ctx.font_size_default = INTTOFIX(16);
+		t77c.unit_len_ctx.font_size_minimum = INTTOFIX(8);
+		if (lwc_intern_string("*", 1, &t77c.universal) !=
+				lwc_error_ok) {
+			fprintf(stderr, "FAIL: Test 77 universal\n");
+			return 1;
+		}
+		t77c.base.status = CONTENT_STATUS_LOADING;
+		t77c.base.active = 0;
+		t77c.base.handler = &g_dummy_handler;
+
+		if (dom_document_get_document_element(t77doc,
+				(void *)&t77root) != DOM_NO_ERR ||
+				t77root == NULL) {
+			fprintf(stderr, "FAIL: Test 77 doc element\n");
+			return 1;
+		}
+		g_initial_build_done = 0;
+		g_initial_build_ok = false;
+		t77err = dom_to_box(t77root, &t77c, initial_build_cb,
+				&t77_box_ctx);
+		dom_node_unref(t77root);
+		if (t77err != NSERROR_OK) {
+			fprintf(stderr, "FAIL: Test 77 dom_to_box=%d\n",
+					(int)t77err);
+			return 1;
+		}
+		harness_pump_all(100000);
+		if (!g_initial_build_done || !g_initial_build_ok) {
+			fprintf(stderr, "FAIL: Test 77 build\n");
+			return 1;
+		}
+
+		for (k = 0; k < (int)(sizeof(t77_want) /
+				sizeof(t77_want[0])); k++) {
+			long got = t76_color_of(t77c.layout,
+					t77_want[k].cls);
+			fprintf(stderr, "  .%-6s = #%06lX  want #%06lX  %s\n",
+					t77_want[k].cls, got,
+					t77_want[k].want, t77_want[k].what);
+			if (got != t77_want[k].want) {
+				fprintf(stderr, "FAIL: Test 77 .%s -- %s: "
+						"got #%06lX expected #%06lX\n",
+						t77_want[k].cls,
+						t77_want[k].what, got,
+						t77_want[k].want);
+				t77_bad = 1;
+			}
+		}
+		if (t77_bad)
+			return 1;
+	}
+	fprintf(stderr, "=== Test 77 PASS: inheritance, override, sibling "
+			"isolation, non-descendant isolation, and "
+			"computed-value timing ===\n");
+
+	/* ---------------------------------------------------------------
+	 * fixes1269 (#167) - style sharing must not leak custom properties,
+	 * plus the remaining var() semantics.
+	 *
+	 * The sharing concern is real and specific: sharing skips
+	 * cascade_style entirely, so a sharer contributes none of its own
+	 * definitions. Two siblings can have IDENTICAL ordinary computed
+	 * styles (both merely define a custom property) while their
+	 * descendants require different environments. Comparing only the
+	 * inherited environment cannot establish equivalence.
+	 *
+	 * What actually protects it is that sharing already demands the
+	 * same element name, the same class list in order, no id on either
+	 * node, and no attribute / sibling / pseudo-class taint - so two
+	 * shareable nodes matched the same rules and therefore carry the
+	 * same definitions. This test proves that rather than assuming it,
+	 * from both directions:
+	 *
+	 *   .a / .b   different classes, same ordinary style, must NOT
+	 *             cross-contaminate (the reported case)
+	 *   .t / .t   identical classes, genuinely shareable, WITH custom
+	 *             properties - exercises the adopt path on purpose
+	 *
+	 * The adoption COUNT is asserted too. Without it this test would
+	 * pass just as happily on a build where sharing never triggered,
+	 * which is the classic false green.
+	 * ------------------------------------------------------------- */
+	fprintf(stderr, "\n=== Test 78: style sharing keeps custom-property "
+			"environments separate; var() edge cases "
+			"(fixes1269) ===\n");
+	{
+		const char *t78_html =
+			"<html><body>"
+			"<div class=\"a\"><span class=\"as\">A</span></div>"
+			"<div class=\"b\"><span class=\"bs\">B</span></div>"
+			"<div class=\"t\"><span class=\"t1\">1</span></div>"
+			"<div class=\"t\"><span class=\"t2\">2</span></div>"
+			"<div class=\"mp\"><span class=\"mk\">M</span></div>"
+			"<span class=\"fb\">F</span>"
+			"<span class=\"nfb\">N</span>"
+			"<span class=\"cy\">C</span>"
+			"</body></html>";
+		const char *t78_css =
+			".a { --x: rgb(255,0,0) }"
+			".b { --x: rgb(0,0,255) }"
+			".a .as { color: var(--x) }"
+			".b .bs { color: var(--x) }"
+			".t { --q: rgb(0,128,0) }"
+			".t .t1 { color: var(--q) }"
+			".t .t2 { color: var(--q) }"
+			/* multi-hop computed substitution */
+			".mp { --m1: rgb(255,0,0); --m2: var(--m1);"
+			"      --m3: var(--m2) }"
+			".mk { --m1: rgb(0,0,255); color: var(--m3) }"
+			/* fallback, nested fallback */
+			".fb  { color: var(--nope, rgb(0,128,0)) }"
+			".nfb { color: var(--nope, var(--nope2, rgb(0,0,255))) }"
+			/* var() cycle: --z is invalid at computed-value time,
+			 * so the consumer takes its fallback (Chrome: green) */
+			".cy { --z: var(--w); --w: var(--z);"
+			"      color: var(--z, rgb(0,128,0)) }";
+		struct html_content t78c;
+		dom_hubbub_parser *t78p = NULL;
+		dom_document *t78doc = NULL;
+		dom_node *t78root = NULL;
+		css_select_ctx *t78ctx = NULL;
+		css_stylesheet *t78ua = NULL;
+		css_stylesheet *t78auth = NULL;
+		dom_hubbub_parser_params t78params;
+		css_stylesheet_params t78sp;
+		void *t78_box_ctx = NULL;
+		uint32_t share_before, share_after;
+		int t78_bad = 0;
+		int k;
+		nserror t78err;
+		static const struct {
+			const char *cls;
+			long want;
+			const char *what;
+		} t78_want[] = {
+			{ "as",  0xFF0000L, "sharing: .a subtree keeps red" },
+			{ "bs",  0x0000FFL, "sharing: .b subtree keeps blue" },
+			{ "t1",  0x008000L, "shareable .t sibling 1" },
+			{ "t2",  0x008000L, "shareable .t sibling 2" },
+			{ "mk",  0xFF0000L, "multi-hop: parent's --m1" },
+			{ "fb",  0x008000L, "var() fallback" },
+			{ "nfb", 0x0000FFL, "nested var() fallback" },
+			{ "cy",  0x008000L, "var() cycle is invalid -> "
+					"fallback, not black" }
+		};
+
+		memset(&t78params, 0, sizeof(t78params));
+		t78params.fix_enc = true;
+		if (dom_hubbub_parser_create(&t78params, &t78p, &t78doc) !=
+				DOM_HUBBUB_OK) {
+			fprintf(stderr, "FAIL: Test 78 parser create\n");
+			return 1;
+		}
+		if (dom_hubbub_parser_parse_chunk(t78p,
+				(const uint8_t *)t78_html,
+				strlen(t78_html)) != DOM_HUBBUB_OK ||
+				dom_hubbub_parser_completed(t78p) !=
+					DOM_HUBBUB_OK) {
+			fprintf(stderr, "FAIL: Test 78 parse\n");
+			return 1;
+		}
+		dom_hubbub_parser_destroy(t78p);
+
+		memset(&t78c, 0, sizeof(t78c));
+		t78c.base_url = g_base_url;
+		t78c.document = t78doc;
+		t78c.quirks = DOM_DOCUMENT_QUIRKS_MODE_NONE;
+		t78c.enable_scripting = false;
+		if (css_select_ctx_create(&t78ctx) != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 78 select_ctx\n");
+			return 1;
+		}
+		t78c.select_ctx = t78ctx;
+
+		memset(&t78sp, 0, sizeof(t78sp));
+		t78sp.params_version = CSS_STYLESHEET_PARAMS_VERSION_1;
+		t78sp.level = CSS_LEVEL_3;
+		t78sp.charset = "UTF-8";
+		t78sp.url = "resource:default.css";
+		t78sp.title = "default";
+		t78sp.resolve = harness_css_resolve_url;
+		if (css_stylesheet_create(&t78sp, &t78ua) != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 78 UA sheet\n");
+			return 1;
+		}
+		{
+			const char *ua = "html,body,div,p{display:block}";
+			(void)css_stylesheet_append_data(t78ua,
+					(const uint8_t *)ua, strlen(ua));
+			(void)css_stylesheet_data_done(t78ua);
+		}
+		(void)css_select_ctx_append_sheet(t78ctx, t78ua,
+				CSS_ORIGIN_UA, "screen");
+
+		memset(&t78sp, 0, sizeof(t78sp));
+		t78sp.params_version = CSS_STYLESHEET_PARAMS_VERSION_1;
+		t78sp.level = CSS_LEVEL_3;
+		t78sp.charset = "UTF-8";
+		t78sp.url = "http://local/t78.css";
+		t78sp.title = "author";
+		t78sp.resolve = harness_css_resolve_url;
+		if (css_stylesheet_create(&t78sp, &t78auth) != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 78 author sheet\n");
+			return 1;
+		}
+		{
+			css_error ae = css_stylesheet_append_data(t78auth,
+					(const uint8_t *)t78_css,
+					strlen(t78_css));
+			if (ae != CSS_OK && ae != CSS_NEEDDATA) {
+				fprintf(stderr, "FAIL: Test 78 append=%d\n",
+						(int)ae);
+				return 1;
+			}
+			(void)css_stylesheet_data_done(t78auth);
+		}
+		(void)css_select_ctx_append_sheet(t78ctx, t78auth,
+				CSS_ORIGIN_AUTHOR, "screen");
+
+		t78c.media.type = CSS_MEDIA_SCREEN;
+		t78c.media.width = INTTOFIX(800);
+		t78c.media.height = INTTOFIX(600);
+		t78c.media.orientation = CSS_MEDIA_ORIENTATION_LANDSCAPE;
+		t78c.unit_len_ctx.viewport_width = INTTOFIX(800);
+		t78c.unit_len_ctx.viewport_height = INTTOFIX(600);
+		t78c.unit_len_ctx.device_dpi = INTTOFIX(90);
+		t78c.unit_len_ctx.font_size_default = INTTOFIX(16);
+		t78c.unit_len_ctx.font_size_minimum = INTTOFIX(8);
+		if (lwc_intern_string("*", 1, &t78c.universal) !=
+				lwc_error_ok) {
+			fprintf(stderr, "FAIL: Test 78 universal\n");
+			return 1;
+		}
+		t78c.base.status = CONTENT_STATUS_LOADING;
+		t78c.base.active = 0;
+		t78c.base.handler = &g_dummy_handler;
+
+		if (dom_document_get_document_element(t78doc,
+				(void *)&t78root) != DOM_NO_ERR ||
+				t78root == NULL) {
+			fprintf(stderr, "FAIL: Test 78 doc element\n");
+			return 1;
+		}
+		share_before = css_select_share_adoptions();
+		g_initial_build_done = 0;
+		g_initial_build_ok = false;
+		t78err = dom_to_box(t78root, &t78c, initial_build_cb,
+				&t78_box_ctx);
+		dom_node_unref(t78root);
+		if (t78err != NSERROR_OK) {
+			fprintf(stderr, "FAIL: Test 78 dom_to_box=%d\n",
+					(int)t78err);
+			return 1;
+		}
+		harness_pump_all(100000);
+		if (!g_initial_build_done || !g_initial_build_ok) {
+			fprintf(stderr, "FAIL: Test 78 build\n");
+			return 1;
+		}
+		share_after = css_select_share_adoptions();
+
+		for (k = 0; k < (int)(sizeof(t78_want) /
+				sizeof(t78_want[0])); k++) {
+			long got = t76_color_of(t78c.layout,
+					t78_want[k].cls);
+			fprintf(stderr, "  .%-4s = #%06lX  want #%06lX  %s\n",
+					t78_want[k].cls, got,
+					t78_want[k].want, t78_want[k].what);
+			if (got != t78_want[k].want) {
+				fprintf(stderr, "FAIL: Test 78 .%s -- %s: "
+						"got #%06lX expected #%06lX\n",
+						t78_want[k].cls,
+						t78_want[k].what, got,
+						t78_want[k].want);
+				t78_bad = 1;
+			}
+		}
+
+		fprintf(stderr, "  style-sharing adoptions during this "
+				"fixture: %lu\n",
+				(unsigned long)(share_after - share_before));
+		if (share_after == share_before) {
+			fprintf(stderr, "FAIL: Test 78 -- style sharing never "
+					"triggered, so the colours above prove "
+					"nothing about the sharing path. The "
+					"two identical .t divs exist to force "
+					"it; if eligibility rules changed, "
+					"this fixture must change with them "
+					"rather than the assertion being "
+					"dropped.\n");
+			t78_bad = 1;
+		}
+		if (t78_bad)
+			return 1;
+	}
+	fprintf(stderr, "=== Test 78 PASS: sharing preserves custom-property "
+			"scope (and really did share); multi-hop, fallback, "
+			"nested fallback and cycle all correct ===\n");
+
+	/* ---------------------------------------------------------------
+	 * fixes1273 (#167) - the browser event-loop contract itself.
+	 *
+	 * A real facebook.com load logged 83 SECONDS of JS execution with
+	 * timers=0 and raf=0. requestAnimationFrame is implemented as
+	 * setTimeout(fn,16), so those are ONE fact: deferred work is not
+	 * being delivered. That is not a Facebook bug - it is every site
+	 * whose content arrives via a timer, an animation frame, or a
+	 * promise continuation scheduled from one.
+	 *
+	 * The loader investigation that preceded this is now closed:
+	 * Facebook's real loader and the real 15MB bundle set were replayed
+	 * under stock qjs and BOTH the fast and deferred requireLazy paths
+	 * fired, resolving ServerJSPayloadListener with .process. The engine
+	 * and the module graph are fine. What is missing is the task layer.
+	 *
+	 * These assertions are the contract that layer must keep. They are
+	 * ordering- and chaining-sensitive on purpose: a pump that drains
+	 * only the timers present when it was entered looks healthy on the
+	 * first case and starves every later one, which is exactly the shape
+	 * that would leave a React scheduler permanently stalled.
+	 * ------------------------------------------------------------- */
+	fprintf(stderr, "\n=== Test 79: event loop delivers deferred work "
+			"(timer, rAF, nested, promise interaction) ===\n");
+	{
+		extern void macsurf_qjs_pump_all(void);
+		const char *t79_setup =
+			"globalThis.__seen=[];"
+			"setTimeout(function(){__seen.push('timeout');},0);"
+			"requestAnimationFrame(function(t){"
+				"__seen.push('raf:'+(typeof t));"
+			"});"
+			/* work scheduled FROM scheduled work - the case a
+			 * drain-what-was-there-at-entry pump starves */
+			"setTimeout(function(){"
+				"setTimeout(function(){__seen.push('nested');},0);"
+			"},0);"
+			/* microtask -> task */
+			"Promise.resolve().then(function(){"
+				"setTimeout(function(){__seen.push('micro2task');},0);"
+			"});"
+			/* task -> microtask */
+			"setTimeout(function(){"
+				"Promise.resolve().then(function(){"
+					"__seen.push('task2micro');"
+				"});"
+			"},0);"
+			"__seen.push('sync');";
+		const char *t79_check =
+			"(function(){"
+			"var need=['sync','timeout','nested','micro2task',"
+				"'task2micro'];"
+			"var i,missing=[];"
+			"for(i=0;i<need.length;i++)"
+				"if(__seen.indexOf(need[i])<0)missing.push(need[i]);"
+			"var raf=0;"
+			"for(i=0;i<__seen.length;i++)"
+				"if(String(__seen[i]).indexOf('raf:')===0)raf=1;"
+			"if(!raf)missing.push('raf');"
+			"if(__seen.indexOf('raf:number')<0&&raf)"
+				"missing.push('raf-timestamp-not-number');"
+			"if(__seen[0]!=='sync')"
+				"missing.push('sync-must-be-first(got:'+__seen[0]+')');"
+			"if(missing.length)"
+				"throw new Error('ASSERT FAIL missing/wrong: '+"
+					"missing.join(',')+' seen=['+__seen.join(',')+']');"
+			"globalThis.__t79seen=__seen.join(',');"
+			"})();";
+		unsigned char ok1, ok2;
+		int pump;
+
+		ok1 = js_exec(thread, (const unsigned char *)t79_setup,
+				strlen(t79_setup), "driver-t79-setup.js");
+		if (!ok1) {
+			fprintf(stderr, "FAIL: Test 79 setup threw\n");
+			return 1;
+		}
+		/* Pump the way the real WaitNextEvent loop does: repeatedly,
+		 * over REAL elapsed time. A fixed spin count is not enough -
+		 * requestAnimationFrame is setTimeout(fn,16), and 40 tight
+		 * iterations complete in well under 16ms of wall clock, so the
+		 * frame callback would never come due and the test would report
+		 * a broken rAF that is actually just an impatient harness.
+		 * Bounded by both time and iterations so it can never hang. */
+		{
+			extern long macsurf_monotonic_ms(void);
+			long t_start = macsurf_monotonic_ms();
+			pump = 0;
+			while (pump < 20000 &&
+				(macsurf_monotonic_ms() - t_start) < 500L) {
+				macsurf_qjs_pump_all();
+				harness_pump_all(1000);
+				pump++;
+			}
+		}
+		ok2 = js_exec(thread, (const unsigned char *)t79_check,
+				strlen(t79_check), "driver-t79-check.js");
+		if (!ok2) {
+			fprintf(stderr, "FAIL: Test 79 -- the event loop did not "
+					"deliver deferred work. This is the "
+					"hardware shape: 83s of JS with timers=0 "
+					"and raf=0 on facebook.com. Every site "
+					"that loads content via a timer, an "
+					"animation frame, or a promise "
+					"continuation scheduled from one depends "
+					"on this.\n");
+			return 1;
+		}
+		fprintf(stderr, "  order seen: ");
+		{
+			const char *dump =
+				"globalThis.__t79seen";
+			(void)dump;
+		}
+		fprintf(stderr, "(all five delivered, sync first, rAF "
+				"timestamp is a number)\n");
+	}
+	fprintf(stderr, "=== Test 79 PASS: timer, rAF, nested scheduling and "
+			"both promise/task directions all deliver ===\n");
+
+	/* ---------------------------------------------------------------
+	 * fixes1275 (#167) - diagnostics must not FABRICATE EXISTENCE.
+	 *
+	 * The __d / requireLazy property traps (fixes1247/1259, added to
+	 * investigate why Facebook never booted) returned their wrapper
+	 * unconditionally, so both names appeared to exist before any page
+	 * script had run. facebook.com feature-detects exactly those names.
+	 * Verbatim from the real page, recovered from the hardware log and
+	 * confirmed to execute at t=961, BEFORE the bootstrap that defines
+	 * requireLazy at t=991:
+	 *
+	 *   window.requireLazy ? window.requireLazy(["Env"],copyVariables)
+	 *                      : (window.Env=window.Env||{},
+	 *                         copyVariables(window.Env))
+	 *
+	 * A real browser has requireLazy undefined there, takes the ELSE
+	 * branch, and installs window.Env - the page's whole configuration.
+	 * MacSurf said "it exists", so the page handed Env to a requireLazy
+	 * that did not exist yet and the wrapper dropped it. window.Env was
+	 * NEVER SET. The instrumentation added to find the bug was causing
+	 * it.
+	 *
+	 * This asserts the contract that prevents a recurrence: an
+	 * observer-only trap reports undefined until the page assigns, and
+	 * the wrapper afterwards. It runs the REAL branch, not a mock of it.
+	 * ------------------------------------------------------------- */
+	fprintf(stderr, "\n=== Test 80: instrumentation reports absence "
+			"truthfully (fixes1275) ===\n");
+	{
+		const char *t80 =
+			"(function(){"
+			/* the exact shape the real page uses */
+			"var probe=(typeof globalThis.__msT80Name==='undefined')?"
+				"'__msT80Name':'__msT80Name';"
+			"if(typeof globalThis.requireLazy!=='undefined'&&"
+					"globalThis.__msT80Assigned!==1){"
+				"throw new Error('ASSERT FAIL: requireLazy reports "
+					"as existing before any page script assigned "
+					"it -- a feature-detect like facebook.com\\'s "
+					"envjson script will take the wrong branch "
+					"and lose window.Env');"
+			"}"
+			/* real envjson branch, verbatim logic */
+			"var variables={MARK:'ENV-OK'};"
+			"var copyVariables=function(e){"
+				"for(var n in variables)e[n]=variables[n];"
+			"};"
+			"globalThis.requireLazy?"
+				"globalThis.requireLazy(['Env'],copyVariables):"
+				"(globalThis.Env=globalThis.Env||{},"
+					"copyVariables(globalThis.Env));"
+			"if(!globalThis.Env||globalThis.Env.MARK!=='ENV-OK')"
+				"throw new Error('ASSERT FAIL: window.Env was not "
+					"installed -- the page config is lost, which "
+					"is exactly the facebook.com failure');"
+			/* after a real assignment the trap must engage */
+			"globalThis.__msT80Assigned=1;"
+			"globalThis.requireLazy=function(){"
+				"globalThis.__msT80Called=1;"
+			"};"
+			"if(typeof globalThis.requireLazy!=='function')"
+				"throw new Error('ASSERT FAIL: after assignment "
+					"requireLazy must be callable');"
+			"globalThis.requireLazy(['x'],function(){});"
+			"if(globalThis.__msT80Called!==1)"
+				"throw new Error('ASSERT FAIL: assigned "
+					"implementation was not reached -- the "
+					"observer must delegate, not swallow');"
+			"})();";
+		unsigned char ok = js_exec(thread, (const unsigned char *)t80,
+				strlen(t80), "driver-t80.js");
+		if (!ok) {
+			fprintf(stderr, "FAIL: Test 80 -- see assertion above\n");
+			return 1;
+		}
+	}
+	fprintf(stderr, "=== Test 80 PASS: absence reported truthfully, "
+			"window.Env installs, assignment still delegates ===\n");
+
+	/* --- Test 81: pre-loader requireLazy call survives the stub->real
+	 * transition (#167, fixes1276) -------------------------------------
+	 *
+	 * Test 80 proved the trap stops LYING about existence. It did not
+	 * prove the trap still WORKS end to end across the one transition
+	 * that matters on the real page: Facebook installs a temporary
+	 * stub-queueing __d/requireLazy BEFORE its 323KB real loader has
+	 * downloaded, an inline SSR island calls requireLazy() against that
+	 * stub, the stub queues the call into window.__rl_stub, and only
+	 * later does the real loader arrive, install itself over __d/
+	 * requireLazy, and drain the queue. If MacSurf's wrapper ever
+	 * captured a STALE reference to the stub instead of re-reading its
+	 * realD/realRL closure vars on each call, a call queued during the
+	 * stub phase would be silently lost -- which is exactly the shape
+	 * of the still-open rl_target_fires=0 hardware symptom.
+	 *
+	 * Uses harness/fbcdn.net-loader-b25.js, the REAL 323664-byte loader bundle
+	 * recovered from a live facebook.com session's hardware log (same
+	 * file fixes1274/1275 used to prove the window.Env root cause).
+	 * The stub-queueing bootstrap itself was not separately recovered
+	 * from a saved capture, so it is not literally replayed verbatim --
+	 * but its shape is not invented: b25.js's own drain code demands
+	 * `t.__d.apply(null, t.__d_stub[Fe])` and
+	 * `_e.apply(null, t.__rl_stub[Oe])`, i.e. each queued entry must be
+	 * exactly an arguments object, which is what forces the classic
+	 * Haste/BigPipe `(queue=queue||[]).push(arguments)` idiom used
+	 * below. */
+	fprintf(stderr, "\n=== Test 81: pre-loader requireLazy call survives "
+			"the stub->real transition (fixes1276) ===\n");
+	{
+		char *b25src = harness_fixture_slurp("fbcdn.net-loader-b25.js");
+		if (b25src == NULL) {
+			fprintf(stderr, "SKIP: fbcdn.net-loader-b25.js not present\n");
+		} else {
+			/* Plain assignment, not the `x = x || fn` idiom -- this
+			 * test's realm has run 80 prior tests, so __d/requireLazy
+			 * are not necessarily untouched here the way they are on
+			 * a fresh navigation. Reinstalling defensively over an
+			 * existing wrapper is exactly what Test 82 exists to
+			 * cover; this test's job is the stub-queue -> real-loader
+			 * -> drain -> fire pipeline, so it forces a known-clean
+			 * stub directly rather than depending on ambient state. */
+			const char *setup =
+				"(function(){\"use strict\";"
+				"globalThis.__t81={fired:0};"
+				"globalThis.__d=function(){"
+					"(globalThis.__d_stub=globalThis.__d_stub||[])"
+						".push(arguments);"
+				"};"
+				"globalThis.requireLazy="
+					"function(){"
+					"(globalThis.__rl_stub=globalThis.__rl_stub||[])"
+						".push(arguments);"
+				"};"
+				"globalThis.requireLazy(['ServerJSPayloadListener'],"
+					"function(m){globalThis.__t81.fired=1;});"
+				"if(globalThis.__t81.fired!==0)"
+					"throw new Error('ASSERT FAIL: callback fired "
+						"before the target was ever defined and "
+						"before the real loader even loaded');"
+				"if(!(globalThis.__rl_stub&&"
+						"globalThis.__rl_stub.length===1))"
+					"throw new Error('ASSERT FAIL: a requireLazy "
+						"call made during the pre-loader stub "
+						"phase did not reach the stub queue -- "
+						"got __rl_stub.length='+"
+						"(globalThis.__rl_stub?"
+							"globalThis.__rl_stub.length:"
+							"'undefined')+"
+						"' -- MacSurf is not delegating through "
+						"to the assigned stub');"
+				"})();";
+			const char *post =
+				"(function(){\"use strict\";"
+				"if(typeof globalThis.__d!=='function')"
+					"throw new Error('ASSERT FAIL: real loader did "
+						"not install __d');"
+				"if(globalThis.__d_stub!==undefined)"
+					"throw new Error('ASSERT FAIL: real loader did "
+						"not drain/delete __d_stub');"
+				"if(globalThis.__rl_stub!==undefined)"
+					"throw new Error('ASSERT FAIL: real loader did "
+						"not drain/delete __rl_stub -- the "
+						"pre-loader-queued call was lost');"
+				"globalThis.__d('ServerJSPayloadListener',[],"
+					"function(global,require,requireDynamic,"
+						"requireLazy,module,exports){"
+						"exports.process=function(){};"
+					"});"
+				"if(globalThis.__t81.fired!==1)"
+					"throw new Error('ASSERT FAIL: a requireLazy "
+						"callback queued during the PRE-LOADER "
+						"stub phase never fired after its target "
+						"was defined post-loader -- this "
+						"reproduces the rl_target_fires=0 "
+						"hardware symptom locally');"
+				"})();";
+			char *b25len_src; size_t wn; unsigned char ok81a, ok81b;
+
+			ok81a = js_exec(thread, (const unsigned char *)setup,
+					strlen(setup), "driver-t81-setup.js");
+			if (!ok81a) {
+				fprintf(stderr, "FAIL: Test 81 setup -- see assertion "
+						"above\n");
+				free(b25src);
+				return 1;
+			}
+
+			ok81b = js_exec(thread, (const unsigned char *)b25src,
+					strlen(b25src), "fbcdn.net-loader-b25.js");
+			fprintf(stderr, "js_exec(fbcdn.net-loader-b25.js, %lu bytes) "
+					"ok=%d\n", (unsigned long)strlen(b25src),
+					(int)ok81b);
+			free(b25src);
+			if (!ok81b) {
+				fprintf(stderr, "FAIL: Test 81 -- the real loader "
+						"bundle threw; see the exception reported "
+						"above\n");
+				return 1;
+			}
+
+			wn = strlen(post);
+			b25len_src = (char *)malloc(wn + 1);
+			memcpy(b25len_src, post, wn + 1);
+			ok81b = js_exec(thread, (const unsigned char *)b25len_src,
+					wn, "driver-t81-post.js");
+			free(b25len_src);
+			if (!ok81b) {
+				fprintf(stderr, "FAIL: Test 81 -- see assertion "
+						"above\n");
+				return 1;
+			}
+		}
+	}
+	fprintf(stderr, "=== Test 81 PASS: a requireLazy call queued during "
+			"Facebook's pre-loader stub phase survives the stub->real "
+			"transition and fires once its target is defined, through "
+			"the current fixes1275 wrapper unmodified ===\n");
+
+	/* --- Test 82: reinstalling __d/requireLazy defensively must not
+	 * self-reference (#167, fixes1276) ----------------------------------
+	 *
+	 * Found while writing Test 81: `window.requireLazy = window.requireLazy
+	 * || function(){...}` is the completely ordinary "install a stub only
+	 * if nothing is there yet" idiom, and it plausibly runs once per
+	 * SSR island/prelude chunk on a real page -- many times per
+	 * navigation, not once. Before this fix, the SECOND such reinstall
+	 * (against a trap that has already captured a real value) read back
+	 * `wrappedRL` itself from the getter and wrote it straight through
+	 * the setter, making the wrapper its own delegate. Every call after
+	 * that recursed into itself and blew the stack -- reproduced with
+	 * nothing more than two consecutive `x = x || fn` installs against a
+	 * fresh trap, no real Facebook code involved. A RangeError inside
+	 * this codebase's near-universal try/catch reads from the outside as
+	 * "nothing happened", the same silent-failure shape fixes1275 fixed
+	 * one layer up. This asserts the fix: the FIRST real assignment must
+	 * keep winning no matter how many times the idempotent idiom repeats
+	 * afterward, for both __d and requireLazy. */
+	fprintf(stderr, "\n=== Test 82: defensive reinstall does not "
+			"self-reference (fixes1276) ===\n");
+	{
+		const char *t82 =
+			"(function(){\"use strict\";"
+			"globalThis.__t82={dCalls:0,rlCalls:0,wrongStub:0};"
+			/* first real assignment -- plain, not `x = x || fn`. By
+			 * this point in the harness the trap has already been
+			 * exercised by 81 prior tests, so it is not necessarily
+			 * virgin the way it is on a fresh navigation; this line
+			 * establishes a KNOWN baseline the same way Test 81's
+			 * setup does. It is the reinstalls below, against that
+			 * now-known-real baseline, that this test exists to
+			 * check. */
+			"globalThis.__d=function(){"
+				"globalThis.__t82.dCalls++;"
+			"};"
+			"globalThis.requireLazy=function(){"
+				"globalThis.__t82.rlCalls++;"
+			"};"
+			/* a second island's defensive reinstall, shaped exactly
+			 * like the first -- must be a no-op against the trap */
+			"globalThis.__d=globalThis.__d||function(){"
+				"globalThis.__t82.wrongStub++;"
+			"};"
+			"globalThis.requireLazy=globalThis.requireLazy||function(){"
+				"globalThis.__t82.wrongStub++;"
+			"};"
+			/* and a third, because real pages are not limited to two */
+			"globalThis.__d=globalThis.__d||function(){"
+				"globalThis.__t82.wrongStub++;"
+			"};"
+			"globalThis.requireLazy=globalThis.requireLazy||function(){"
+				"globalThis.__t82.wrongStub++;"
+			"};"
+			"globalThis.__d('probe');"
+			"globalThis.requireLazy(['probe'],function(){});"
+			"if(globalThis.__t82.dCalls!==1||globalThis.__t82.rlCalls!==1)"
+				"throw new Error('ASSERT FAIL: the FIRST real __d/"
+					"requireLazy implementation did not receive the "
+					"call -- dCalls='+globalThis.__t82.dCalls+"
+					"' rlCalls='+globalThis.__t82.rlCalls);"
+			"if(globalThis.__t82.wrongStub!==0)"
+				"throw new Error('ASSERT FAIL: a LATER defensive "
+					"reinstall\\'s stub ran instead of the first -- "
+					"the self-reference guard let a later `x = x || "
+					"fn` overwrite the real implementation');"
+			"})();";
+		unsigned char ok = js_exec(thread, (const unsigned char *)t82,
+				strlen(t82), "driver-t82.js");
+		if (!ok) {
+			fprintf(stderr, "FAIL: Test 82 -- see assertion above (a "
+					"stack-overflow RangeError here means the "
+					"self-reference guard is missing/broken)\n");
+			return 1;
+		}
+	}
+	fprintf(stderr, "=== Test 82 PASS: repeated defensive reinstall stays "
+			"a no-op once the trap holds a real implementation, for "
+			"both __d and requireLazy ===\n");
+
+	/* --- Test 83: Hyperion's browser-prototype validation (#167,
+	 * fixes1277) ------------------------------------------------------
+	 *
+	 * Facebook's real loader bundle installs Hyperion before the app boots.
+	 * Hyperion creates a shadow prototype for Node, Window, XMLHttpRequest,
+	 * and History, then asserts that every child target actually inherits its
+	 * parent's target prototype. MacSurf had the objects but not the standard
+	 * EventTarget ancestry, so Hyperion threw its own "Invalid prototype
+	 * chain" assertion (three times in the hardware log) before the page got
+	 * to the later app code. This is the exact ancestry predicate from the
+	 * recovered b25 loader, kept small enough to make a failed edge explicit.
+	 *
+	 * The test deliberately checks the live global too: the WANT census puts
+	 * an exotic prototype immediately above it, so merely checking
+	 * Window.prototype is a false green unless window still reaches it. */
+	fprintf(stderr, "\n=== Test 83: Facebook Hyperion sees a real browser "
+			"prototype graph (fixes1277) ===\n");
+	{
+		const char *t83 =
+			"(function(){"
+			"function bad(s){throw new Error('ASSERT FAIL: '+s);}"
+			"function shadow(ctor,parent,opts){"
+			"var target=(opts&&opts.targetPrototype)||"
+				"(ctor&&ctor.prototype);"
+			"if(!target&&opts&&opts.sampleObject)"
+				"target=Object.getPrototypeOf(opts.sampleObject);"
+			"if(!target||typeof target!=='object')"
+				"bad('no target prototype for '+(ctor&&ctor.name));"
+			"if(parent){var p=target,want=parent.targetPrototype,found=false;"
+				"while(p&&!found){found=p===want;p=Object.getPrototypeOf(p);}"
+				"if(!found)bad('Invalid prototype chain for '+"
+					"(ctor&&ctor.name));}"
+			"return{targetPrototype:target};"
+			"}"
+			"if(typeof EventTarget!=='function'||typeof Window!=='function'||"
+				"typeof History!=='function')bad('missing browser constructor');"
+			"if(!(window instanceof Window))bad('window is not a Window');"
+			"if(!(history instanceof History))bad('history is not a History');"
+			"if(!(document.head instanceof Node))bad('head is not a Node');"
+			"if(!(new XMLHttpRequest() instanceof EventTarget))"
+				"bad('XMLHttpRequest is not an EventTarget');"
+			"var et=shadow(EventTarget,null,{sampleObject:document.head});"
+			"var no=shadow(Node,et,{sampleObject:document.head});"
+			"shadow(Attr,no,{nodeType:document.ATTRIBUTE_NODE});"
+			"var el=shadow(Element,no,{sampleObject:document.head});"
+			"var he=shadow(HTMLElement,el,{sampleObject:document.head});"
+			"shadow(Window,et,{targetPrototype:window});"
+			"shadow(XMLHttpRequest,et,{sampleObject:new XMLHttpRequest()});"
+			"shadow(History,null,{sampleObject:history});"
+			/* Test 81 has already loaded the recovered real Facebook loader.
+			 * Make its Hyperion feature flag true and invoke the actual module,
+			 * not only our compact copy of its predicate. */
+			"globalThis.Env=globalThis.Env||{};globalThis.Env.loadHyperion=true;"
+			"if(typeof require!=='function')bad('real loader has no require');"
+			"require('Hyperion');"
+			"globalThis.__t83ok=he.targetPrototype===HTMLElement.prototype;"
+			"if(!globalThis.__t83ok)bad('HTMLElement target changed');"
+			"})();";
+		unsigned char ok = js_exec(thread, (const unsigned char *)t83,
+				strlen(t83), "driver-t83-hyperion-protos.js");
+		if (!ok) {
+			fprintf(stderr, "FAIL: Test 83 -- Facebook Hyperion's exact "
+					"prototype-chain check rejected the browser graph\n");
+			return 1;
+		}
+	}
+	fprintf(stderr, "=== Test 83 PASS: Node, Window, XMLHttpRequest, and "
+			"History carry the prototype graph Hyperion requires ===\n");
+#endif /* MACSURF_JS_FB_LOADER_TRAP */
+
+	/* --- Test 84: document.location is the live window Location (#167,
+	 * fixes1279) --------------------------------------------------------
+	 *
+	 * Facebook's Messenger initialization reaches getDocumentDomain(), whose
+	 * first operation is `document.location.href`.  The location object was
+	 * present at window.location but the document alias was absent, so the
+	 * otherwise healthy MWV2Chat path threw "cannot read property 'href' of
+	 * undefined".  Check the actual expression and the platform identity
+	 * guarantee; this deliberately does not assign, because that would turn a
+	 * regression test into a navigation. */
+	fprintf(stderr, "\n=== Test 84: document.location is window.location "
+			"(fixes1279) ===\n");
+	{
+		const char *t84 =
+			"(function(){"
+			"function bad(s){throw new Error('ASSERT FAIL: '+s);}"
+			"if(document.location!==window.location)"
+				"bad('document.location is not window.location');"
+			"if(typeof document.location.href!=='string')"
+				"bad('document.location.href is not a string');"
+			"var d=Object.getOwnPropertyDescriptor(document,'location');"
+			"if(!d||typeof d.get!=='function'||typeof d.set!=='function')"
+				"bad('document.location is not a forwarding accessor');"
+			"})();";
+		unsigned char ok = js_exec(thread, (const unsigned char *)t84,
+				strlen(t84), "driver-t84-document-location.js");
+		if (!ok) {
+			fprintf(stderr, "FAIL: Test 84 -- document.location does not "
+					"expose the live Location object\n");
+			return 1;
+		}
+	}
+	fprintf(stderr, "=== Test 84 PASS: document.location exposes the live "
+			"Location object ===\n");
+
+	/* --- Test 85: the application task/message surface (#167, fixes1280)
+	 *
+	 * Facebook's bundles complete, then React asks for setImmediate,
+	 * MessageChannel, postMessage, and reportError.  These drive real deferred
+	 * scheduler work; merely defining names would strand the same render tasks
+	 * one layer later.  Exercise all four through the actual timer pump. */
+	fprintf(stderr, "\n=== Test 85: task/message APIs deliver real work "
+			"(fixes1280) ===\n");
+	{
+		extern void macsurf_qjs_pump_all(void);
+		const char *t85_setup =
+			"globalThis.__t85=[];"
+			"setImmediate(function(){__t85.push('immediate');});"
+			"var c=new MessageChannel();"
+			"c.port1.onmessage=function(e){__t85.push('port:'+e.data);};"
+			"c.port1.addEventListener('message',function(e){__t85.push('listener:'+e.data);});"
+			"c.port2.postMessage('task');"
+			"addEventListener('message',function(e){if(e.data==='window')__t85.push('window:'+e.origin);});"
+			"postMessage('window','*');"
+			"addEventListener('error',function(e){if(e.message==='reported')__t85.push('error');});"
+			"reportError(new Error('reported'));";
+		const char *t85_check =
+			"(function(){var n=['immediate','port:task','listener:task','error'],i;"
+			"for(i=0;i<n.length;i++)if(__t85.indexOf(n[i])<0)"
+			"throw new Error('ASSERT FAIL missing '+n[i]+' ['+__t85.join(',')+']');"
+			"if(!__t85.some(function(x){return x.indexOf('window:')===0;}))"
+			"throw new Error('ASSERT FAIL missing window message ['+__t85.join(',')+']');"
+			"})();";
+		unsigned char ok1, ok2;
+		int pump;
+
+		ok1 = js_exec(thread, (const unsigned char *)t85_setup,
+				strlen(t85_setup), "driver-t85-task-message-setup.js");
+		if (!ok1) {
+			fprintf(stderr, "FAIL: Test 85 setup threw\n");
+			return 1;
+		}
+		for (pump = 0; pump < 100; pump++) {
+			macsurf_qjs_pump_all();
+			harness_pump_all(1000);
+		}
+		ok2 = js_exec(thread, (const unsigned char *)t85_check,
+				strlen(t85_check), "driver-t85-task-message-check.js");
+		if (!ok2) {
+			fprintf(stderr, "FAIL: Test 85 -- a scheduler task/message API "
+					"failed to deliver work\n");
+			return 1;
+		}
+	}
+	fprintf(stderr, "=== Test 85 PASS: immediate, channel, window message, "
+			"and reportError all deliver ===\n");
+
+	/* --- Test 86: Comment is a real CharacterData node (#167, fixes1283)
+	 *
+	 * React identifies hydration and Suspense boundaries by COMMENT_NODE.  The
+	 * old document.createComment implementation returned a Text node, which
+	 * makes the marker indistinguishable from user content and violates every
+	 * DOM traversal React performs around it. */
+	fprintf(stderr, "\n=== Test 86: document.createComment creates a native "
+			"Comment node (fixes1283) ===\n");
+	{
+		const char *t86 =
+			"(function(){"
+			"function bad(s){throw new Error('ASSERT FAIL: '+s);}"
+			"if(typeof document.__createCommentNative!=='function')"
+				"bad('native createComment binding is missing');"
+			"var c=document.createComment('react-marker'),host=document.createElement('div');"
+			"if(!c)bad('createComment returned null');"
+			"if(c.nodeType!==Node.COMMENT_NODE)bad('nodeType='+c.nodeType);"
+			"if(c.nodeName!=='#comment')bad('nodeName='+c.nodeName);"
+			"if(c.data!=='react-marker'||c.nodeValue!=='react-marker')"
+				"bad('CharacterData content is wrong');"
+			"if(!(c instanceof Comment)||!(c instanceof CharacterData)||!(c instanceof Node))"
+				"bad('Comment prototype family is wrong');"
+			"host.appendChild(c);if(host.firstChild!==c||c.parentNode!==host)"
+				"bad('native comment did not attach');"
+			"c.data='hydration-boundary';"
+			"if(c.textContent!=='hydration-boundary')bad('data setter missed native node');"
+			"})();";
+		unsigned char ok = js_exec(thread, (const unsigned char *)t86,
+				strlen(t86), "driver-t86-comment-node.js");
+		if (!ok) {
+			fprintf(stderr, "FAIL: Test 86 -- document.createComment is not a "
+					"real Comment CharacterData node\n");
+			return 1;
+		}
+	}
+	fprintf(stderr, "=== Test 86 PASS: native Comment node preserves React "
+			"hydration-marker semantics ===\n");
+
+	/* --- Test 87: node traversal keeps fragment and Document identity (#167,
+	 * fixes1284) ---------------------------------------------------------
+	 *
+	 * React's host tree crosses Comment -> DocumentFragment during insertion,
+	 * then follows parentNode through documentElement to Document.  Both edges
+	 * must return the existing native-backed JS identity; filtering parents to
+	 * Element nodes makes the tree look detached even when libdom attached it
+	 * correctly. */
+	fprintf(stderr, "\n=== Test 87: fragment and Document traversal preserve "
+			"native identity (fixes1284) ===\n");
+	{
+		const char *t87 =
+			"(function(){"
+			"function bad(s){throw new Error('ASSERT FAIL: '+s);}"
+			"var f=document.createDocumentFragment(),"
+			"c=document.createComment('marker'),"
+			"host=document.createElement('div'),de=document.documentElement;"
+			"f.appendChild(c);"
+			"if(f.firstChild!==c||f.lastChild!==c||f.childNodes.length!==1)"
+				"bad('fragment child identity');"
+			"if(c.parentNode!==f||c.getRootNode()!==f)"
+				"bad('comment fragment parent/root');"
+			"if(c.nextSibling!==null||c.previousSibling!==null)"
+				"bad('comment detached sibling edge');"
+			"host.appendChild(f);"
+			"if(host.firstChild!==c||host.lastChild!==c||c.parentNode!==host)"
+				"bad('fragment insertion did not preserve comment');"
+			"if(c.getRootNode()!==host||f.firstChild!==null||f.lastChild!==null)"
+				"bad('fragment transfer/root');"
+			"if(de.parentNode!==document||de.getRootNode()!==document)"
+				"bad('document traversal identity');"
+			"if(de.isConnected!==true)bad('documentElement disconnected');"
+			"})();";
+		unsigned char ok = js_exec(thread, (const unsigned char *)t87,
+				strlen(t87), "driver-t87-node-traversal.js");
+		if (!ok) {
+			fprintf(stderr, "FAIL: Test 87 -- fragment/Document traversal lost "
+					"native identity\n");
+			return 1;
+		}
+	}
+	fprintf(stderr, "=== Test 87 PASS: comment, fragment, element, and "
+			"Document traversal retain identity ===\n");
+
+	/* --- Test 88: browser capability truthfulness (#167, fixes1285) --- */
+	fprintf(stderr, "\n=== Test 88: Blob has bytes and unsupported APIs stay "
+			"absent (fixes1285) ===\n");
+	{
+		const char *t88_arm =
+			"(function(){"
+			"function bad(s){throw new Error('ASSERT FAIL: '+s);}"
+			"var names=['indexedDB','IDBKeyRange','caches','WebSocket',"
+			"'File','FileReader','Notification'],i,n;"
+			"for(i=0;i<names.length;i++){n=names[i];"
+			"if(typeof globalThis[n]!=='undefined'||n in globalThis)"
+				"bad(n+' is advertised without a real backend');}"
+			"if(typeof URL.createObjectURL!=='undefined'||"
+				"'createObjectURL' in URL||'revokeObjectURL' in URL)"
+				"bad('URL object URLs are advertised without retained bytes');"
+			"var src=new Uint8Array([33]);"
+			"var blob=new Blob(['hi',src],{type:'TEXT/PLAIN'});src[0]=63;"
+			"if(!(blob instanceof Blob)||blob.size!==3||blob.type!=='text/plain')"
+				"bad('Blob does not preserve its bytes and MIME type');"
+			"var cut=blob.slice(1,3,'TEXT/X');"
+			"if(cut.size!==2||cut.type!=='text/x')bad('Blob.slice metadata');"
+			"globalThis.__t88BlobText='';globalThis.__t88BlobBytes='';"
+			"blob.text().then(function(s){globalThis.__t88BlobText=s;});"
+			"blob.arrayBuffer().then(function(b){var v=new Uint8Array(b);"
+				"globalThis.__t88BlobBytes=v[0]+','+v[1]+','+v[2];});"
+			"if(navigator.sendBeacon('https://example.invalid/beacon',blob)!==false)"
+				"bad('sendBeacon must reject Blob until byte transport exists');"
+			"})();";
+		const char *t88_check =
+			"if(globalThis.__t88BlobText!=='hi!')"
+				"throw new Error('ASSERT FAIL: Blob.text lost bytes: '+globalThis.__t88BlobText);"
+			"if(globalThis.__t88BlobBytes!=='104,105,33')"
+				"throw new Error('ASSERT FAIL: Blob.arrayBuffer lost bytes: '+globalThis.__t88BlobBytes);";
+		unsigned char ok = js_exec(thread, (const unsigned char *)t88_arm,
+				strlen(t88_arm), "driver-t88-capabilities-arm.js");
+		if (!ok) {
+			fprintf(stderr, "FAIL: Test 88 -- capability surface or Blob construction "
+					"is untruthful\n");
+			return 1;
+		}
+		{
+			extern void macsurf_qjs_pump_all(void);
+			int pump;
+			for (pump = 0; pump < 8; pump++) macsurf_qjs_pump_all();
+		}
+		ok = js_exec(thread, (const unsigned char *)t88_check,
+				strlen(t88_check), "driver-t88-capabilities-check.js");
+		if (!ok) {
+			fprintf(stderr, "FAIL: Test 88 -- Blob Promise readers lost bytes\n");
+			return 1;
+		}
+	}
+	fprintf(stderr, "=== Test 88 PASS: Blob owns bytes; feature detection sees "
+			"only real browser backends ===\n");
+
+	/* --- Test 89: host DOM hooks resolve their node's realm (#167,
+	 * fixes1284) ---------------------------------------------------------
+	 *
+	 * The parser's inline-handler hook receives a native node, not a context.
+	 * Build A then B so B is the most recent heap, bind A's node after that,
+	 * and execute in A.  A last-heap lookup compiles the handler in B and the
+	 * A-side call sees no handler; resolving node -> document -> realm is the
+	 * only correct ownership path. */
+	fprintf(stderr, "\n=== Test 89: parser hooks bind in the owning realm "
+			"(fixes1284) ===\n");
+	{
+		struct html_content ca, cb;
+		dom_document *da = NULL, *db = NULL;
+		dom_element *ba = NULL;
+		dom_string *ida = NULL;
+		struct jsheap *ha = NULL, *hb = NULL;
+		struct jsthread *ta = NULL, *tb = NULL;
+		nserror e;
+		unsigned char ok;
+		extern void macsurf_qjs_bind_inline_handlers(struct dom_node *node);
+		extern void macsurf_js_notify_content_freed(struct content *c);
+
+		if (!harness_parse_document(
+				"<html><body><button id='a' onclick=\"globalThis.__t89='A'\">A</button></body></html>",
+				&da) ||
+			!harness_parse_document(
+				"<html><body><button id='b' onclick=\"globalThis.__t89='B'\">B</button></body></html>",
+				&db)) {
+			fprintf(stderr, "FAIL: Test 89 -- independent document parse\n");
+			return 1;
+		}
+		memset(&ca, 0, sizeof(ca));
+		memset(&cb, 0, sizeof(cb));
+		ca.document = da;
+		cb.document = db;
+		ca.enable_scripting = true;
+		cb.enable_scripting = true;
+		e = js_newheap(20000, &ha);
+		if (e == NSERROR_OK) e = js_newthread(ha, NULL, &ca, &ta);
+		if (e == NSERROR_OK) e = js_newheap(20000, &hb);
+		if (e == NSERROR_OK) e = js_newthread(hb, NULL, &cb, &tb);
+		if (e != NSERROR_OK || ta == NULL || tb == NULL) {
+			fprintf(stderr, "FAIL: Test 89 -- realm setup err=%d\n", (int)e);
+			return 1;
+		}
+		if (dom_string_create((const uint8_t *)"a", 1, &ida) != DOM_NO_ERR ||
+				ida == NULL || dom_document_get_element_by_id(da, ida, &ba)
+				!= DOM_NO_ERR || ba == NULL) {
+			fprintf(stderr, "FAIL: Test 89 -- A button lookup\n");
+			return 1;
+		}
+		macsurf_qjs_bind_inline_handlers((dom_node *)ba);
+		dom_string_unref(ida);
+		dom_node_unref((dom_node *)ba);
+		ok = js_exec(ta, (const unsigned char *)
+			"(function(){var b=document.getElementById('a');"
+			"if(!b||typeof b.onclick!=='function')"
+			"throw new Error('ASSERT FAIL: A handler was bound in another realm');"
+			"b.onclick({type:'click'});"
+			"if(globalThis.__t89!=='A')"
+			"throw new Error('ASSERT FAIL: handler executed outside A');})();",
+			strlen("(function(){var b=document.getElementById('a');"
+			"if(!b||typeof b.onclick!=='function')"
+			"throw new Error('ASSERT FAIL: A handler was bound in another realm');"
+			"b.onclick({type:'click'});"
+			"if(globalThis.__t89!=='A')"
+			"throw new Error('ASSERT FAIL: handler executed outside A');})();"),
+			"driver-t89-realm-owner.js");
+		if (!ok) {
+			fprintf(stderr, "FAIL: Test 89 -- parser hook used the last realm\n");
+			return 1;
+		}
+		macsurf_js_notify_content_freed((struct content *)&ca);
+		macsurf_js_notify_content_freed((struct content *)&cb);
+		js_destroyheap(hb);
+		js_destroyheap(ha);
+		dom_node_unref((dom_node *)db);
+		dom_node_unref((dom_node *)da);
+	}
+	fprintf(stderr, "=== Test 89 PASS: native node hooks cannot target the "
+			"last-created realm ===\n");
+
+	/* --- Test 90: production realm leaves Facebook loader globals to the
+	 * page (#167, fixes1285) --------------------------------------------- */
+#if !MACSURF_JS_FB_LOADER_TRAP
+	fprintf(stderr, "\n=== Test 90: a fresh browser realm has no Facebook "
+			"loader globals (fixes1285) ===\n");
+	{
+		struct html_content clean_content;
+		dom_document *clean_document = NULL;
+		struct jsheap *clean_heap = NULL;
+		struct jsthread *clean_thread = NULL;
+		nserror clean_err;
+		unsigned char clean_ok;
+		extern void macsurf_js_notify_content_freed(struct content *c);
+
+		if (!harness_parse_document("<html><body></body></html>",
+				&clean_document)) {
+			fprintf(stderr, "FAIL: Test 90 -- fresh document parse\n");
+			return 1;
+		}
+		memset(&clean_content, 0, sizeof(clean_content));
+		clean_content.document = clean_document;
+		clean_content.enable_scripting = true;
+		clean_err = js_newheap(20000, &clean_heap);
+		if (clean_err == NSERROR_OK)
+			clean_err = js_newthread(clean_heap, NULL, &clean_content,
+					&clean_thread);
+		if (clean_err != NSERROR_OK || clean_thread == NULL) {
+			fprintf(stderr, "FAIL: Test 90 -- fresh realm setup err=%d\n",
+					(int)clean_err);
+			return 1;
+		}
+		clean_ok = js_exec(clean_thread, (const unsigned char *)
+			"(function(){var n=['__d','requireLazy','__onBeforeModuleFactory'],i;"
+			"for(i=0;i<n.length;i++){if(typeof globalThis[n[i]]!=='undefined'||"
+			"n[i] in globalThis)throw new Error('ASSERT FAIL: preinstalled '+n[i]);}"
+			"if(typeof Blob!=='function'||new Blob(['x']).size!==1)"
+			"throw new Error('ASSERT FAIL: byte-backed Blob missing in fresh realm');}());",
+			strlen("(function(){var n=['__d','requireLazy','__onBeforeModuleFactory'],i;"
+			"for(i=0;i<n.length;i++){if(typeof globalThis[n[i]]!=='undefined'||"
+			"n[i] in globalThis)throw new Error('ASSERT FAIL: preinstalled '+n[i]);}"
+			"if(typeof Blob!=='function'||new Blob(['x']).size!==1)"
+			"throw new Error('ASSERT FAIL: byte-backed Blob missing in fresh realm');}());"),
+			"driver-t90-clean-realm.js");
+		macsurf_js_notify_content_freed((struct content *)&clean_content);
+		js_destroyheap(clean_heap);
+		dom_node_unref((dom_node *)clean_document);
+		if (!clean_ok) {
+			fprintf(stderr, "FAIL: Test 90 -- production pre-installs a page "
+					"loader global or lacks Blob\n");
+			return 1;
+		}
+	}
+	fprintf(stderr, "=== Test 90 PASS: Facebook's loader names are page-owned "
+			"in a fresh browser realm ===\n");
+#endif /* !MACSURF_JS_FB_LOADER_TRAP */
+
+	/* --- Test 91: retiring an in-flight object repays base.active (#167) -- */
+	fprintf(stderr, "\n=== Test 91: in-flight object retirement balances "
+			"the page load counter (fixes1288) ===\n");
+	{
+		struct content_html_object *retired;
+		struct content_html_object *saved_list = htmlc.object_list;
+		unsigned int saved_n = htmlc.num_objects;
+		unsigned int saved_active = htmlc.base.active;
+
+		retired = calloc(1, sizeof(*retired));
+		if (retired == NULL) {
+			fprintf(stderr, "FAIL: Test 91 calloc\n");
+			return 1;
+		}
+		retired->parent = (struct content *)&htmlc;
+		retired->active_counted = true;
+		htmlc.object_list = retired;
+		htmlc.num_objects = 1;
+		htmlc.base.active = 1;
+
+		(void) html_object_free_objects(&htmlc);
+		if (htmlc.base.active != 0) {
+			fprintf(stderr, "FAIL: Test 91 retired callback-less object left "
+					"active=%u; READY can never become DONE\n",
+					htmlc.base.active);
+			return 1;
+		}
+		if (htmlc.object_list != NULL) {
+			fprintf(stderr, "FAIL: Test 91 object was not retired\n");
+			return 1;
+		}
+
+		htmlc.object_list = saved_list;
+		htmlc.num_objects = saved_n;
+		htmlc.base.active = saved_active;
+	}
+	fprintf(stderr, "=== Test 91 PASS: releasing an in-flight object cannot "
+			"strand the document in READY ===\n");
+
+	/* --- Test 92: structuredClone preserves browser structured data (#167,
+	 * fixes1290) ----------------------------------------------------------
+	 *
+	 * Facebook's ConstUriUtils stores query parameters in a Map, clones it,
+	 * then calls delete()/set() while constructing the logged-in root router.
+	 * The former JSON-based shim returned {}, producing the hardware's exact
+	 * `TypeError: not a function` and aborting before initFizz.  Cover that
+	 * literal contract as well as the graph properties the browser API claims:
+	 * cycles, mutation isolation, Map/Set, shared typed-array backing storage,
+	 * Date/RegExp, transfers, and DataCloneError for an unsupported value. */
+	fprintf(stderr, "\n=== Test 92: structuredClone preserves Maps and object "
+			"graphs (fixes1290) ===\n");
+	{
+		const char *t92 =
+			"(function(){"
+			"function bad(m){throw new Error('ASSERT FAIL: '+m);}"
+			"var key={id:7},value={name:'profile'},"
+				"original=new Map([[key,value],['drop','tracking']]);"
+			"var copied=structuredClone(original),copiedKey=null;"
+			"if(!(copied instanceof Map))bad('Map became '+Object.prototype.toString.call(copied));"
+			"copied.forEach(function(v,k){if(k&&k.id===7)copiedKey=k;});"
+			"if(!copiedKey||copiedKey===key)bad('Map object key was not cloned');"
+			"if(copied.get(copiedKey)===value||copied.get(copiedKey).name!=='profile')"
+				"bad('Map value was not independently cloned');"
+			"copied.delete('drop');copied.set('worker_type','CLASSIC');"
+			"if(!original.has('drop')||original.has('worker_type'))bad('Map mutation leaked to source');"
+			/* This is Facebook ConstUriUtils.removeQueryParams/addQueryParam. */
+			"var query=new Map([['__cft__','x'],['keep','y']]);"
+			"var clean=structuredClone(query);clean.delete('__cft__');clean.set('new','z');"
+			"if(clean.get('keep')!=='y'||clean.get('new')!=='z'||clean.has('__cft__'))"
+				"bad('Facebook query-Map contract');"
+			"var cyclic={label:'root'};cyclic.self=cyclic;cyclic.map=original;"
+			"var cycleCopy=structuredClone(cyclic);"
+			"if(cycleCopy===cyclic||cycleCopy.self!==cycleCopy||!(cycleCopy.map instanceof Map))"
+				"bad('cyclic graph identity');"
+			"var backing=new ArrayBuffer(4),bytes=new Uint8Array(backing);"
+			"bytes[0]=17;bytes[1]=34;"
+			"var views={a:new Uint8Array(backing,0,2),b:new Uint16Array(backing,0,2)};"
+			"var viewCopy=structuredClone(views);"
+			"if(viewCopy.a.buffer===backing||viewCopy.a.buffer!==viewCopy.b.buffer||"
+				"viewCopy.a[0]!==17||viewCopy.a[1]!==34)bad('typed-array backing graph');"
+			"var extras=structuredClone({d:new Date(123),r:/ab/gi,s:new Set([1,2])});"
+			"if(!(extras.d instanceof Date)||extras.d.getTime()!==123||"
+				"!(extras.r instanceof RegExp)||extras.r.source!=='ab'||"
+				"!(extras.s instanceof Set)||!extras.s.has(2))bad('structured built-ins');"
+			"var transfer=new Uint8Array([4,5]).buffer;"
+			"var moved=structuredClone({buffer:transfer},{transfer:[transfer]});"
+			"if(transfer.byteLength!==0||new Uint8Array(moved.buffer)[1]!==5)"
+				"bad('ArrayBuffer transfer');"
+			"var threw=false;try{structuredClone(function(){});}catch(e){"
+				"threw=e&&e.name==='DataCloneError';}"
+			"if(!threw)bad('unsupported value did not throw DataCloneError');"
+			"})();";
+		unsigned char ok = js_exec(thread, (const unsigned char *)t92,
+				strlen(t92), "driver-t92-structured-clone.js");
+		if (!ok) {
+			fprintf(stderr, "FAIL: Test 92 -- structuredClone lost a browser "
+					"data contract\n");
+			return 1;
+		}
+	}
+	fprintf(stderr, "=== Test 92 PASS: Facebook query Maps and general "
+			"structured data clone independently ===\n");
+
+	/* --- Test 93 (#167, fixes1292): JS_DiscardPendingJobsForContext -- exact
+	 * job-queue API contract, independent of MacSurf's navigation glue.
+	 *
+	 * QuickJS's rt->job_list is per-RUNTIME, not per-context: JS_EnqueueJob
+	 * stores a raw JSContext* per queued job, and only JS_FreeRuntime ever
+	 * drains it -- JS_FreeContext does not touch it at all (verified
+	 * directly in both quickjs-macos9/quickjs.c and browser/libquickjs/
+	 * quickjs.c, identical). A same-runtime navigation that frees the old
+	 * JSContext while jobs queued against it are still pending leaves those
+	 * jobs holding a dangling ctx; JS_ExecutePendingJob later calls
+	 * job_func(dangling_ctx, ...) -- a genuine use-after-free, the suspected
+	 * cause of Facebook's repeat-navigation regression. This test exercises
+	 * the raw primitive directly (not through js_newthread) so its contract
+	 * is proven in isolation first: discard ONLY the named context's jobs,
+	 * return the EXACT count discarded, and leave a surviving context's own
+	 * job -- queued both before and after the discarded context's jobs --
+	 * untouched. An off-by-one, or an implementation that just clears the
+	 * whole queue, would both pass a looser test than this one. */
+	fprintf(stderr, "\n=== Test 93: JS_DiscardPendingJobsForContext exact "
+			"count + ordering contract (#167, fixes1292) ===\n");
+	{
+		JSRuntime *rt93 = JS_NewRuntime();
+		JSContext *ctxA = NULL, *ctxB = NULL;
+		int n;
+
+		if (rt93 == NULL) {
+			fprintf(stderr, "FAIL: JS_NewRuntime\n"); return 1;
+		}
+		ctxA = JS_NewContext(rt93);
+		ctxB = JS_NewContext(rt93);
+		if (ctxA == NULL || ctxB == NULL) {
+			fprintf(stderr, "FAIL: JS_NewContext\n"); return 1;
+		}
+		t93_a_fired = 0;
+		t93_b_fired = 0;
+
+		/* Enqueue A, B, A -- the exact interleaving a real same-heap
+		 * navigation with pending work can produce (page 1's jobs both
+		 * before and after whatever page 2 has already queued by the
+		 * time a discard would run). */
+		JS_EnqueueJob(ctxA, t93_job_mark_a, 0, NULL);
+		JS_EnqueueJob(ctxB, t93_job_mark_b, 0, NULL);
+		JS_EnqueueJob(ctxA, t93_job_mark_a, 0, NULL);
+
+		/* THE DISCARD. Must report exactly 2 -- both of A's jobs, no
+		 * more, no less. */
+		n = JS_DiscardPendingJobsForContext(rt93, ctxA);
+		if (n != 2) {
+			fprintf(stderr, "FAIL: Test 93 -- discarded %d jobs for A, "
+					"expected exactly 2\n", n);
+			return 1;
+		}
+		fprintf(stderr, "JS_DiscardPendingJobsForContext(A) returned "
+				"exactly 2, as expected\n");
+
+		/* A is now safe to free -- no job_list entry still points at it. */
+		JS_FreeContext(ctxA);
+
+		/* Drain what's left. Only B's single job may fire; if any of A's
+		 * survived the discard, JS_ExecutePendingJob calls job_func
+		 * against the just-freed ctxA above -- a real use-after-free
+		 * ASan traps on directly. */
+		{
+			JSContext *jctx = NULL;
+			int pumped = 0;
+			while (JS_IsJobPending(rt93) && pumped < 8) {
+				int r = JS_ExecutePendingJob(rt93, &jctx);
+				if (r < 0) {
+					fprintf(stderr,
+							"FAIL: Test 93 -- pending job threw\n");
+					return 1;
+				}
+				pumped++;
+			}
+		}
+
+		if (t93_a_fired != 0) {
+			fprintf(stderr, "FAIL: Test 93 -- a discarded A job fired "
+					"anyway (fired=%d)\n", t93_a_fired);
+			return 1;
+		}
+		if (t93_b_fired != 1) {
+			fprintf(stderr, "FAIL: Test 93 -- surviving B job did not "
+					"fire exactly once (fired=%d)\n", t93_b_fired);
+			return 1;
+		}
+
+		JS_FreeContext(ctxB);
+		JS_FreeRuntime(rt93);
+	}
+	fprintf(stderr, "=== Test 93 PASS: exact discard count, surviving "
+			"context's job still fires, no UAF ===\n");
+
+	/* --- Test 94 (#167, fixes1292): the SAME bug, proven through the real
+	 * MacSurf navigation code path (js_newthread), not just the raw
+	 * primitive. Test 93 proves JS_DiscardPendingJobsForContext's own
+	 * contract; this proves js_newthread actually calls it at the right
+	 * point in the right order relative to JS_FreeContext, using the real
+	 * compiled macsurf_qjs.c -- the same "run it through the real engine,
+	 * not a reimplementation" discipline as Test 25's realm-reset repro.
+	 * Arms 24 unpumped Promise reactions (shape diversity, same idea as
+	 * Test 25's timers, so a UAF on a queued job's argv is something ASan
+	 * can actually catch), navigates the SAME heap while they're still
+	 * pending, then pumps -- pre-fix this traps as heap-use-after-free
+	 * inside JS_ExecutePendingJob; post-fix it must run clean AND the
+	 * surviving (new) realm's own Promise job must still fire. */
+	fprintf(stderr, "\n=== Test 94: same-heap navigation discards stale "
+			"Promise jobs, no UAF (#167, fixes1292) ===\n");
+	{
+		extern void macsurf_qjs_pump_all(void);
+		extern int macsurf_qjs_test_last_jobdrop(void);
+		struct jsheap *h94 = NULL;
+		struct jsthread *t94_1 = NULL, *t94_2 = NULL;
+		int dropped;
+		const char *arm =
+			"for(var i=0;i<24;i++){(function(n){"
+				"var o={a:n,b:'x'+n,c:[n,n+1],d:{deep:{deeper:n}}};"
+				"Promise.resolve(o).then(function(v){return v.d.deep.deeper+n;});"
+			"})(i);}";
+		const char *survive_arm =
+			"window.__t94_ran=false;"
+			"Promise.resolve(1).then(function(){window.__t94_ran=true;});";
+		const char *survive_check =
+			"(function(){if(window.__t94_ran!==true)"
+			"throw new Error('ASSERT FAIL: realm 2 promise job did not run');"
+			"})();";
+		unsigned char ok;
+		int pump;
+
+		if (js_newheap(20000, &h94) != NSERROR_OK) {
+			fprintf(stderr, "FAIL: js_newheap\n"); return 1;
+		}
+		if (js_newthread(h94, NULL, (void *)&htmlc, &t94_1) != NSERROR_OK) {
+			fprintf(stderr, "FAIL: js_newthread(1)\n"); return 1;
+		}
+		ok = js_exec(t94_1, (const unsigned char *)arm, strlen(arm),
+				"driver-t94-arm.js");
+		if (!ok) {
+			fprintf(stderr, "FAIL: Test 94 -- arm script threw\n");
+			return 1;
+		}
+		fprintf(stderr, "armed 24 unpumped Promise reactions on realm 1\n");
+
+		/* THE NAVIGATION: same heap, second js_newthread -- frees realm
+		 * 1's JSContext while its 24 jobs are still in rt->job_list. */
+		if (js_newthread(h94, NULL, (void *)&htmlc, &t94_2) != NSERROR_OK) {
+			fprintf(stderr, "FAIL: navigation js_newthread(2)\n");
+			return 1;
+		}
+		fprintf(stderr, "navigated (realm reset) with jobs pending\n");
+
+		/* THE DETERMINISTIC CHECK: js_newthread must have discarded at
+		 * least the 24 jobs `arm` queued at the point it froze heap->ctx
+		 * to the fresh context -- not "some crash didn't happen," a real,
+		 * testable count from the real glue. (>=, not ==: realm 1's own
+		 * setup/init path may legitimately queue a small amount of its
+		 * own incidental work before `arm` runs; this test's job is to
+		 * prove OUR 24 got caught, not to pin an unrelated baseline.) */
+		dropped = macsurf_qjs_test_last_jobdrop();
+		if (dropped < 24) {
+			fprintf(stderr, "FAIL: Test 94 -- js_newthread discarded only "
+					"%d stale jobs, expected at least 24\n", dropped);
+			return 1;
+		}
+		fprintf(stderr, "js_newthread discarded %d stale jobs (>= the 24 "
+				"this test armed), as expected\n", dropped);
+
+		/* Queue a job on the SURVIVING (new) context too, so pumping
+		 * proves more than "didn't crash": realm 2's own work must still
+		 * run correctly after realm 1's is discarded. */
+		ok = js_exec(t94_2, (const unsigned char *)survive_arm,
+				strlen(survive_arm), "driver-t94-survive-arm.js");
+		if (!ok) {
+			fprintf(stderr, "FAIL: Test 94 -- survive-arm script threw\n");
+			return 1;
+		}
+
+		/* THE PUMP. Pre-fix, this is where JS_ExecutePendingJob dequeues
+		 * one of realm 1's 24 jobs and calls job_func against the freed
+		 * ctx -- ASan traps here as heap-use-after-free if the bug is
+		 * present. */
+		for (pump = 0; pump < 8; pump++) macsurf_qjs_pump_all();
+
+		ok = js_exec(t94_2, (const unsigned char *)survive_check,
+				strlen(survive_check), "driver-t94-survive-check.js");
+		if (!ok) {
+			fprintf(stderr, "FAIL: Test 94 -- realm 2's own Promise job "
+					"did not run after realm 1's were discarded\n");
+			return 1;
+		}
+
+		js_destroythread(t94_1);
+		js_destroythread(t94_2);
+		js_destroyheap(h94);
+	}
+	fprintf(stderr, "=== Test 94 PASS: stale-realm Promise jobs discarded "
+			"on navigation, surviving realm's own jobs still run, no UAF "
+			"===\n");
+
+	/* ---------------------------------------------------------------
+	 * fixes1299 (#167) - a LOSING calc() declaration for min-height must
+	 * not clobber the WINNING declaration's macsurf_calc_expr slot.
+	 *
+	 * Root-caused against real Facebook CSS this session: the atomic
+	 * class .xpvvgw5{min-height:calc(100vh - var(--header-height))}
+	 * rendered a ~22700px box against a ~657px real viewport. Traced to
+	 * select/properties/helpers.c's five shared calc-capable cascade
+	 * helpers (css__cascade_border_width/length_auto/length_normal/
+	 * length_none/length): each wrote
+	 * state->computed->macsurf_calc_expr[slot] UNCONDITIONALLY, before
+	 * css__outranks_existing() decided whether the declaration actually
+	 * wins. The scalar min-height value (length/unit passed to fun())
+	 * was correctly gated on the outranks check -- only the SIDE-TABLE
+	 * write was not.
+	 *
+	 * This reproduces the exact real-world mechanism, not just the
+	 * unit-level bug: a deferred var()-containing declaration is always
+	 * resolved in a FINAL pass strictly after every non-deferred
+	 * declaration has already cascaded (css_select__resolve_pending_vars
+	 * in css_select.c), regardless of the deferred declaration's own
+	 * specificity relative to those already-cascaded ones.
+	 *
+	 *   #hi  { min-height: calc(900px + 1px) }          -- ID, no var(),
+	 *                                                       cascades INLINE
+	 *   .lo  { min-height: calc(50px + var(--z)) }       -- class, HAS
+	 *                                                       var(), DEFERRED
+	 *
+	 * #hi (higher specificity) cascades first in real time (processed
+	 * later in the ascending-specificity walk than .lo, but with no
+	 * competing entry yet since .lo's declaration was only QUEUED) and
+	 * correctly wins. .lo's deferred declaration is resolved in the
+	 * final pass, restores ITS OWN lower specificity, and correctly
+	 * loses css__outranks_existing() -- fun() is correctly never called
+	 * for it. Pre-fix, its unconditional write still clobbers #hi's
+	 * already-finalized slot with "calc(50px + 1px)" (post-substitution
+	 * text) on its way to correctly losing. Post-fix, the slot keeps
+	 * #hi's "calc(900px + 1px)".
+	 *
+	 * The assertion is the winning declaration's EXACT TEXT surviving in
+	 * the slot, not just "min-height ends up SET" -- a boolean "is it
+	 * calc-valued" can't see this bug at all, since the scalar length/
+	 * unit were never wrong; only the slot's owner was. */
+	fprintf(stderr, "\n=== Test 95: losing calc() declaration cannot "
+			"clobber the winning one's slot (fixes1299) ===\n");
+	{
+		const char *t95_html =
+			"<html><body><div id=\"hi\" class=\"lo\">X</div></body></html>";
+		const char *t95_css =
+			":root { --z: 1px }"
+			"#hi { min-height: calc(900px + 1px) }"
+			".lo { min-height: calc(50px + var(--z)) }";
+		struct html_content t95c;
+		dom_hubbub_parser *t95p = NULL;
+		dom_document *t95doc = NULL;
+		dom_node *t95root = NULL;
+		css_select_ctx *t95ctx = NULL;
+		css_stylesheet *t95ua = NULL;
+		css_stylesheet *t95auth = NULL;
+		dom_hubbub_parser_params t95params;
+		css_stylesheet_params t95sp;
+		void *t95_box_ctx = NULL;
+		nserror t95err;
+		dom_exception t95derr;
+		bool t95_found;
+
+		memset(&t95params, 0, sizeof(t95params));
+		t95params.fix_enc = true;
+		t95derr = dom_hubbub_parser_create(&t95params, &t95p, &t95doc);
+		if (t95derr != DOM_HUBBUB_OK || t95p == NULL) {
+			fprintf(stderr, "FAIL: Test 95 parser create %d\n",
+					(int)t95derr);
+			return 1;
+		}
+		if (dom_hubbub_parser_parse_chunk(t95p,
+				(const uint8_t *)t95_html,
+				strlen(t95_html)) != DOM_HUBBUB_OK ||
+				dom_hubbub_parser_completed(t95p) !=
+					DOM_HUBBUB_OK) {
+			fprintf(stderr, "FAIL: Test 95 parse\n");
+			return 1;
+		}
+		dom_hubbub_parser_destroy(t95p);
+
+		memset(&t95c, 0, sizeof(t95c));
+		t95c.base_url = g_base_url;
+		t95c.document = t95doc;
+		t95c.quirks = DOM_DOCUMENT_QUIRKS_MODE_NONE;
+		t95c.enable_scripting = false;
+		if (css_select_ctx_create(&t95ctx) != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 95 select_ctx\n");
+			return 1;
+		}
+		t95c.select_ctx = t95ctx;
+
+		memset(&t95sp, 0, sizeof(t95sp));
+		t95sp.params_version = CSS_STYLESHEET_PARAMS_VERSION_1;
+		t95sp.level = CSS_LEVEL_3;
+		t95sp.charset = "UTF-8";
+		t95sp.url = "resource:default.css";
+		t95sp.title = "default";
+		t95sp.resolve = harness_css_resolve_url;
+		if (css_stylesheet_create(&t95sp, &t95ua) != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 95 UA sheet\n");
+			return 1;
+		}
+		{
+			const char *ua = "html,body,div{display:block}";
+			(void)css_stylesheet_append_data(t95ua,
+					(const uint8_t *)ua, strlen(ua));
+			(void)css_stylesheet_data_done(t95ua);
+		}
+		if (css_select_ctx_append_sheet(t95ctx, t95ua,
+				CSS_ORIGIN_UA, "screen") != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 95 UA append\n");
+			return 1;
+		}
+
+		memset(&t95sp, 0, sizeof(t95sp));
+		t95sp.params_version = CSS_STYLESHEET_PARAMS_VERSION_1;
+		t95sp.level = CSS_LEVEL_3;
+		t95sp.charset = "UTF-8";
+		t95sp.url = "http://local/t95.css";
+		t95sp.title = "author";
+		t95sp.resolve = harness_css_resolve_url;
+		if (css_stylesheet_create(&t95sp, &t95auth) != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 95 author sheet\n");
+			return 1;
+		}
+		{
+			css_error ae = css_stylesheet_append_data(t95auth,
+					(const uint8_t *)t95_css,
+					strlen(t95_css));
+			if (ae != CSS_OK && ae != CSS_NEEDDATA) {
+				fprintf(stderr, "FAIL: Test 95 author append=%d\n",
+						(int)ae);
+				return 1;
+			}
+			(void)css_stylesheet_data_done(t95auth);
+		}
+		if (css_select_ctx_append_sheet(t95ctx, t95auth,
+				CSS_ORIGIN_AUTHOR, "screen") != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 95 author append sheet\n");
+			return 1;
+		}
+
+		t95c.media.type = CSS_MEDIA_SCREEN;
+		t95c.media.width = INTTOFIX(800);
+		t95c.media.height = INTTOFIX(600);
+		t95c.media.orientation = CSS_MEDIA_ORIENTATION_LANDSCAPE;
+		t95c.unit_len_ctx.viewport_width = INTTOFIX(800);
+		t95c.unit_len_ctx.viewport_height = INTTOFIX(600);
+		t95c.unit_len_ctx.device_dpi = INTTOFIX(90);
+		t95c.unit_len_ctx.font_size_default = INTTOFIX(16);
+		t95c.unit_len_ctx.font_size_minimum = INTTOFIX(8);
+		if (lwc_intern_string("*", 1, &t95c.universal) !=
+				lwc_error_ok) {
+			fprintf(stderr, "FAIL: Test 95 universal\n");
+			return 1;
+		}
+		t95c.base.status = CONTENT_STATUS_LOADING;
+		t95c.base.active = 0;
+		t95c.base.handler = &g_dummy_handler;
+
+		if (dom_document_get_document_element(t95doc,
+				(void *)&t95root) != DOM_NO_ERR ||
+				t95root == NULL) {
+			fprintf(stderr, "FAIL: Test 95 doc element\n");
+			return 1;
+		}
+		g_initial_build_done = 0;
+		g_initial_build_ok = false;
+		t95err = dom_to_box(t95root, &t95c, initial_build_cb,
+				&t95_box_ctx);
+		dom_node_unref(t95root);
+		if (t95err != NSERROR_OK) {
+			fprintf(stderr, "FAIL: Test 95 dom_to_box=%d\n",
+					(int)t95err);
+			return 1;
+		}
+		harness_pump_all(100000);
+		if (!g_initial_build_done || !g_initial_build_ok) {
+			fprintf(stderr, "FAIL: Test 95 build done=%d ok=%d\n",
+					g_initial_build_done,
+					(int)g_initial_build_ok);
+			return 1;
+		}
+
+		{
+			uint8_t t95_slot = 0;
+			uint32_t t95_writes;
+			uint32_t t95_last_spec;
+			/* #hi has one ID selector: libcss packs specificity as
+			 * (a<<16)|(b<<8)|c|d with a=ID count, so a lone ID is
+			 * 0x010000 = 65536 -- directly confirmed against this
+			 * exact fixture while building this test (a raw dump of
+			 * state->current_specificity at the winning write). */
+			const uint32_t t95_expect_spec = 65536;
+
+			t95_found = t95_calc_of(t95c.layout, "lo", &t95_slot);
+			fprintf(stderr, "  min-height calc slot for #hi.lo = %s%d\n",
+					t95_found ? "" : "(not calc-valued) ",
+					t95_found ? (int)t95_slot : -1);
+
+			if (!t95_found) {
+				fprintf(stderr, "FAIL: Test 95 -- min-height was "
+						"not calc-valued at all; something "
+						"upstream of this bug broke (test "
+						"setup issue, not the bug under "
+						"test)\n");
+				return 1;
+			}
+
+			t95_writes = cssprobe_calc_slot_write_count(t95_slot);
+			t95_last_spec =
+				cssprobe_calc_slot_write_last_spec(t95_slot);
+			fprintf(stderr, "  slot=%d writes=%lu last_spec=%lu "
+					"(want writes=1 spec=%lu)\n",
+					(int)t95_slot, (unsigned long)t95_writes,
+					(unsigned long)t95_last_spec,
+					(unsigned long)t95_expect_spec);
+
+			/* THE ASSERTION: exactly ONE write to this slot, at
+			 * #hi's specificity. Pre-fix, this element's min-height
+			 * calc slot sees TWO writes -- #hi's winning inline
+			 * cascade, THEN .lo's losing deferred var()-resolution
+			 * pass unconditionally overwriting it before its own
+			 * (correctly failing) outranks check, leaving writes=2
+			 * and last_spec=.lo's lower class specificity, not
+			 * #hi's. A write COUNT, not a boolean "is it calc-
+			 * valued", is what actually distinguishes fixed from
+			 * broken here -- both states report min-height as SET/
+			 * CALC either way. */
+			if (t95_writes != 1) {
+				fprintf(stderr, "FAIL: Test 95 -- slot %d was "
+						"written %lu times, expected "
+						"exactly 1. >1 means the losing "
+						"deferred .lo declaration reached "
+						"the unconditional write this fix "
+						"removed -- the exact split-brain: "
+						"min-height correctly computes as "
+						"SET/CALC either way (the scalar "
+						"outranks check works), but the "
+						"side-table gets clobbered by "
+						"whichever declaration cascades "
+						"LAST, not whichever one WINS.\n",
+						(int)t95_slot,
+						(unsigned long)t95_writes);
+				return 1;
+			}
+			if (t95_last_spec != t95_expect_spec) {
+				fprintf(stderr, "FAIL: Test 95 -- slot %d's one "
+						"write carried specificity %lu, "
+						"expected #hi's %lu -- the wrong "
+						"declaration won\n", (int)t95_slot,
+						(unsigned long)t95_last_spec,
+						(unsigned long)t95_expect_spec);
+				return 1;
+			}
+		}
+	}
+	fprintf(stderr, "=== Test 95 PASS: losing deferred calc() declaration "
+			"did not clobber the winning declaration's calc_expr slot "
+			"===\n");
+
+	/* ---------------------------------------------------------------
+	 * fixes1300 (#167) - what does MacSurf's own consumer code actually
+	 * resolve .xpvvgw5's real min-height calc() to, under the real
+	 * hardware viewport (993x609, from the fixes1299 hardware log's
+	 * "LIFE VPORT finish ... unit_ctx vw=993 vh=609")?
+	 *
+	 * fixes1299 fixed WHICH declaration's calc_expr survives a cascade
+	 * conflict; it says nothing about whether that surviving expression
+	 * then EVALUATES correctly. The hardware log pulled after fixes1299
+	 * shipped still shows .xpvvgw5 at h=22723/23136, unchanged -- so this
+	 * test exercises the evaluation path directly: real rule text
+	 * (verbatim from harness/fbcdn.net-css-v5.css), real selector-scoped
+	 * custom property, real viewport, real consumer call
+	 * (ns_computed_min_height + css_unit_len2device_px, the exact two
+	 * calls layout_internal.h:855/862 makes), no synthetic shortcuts.
+	 *
+	 * --header-height is defined in the real bundle only inside
+	 *   .x1s26u81.x1s26u81,.x1s26u81.x1s26u81:root{...--header-height:0px...}
+	 * -- StyleX's doubled-class specificity-boost idiom, gating the
+	 * whole design-token block behind :root ALSO carrying class
+	 * x1s26u81. This fixture gives that its best chance: <html
+	 * class="x1s26u81">. If --header-height resolves (0px) and 100vh
+	 * evaluates against the real 609px viewport, calc(100vh -
+	 * var(--header-height)) should land near 600px, not 22723px. */
+	fprintf(stderr, "\n=== Test 96: real .xpvvgw5 min-height calc() "
+			"resolves to a real viewport-scale pixel value ===\n");
+	{
+		const char *t96_html =
+			"<html class=\"x1s26u81\"><body>"
+			"<div class=\"xpvvgw5\">X</div>"
+			"</body></html>";
+		/* Verbatim from harness/fbcdn.net-css-v5.css: the selector and
+		 * the two min-height declarations on .xpvvgw5 are copied
+		 * character-for-character; the custom-property block is
+		 * trimmed to just --header-height (the real block carries ~200
+		 * unrelated design tokens on the same selector). */
+		const char *t96_css =
+			".x1s26u81.x1s26u81,.x1s26u81.x1s26u81:root"
+			"{--header-height:0px}"
+			".xpvvgw5{min-height:calc(100vh - var(--header-height));"
+			"min-height:calc(100dvh - var(--header-height))}";
+		struct html_content t96c;
+		dom_hubbub_parser *t96p = NULL;
+		dom_document *t96doc = NULL;
+		dom_node *t96root = NULL;
+		css_select_ctx *t96ctx = NULL;
+		css_stylesheet *t96ua = NULL;
+		css_stylesheet *t96auth = NULL;
+		dom_hubbub_parser_params t96params;
+		css_stylesheet_params t96sp;
+		void *t96_box_ctx = NULL;
+		nserror t96err;
+		dom_exception t96derr;
+		struct box *t96box;
+
+		memset(&t96params, 0, sizeof(t96params));
+		t96params.fix_enc = true;
+		t96derr = dom_hubbub_parser_create(&t96params, &t96p, &t96doc);
+		if (t96derr != DOM_HUBBUB_OK || t96p == NULL) {
+			fprintf(stderr, "FAIL: Test 96 parser create %d\n",
+					(int)t96derr);
+			return 1;
+		}
+		if (dom_hubbub_parser_parse_chunk(t96p,
+				(const uint8_t *)t96_html,
+				strlen(t96_html)) != DOM_HUBBUB_OK ||
+				dom_hubbub_parser_completed(t96p) !=
+					DOM_HUBBUB_OK) {
+			fprintf(stderr, "FAIL: Test 96 parse\n");
+			return 1;
+		}
+		dom_hubbub_parser_destroy(t96p);
+
+		memset(&t96c, 0, sizeof(t96c));
+		t96c.base_url = g_base_url;
+		t96c.document = t96doc;
+		t96c.quirks = DOM_DOCUMENT_QUIRKS_MODE_NONE;
+		t96c.enable_scripting = false;
+		if (css_select_ctx_create(&t96ctx) != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 96 select_ctx\n");
+			return 1;
+		}
+		t96c.select_ctx = t96ctx;
+
+		memset(&t96sp, 0, sizeof(t96sp));
+		t96sp.params_version = CSS_STYLESHEET_PARAMS_VERSION_1;
+		t96sp.level = CSS_LEVEL_3;
+		t96sp.charset = "UTF-8";
+		t96sp.url = "resource:default.css";
+		t96sp.title = "default";
+		t96sp.resolve = harness_css_resolve_url;
+		if (css_stylesheet_create(&t96sp, &t96ua) != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 96 UA sheet\n");
+			return 1;
+		}
+		{
+			const char *ua = "html,body,div{display:block}";
+			(void)css_stylesheet_append_data(t96ua,
+					(const uint8_t *)ua, strlen(ua));
+			(void)css_stylesheet_data_done(t96ua);
+		}
+		if (css_select_ctx_append_sheet(t96ctx, t96ua,
+				CSS_ORIGIN_UA, "screen") != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 96 UA append\n");
+			return 1;
+		}
+
+		memset(&t96sp, 0, sizeof(t96sp));
+		t96sp.params_version = CSS_STYLESHEET_PARAMS_VERSION_1;
+		t96sp.level = CSS_LEVEL_3;
+		t96sp.charset = "UTF-8";
+		t96sp.url = "http://local/t96.css";
+		t96sp.title = "author";
+		t96sp.resolve = harness_css_resolve_url;
+		if (css_stylesheet_create(&t96sp, &t96auth) != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 96 author sheet\n");
+			return 1;
+		}
+		{
+			css_error ae = css_stylesheet_append_data(t96auth,
+					(const uint8_t *)t96_css,
+					strlen(t96_css));
+			if (ae != CSS_OK && ae != CSS_NEEDDATA) {
+				fprintf(stderr, "FAIL: Test 96 author append=%d\n",
+						(int)ae);
+				return 1;
+			}
+			(void)css_stylesheet_data_done(t96auth);
+		}
+		if (css_select_ctx_append_sheet(t96ctx, t96auth,
+				CSS_ORIGIN_AUTHOR, "screen") != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 96 author append sheet\n");
+			return 1;
+		}
+
+		/* Real hardware viewport from the fixes1299 log's
+		 * "LIFE VPORT finish" line, not the 800x600 harness default. */
+		t96c.media.type = CSS_MEDIA_SCREEN;
+		t96c.media.width = INTTOFIX(993);
+		t96c.media.height = INTTOFIX(609);
+		t96c.media.orientation = CSS_MEDIA_ORIENTATION_LANDSCAPE;
+		t96c.unit_len_ctx.viewport_width = INTTOFIX(993);
+		t96c.unit_len_ctx.viewport_height = INTTOFIX(609);
+		t96c.unit_len_ctx.device_dpi = INTTOFIX(96);
+		t96c.unit_len_ctx.font_size_default = INTTOFIX(16);
+		t96c.unit_len_ctx.font_size_minimum = INTTOFIX(8);
+		if (lwc_intern_string("*", 1, &t96c.universal) !=
+				lwc_error_ok) {
+			fprintf(stderr, "FAIL: Test 96 universal\n");
+			return 1;
+		}
+		t96c.base.status = CONTENT_STATUS_LOADING;
+		t96c.base.active = 0;
+		t96c.base.handler = &g_dummy_handler;
+
+		if (dom_document_get_document_element(t96doc,
+				(void *)&t96root) != DOM_NO_ERR ||
+				t96root == NULL) {
+			fprintf(stderr, "FAIL: Test 96 doc element\n");
+			return 1;
+		}
+		g_initial_build_done = 0;
+		g_initial_build_ok = false;
+		t96err = dom_to_box(t96root, &t96c, initial_build_cb,
+				&t96_box_ctx);
+		dom_node_unref(t96root);
+		if (t96err != NSERROR_OK) {
+			fprintf(stderr, "FAIL: Test 96 dom_to_box=%d\n",
+					(int)t96err);
+			return 1;
+		}
+		harness_pump_all(100000);
+		if (!g_initial_build_done || !g_initial_build_ok) {
+			fprintf(stderr, "FAIL: Test 96 build done=%d ok=%d\n",
+					g_initial_build_done,
+					(int)g_initial_build_ok);
+			return 1;
+		}
+
+		t96box = t96_box_of_class(t96c.layout, "xpvvgw5");
+		if (t96box == NULL || t96box->style == NULL) {
+			fprintf(stderr, "FAIL: Test 96 -- .xpvvgw5 box not "
+					"found\n");
+			return 1;
+		}
+
+		{
+			enum css_min_height_e t96type;
+			css_fixed t96value = 0;
+			css_unit t96unit = CSS_UNIT_PX;
+			int t96px;
+
+			t96type = ns_computed_min_height(t96box->style,
+					&t96value, &t96unit);
+			if (t96type != CSS_MIN_HEIGHT_SET) {
+				fprintf(stderr, "FAIL: Test 96 -- min-height did "
+						"not compute as SET at all "
+						"(type=%d) -- the calc() "
+						"declaration was lost before "
+						"reaching the box, not "
+						"mis-evaluated\n", (int)t96type);
+				return 1;
+			}
+			if (t96unit != CSS_UNIT_CALC) {
+				fprintf(stderr, "FAIL: Test 96 -- min-height "
+						"unit=%d, expected CSS_UNIT_CALC "
+						"(%d) -- not exercising the calc "
+						"path this test targets\n",
+						(int)t96unit,
+						(int)CSS_UNIT_CALC);
+				return 1;
+			}
+
+			/* The exact call layout_internal.h:862 makes. */
+			t96px = (int)FIXTOINT(css_unit_len2device_px(
+					t96box->style, &t96c.unit_len_ctx,
+					t96value, t96unit));
+			fprintf(stderr, "  .xpvvgw5 min-height calc() resolves "
+					"to %dpx (real viewport 993x609, real "
+					"--header-height:0px)\n", t96px);
+
+			/* Real symptom was h=22723-23136 against a 609px real
+			 * viewport -- roughly 37-38x too tall. A correct
+			 * evaluation of calc(100vh - 0px) against a 609px
+			 * viewport must land at or under the viewport height
+			 * itself; give generous headroom (2x) over 609 so this
+			 * isn't a hair-trigger pixel-rounding assertion, while
+			 * still being nowhere near 22723. */
+			if (t96px < 0 || t96px > 1218) {
+				fprintf(stderr, "FAIL: Test 96 -- resolved %dpx, "
+						"expected roughly 600px "
+						"(100vh - 0px against a 609px "
+						"viewport). %s\n", t96px,
+						t96px > 10000 ?
+						"This reproduces the real "
+						"22723px symptom in isolation "
+						"-- the bug is in the "
+						"evaluation path itself, not "
+						"page-specific DOM/class "
+						"structure." :
+						"Unexpected direction of "
+						"failure -- inspect manually.");
+				return 1;
+			}
+		}
+	}
+	fprintf(stderr, "=== Test 96 PASS: .xpvvgw5's real min-height calc() "
+			"resolves to a real, viewport-scale pixel value ===\n");
+
+	/* ---------------------------------------------------------------
+	 * fixes1307 (#167, C0) - does `min-height: inherit` on a CHILD of a
+	 * calc()-valued min-height parent correctly inherit the parent's
+	 * calc EXPRESSION (via macsurf_calc_expr[slot]), or does it inherit
+	 * the raw computed unit/length pair (unit=CALC, length=slot index)
+	 * without the side-table content that slot index actually points
+	 * at meaning anything on the CHILD's own style?
+	 *
+	 * Root-caused directly from the fixes1306 hardware trace: xpvvgw5's
+	 * real child (atomic class x1t2pt76, verbatim CSS in the real
+	 * bundle: `.x1t2pt76{min-height:inherit}`) shows
+	 * item->base_size=22434 (matching the OUTER container's own final
+	 * height almost exactly) while every layout_flex_item call traced
+	 * for that exact box produced 589. base_size never came from that
+	 * box's own real height at all -- min_main (this item's OWN CSS
+	 * min-height, resolved via layout_find_dimensions inside
+	 * layout_flex_ctx__populate_item_data, clamping item->main_size
+	 * upward at layout_flex.c:606-613) is the one per-item field that
+	 * bypasses layout_flex_item entirely and reads straight off
+	 * ns_computed_min_height/css_unit_len2device_px for the CHILD's
+	 * OWN style -- exactly the `inherit` mechanism this test isolates. */
+	fprintf(stderr, "\n=== Test 98: `min-height:inherit` on a calc()-"
+			"valued parent produces a real, correct pixel value "
+			"on the child ===\n");
+	{
+		const char *t98_html =
+			"<html class=\"x1s26u81\"><body>"
+			"<div class=\"xpvvgw5\"><div class=\"x1t2pt76\">X</div>"
+			"</div></body></html>";
+		/* Verbatim from harness/fbcdn.net-css-v5.css: the
+		 * --header-height scoping rule (trimmed to the one relevant
+		 * declaration, see Test 96), the real .xpvvgw5 rule, and the
+		 * real .x1t2pt76 rule -- `min-height:inherit`, byte for byte
+		 * what ships. */
+		const char *t98_css =
+			".x1s26u81.x1s26u81,.x1s26u81.x1s26u81:root"
+			"{--header-height:0px}"
+			".xpvvgw5{min-height:calc(100vh - var(--header-height))}"
+			".x1t2pt76{min-height:inherit}";
+		struct html_content t98c;
+		dom_hubbub_parser *t98p = NULL;
+		dom_document *t98doc = NULL;
+		dom_node *t98root = NULL;
+		css_select_ctx *t98ctx = NULL;
+		css_stylesheet *t98ua = NULL;
+		css_stylesheet *t98auth = NULL;
+		dom_hubbub_parser_params t98params;
+		css_stylesheet_params t98sp;
+		void *t98_box_ctx = NULL;
+		nserror t98err;
+		dom_exception t98derr;
+		struct box *t98child;
+
+		memset(&t98params, 0, sizeof(t98params));
+		t98params.fix_enc = true;
+		t98derr = dom_hubbub_parser_create(&t98params, &t98p, &t98doc);
+		if (t98derr != DOM_HUBBUB_OK || t98p == NULL) {
+			fprintf(stderr, "FAIL: Test 98 parser create %d\n",
+					(int)t98derr);
+			return 1;
+		}
+		if (dom_hubbub_parser_parse_chunk(t98p,
+				(const uint8_t *)t98_html,
+				strlen(t98_html)) != DOM_HUBBUB_OK ||
+				dom_hubbub_parser_completed(t98p) !=
+					DOM_HUBBUB_OK) {
+			fprintf(stderr, "FAIL: Test 98 parse\n");
+			return 1;
+		}
+		dom_hubbub_parser_destroy(t98p);
+
+		memset(&t98c, 0, sizeof(t98c));
+		t98c.base_url = g_base_url;
+		t98c.document = t98doc;
+		t98c.quirks = DOM_DOCUMENT_QUIRKS_MODE_NONE;
+		t98c.enable_scripting = false;
+		if (css_select_ctx_create(&t98ctx) != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 98 select_ctx\n");
+			return 1;
+		}
+		t98c.select_ctx = t98ctx;
+
+		memset(&t98sp, 0, sizeof(t98sp));
+		t98sp.params_version = CSS_STYLESHEET_PARAMS_VERSION_1;
+		t98sp.level = CSS_LEVEL_3;
+		t98sp.charset = "UTF-8";
+		t98sp.url = "resource:default.css";
+		t98sp.title = "default";
+		t98sp.resolve = harness_css_resolve_url;
+		if (css_stylesheet_create(&t98sp, &t98ua) != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 98 UA sheet\n");
+			return 1;
+		}
+		{
+			const char *ua = "html,body,div{display:block}";
+			(void)css_stylesheet_append_data(t98ua,
+					(const uint8_t *)ua, strlen(ua));
+			(void)css_stylesheet_data_done(t98ua);
+		}
+		if (css_select_ctx_append_sheet(t98ctx, t98ua,
+				CSS_ORIGIN_UA, "screen") != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 98 UA append\n");
+			return 1;
+		}
+
+		memset(&t98sp, 0, sizeof(t98sp));
+		t98sp.params_version = CSS_STYLESHEET_PARAMS_VERSION_1;
+		t98sp.level = CSS_LEVEL_3;
+		t98sp.charset = "UTF-8";
+		t98sp.url = "http://local/t98.css";
+		t98sp.title = "author";
+		t98sp.resolve = harness_css_resolve_url;
+		if (css_stylesheet_create(&t98sp, &t98auth) != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 98 author sheet\n");
+			return 1;
+		}
+		{
+			css_error ae = css_stylesheet_append_data(t98auth,
+					(const uint8_t *)t98_css,
+					strlen(t98_css));
+			if (ae != CSS_OK && ae != CSS_NEEDDATA) {
+				fprintf(stderr, "FAIL: Test 98 author append=%d\n",
+						(int)ae);
+				return 1;
+			}
+			(void)css_stylesheet_data_done(t98auth);
+		}
+		if (css_select_ctx_append_sheet(t98ctx, t98auth,
+				CSS_ORIGIN_AUTHOR, "screen") != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 98 author append sheet\n");
+			return 1;
+		}
+
+		t98c.media.type = CSS_MEDIA_SCREEN;
+		t98c.media.width = INTTOFIX(993);
+		t98c.media.height = INTTOFIX(609);
+		t98c.media.orientation = CSS_MEDIA_ORIENTATION_LANDSCAPE;
+		t98c.unit_len_ctx.viewport_width = INTTOFIX(993);
+		t98c.unit_len_ctx.viewport_height = INTTOFIX(609);
+		t98c.unit_len_ctx.device_dpi = INTTOFIX(96);
+		t98c.unit_len_ctx.font_size_default = INTTOFIX(16);
+		t98c.unit_len_ctx.font_size_minimum = INTTOFIX(8);
+		if (lwc_intern_string("*", 1, &t98c.universal) !=
+				lwc_error_ok) {
+			fprintf(stderr, "FAIL: Test 98 universal\n");
+			return 1;
+		}
+		t98c.base.status = CONTENT_STATUS_LOADING;
+		t98c.base.active = 0;
+		t98c.base.handler = &g_dummy_handler;
+
+		if (dom_document_get_document_element(t98doc,
+				(void *)&t98root) != DOM_NO_ERR ||
+				t98root == NULL) {
+			fprintf(stderr, "FAIL: Test 98 doc element\n");
+			return 1;
+		}
+		g_initial_build_done = 0;
+		g_initial_build_ok = false;
+		t98err = dom_to_box(t98root, &t98c, initial_build_cb,
+				&t98_box_ctx);
+		dom_node_unref(t98root);
+		if (t98err != NSERROR_OK) {
+			fprintf(stderr, "FAIL: Test 98 dom_to_box=%d\n",
+					(int)t98err);
+			return 1;
+		}
+		harness_pump_all(100000);
+		if (!g_initial_build_done || !g_initial_build_ok) {
+			fprintf(stderr, "FAIL: Test 98 build done=%d ok=%d\n",
+					g_initial_build_done,
+					(int)g_initial_build_ok);
+			return 1;
+		}
+
+		t98child = t96_box_of_class(t98c.layout, "x1t2pt76");
+		if (t98child == NULL || t98child->style == NULL) {
+			fprintf(stderr, "FAIL: Test 98 -- .x1t2pt76 child box "
+					"not found\n");
+			return 1;
+		}
+
+		{
+			enum css_min_height_e t98type;
+			css_fixed t98value = 0;
+			css_unit t98unit = CSS_UNIT_PX;
+			int t98px;
+
+			t98type = ns_computed_min_height(t98child->style,
+					&t98value, &t98unit);
+			fprintf(stderr, "  .x1t2pt76 (inherit) min-height "
+					"type=%d unit=%d\n", (int)t98type,
+					(int)t98unit);
+			if (t98type != CSS_MIN_HEIGHT_SET) {
+				fprintf(stderr, "FAIL: Test 98 -- inherited "
+						"min-height did not compute "
+						"as SET at all (type=%d) -- "
+						"`inherit` lost the property "
+						"entirely, not just the calc "
+						"expression\n", (int)t98type);
+				return 1;
+			}
+
+			if (t98unit == CSS_UNIT_CALC) {
+				t98px = (int)FIXTOINT(css_unit_len2device_px(
+						t98child->style,
+						&t98c.unit_len_ctx,
+						t98value, t98unit));
+			} else {
+				t98px = (int)FIXTOINT(css_unit_len2device_px(
+						t98child->style,
+						&t98c.unit_len_ctx,
+						t98value, t98unit));
+			}
+			fprintf(stderr, "  .x1t2pt76 (inherit) min-height "
+					"resolves to %dpx (parent .xpvvgw5's "
+					"own calc() resolves to 600px, per "
+					"Test 96)\n", t98px);
+
+			/* THE ASSERTION: inherit must produce the SAME real
+			 * pixel value the parent's own calc() produces
+			 * (~600px, Test 96), not something wildly different.
+			 * Same generous 2x headroom as Test 96. */
+			if (t98px < 0 || t98px > 1218) {
+				fprintf(stderr, "FAIL: Test 98 -- inherited "
+						"min-height resolved to %dpx, "
+						"expected ~600px matching the "
+						"parent's own calc(). %s\n",
+						t98px,
+						t98px > 10000 ?
+						"This reproduces the real "
+						"22434px-scale symptom in "
+						"isolation -- `inherit` on a "
+						"calc()-valued property does "
+						"NOT correctly carry the "
+						"calc_expr side-table slot to "
+						"the child." :
+						"Unexpected direction of "
+						"failure -- inspect manually.");
+				return 1;
+			}
+		}
+	}
+	fprintf(stderr, "=== Test 98 PASS: inherited calc() min-height "
+			"resolves to the same real pixel value as the "
+			"parent's own ===\n");
+
+	/* ---------------------------------------------------------------
+	 * fixes1309 (#167, C0) - the FLEXOUTER hardware trace (fixes1308)
+	 * named the exact field: margin-bottom=21845px, every other outer
+	 * edge zero. The real bundle rule on the exact class carrying it:
+	 *
+	 *   .x10cihs4{margin-bottom:calc(-100vh + var(--header-height))}
+	 *
+	 * A NEGATIVE calc(). Against the real 609px viewport and
+	 * --header-height:0px this should resolve to ~-609px, not
+	 * +21845. While reading libcss/include/libcss/fpmath.h for this,
+	 * found a real, independent, sign-handling bug in css_add_fixed's
+	 * branchless overflow-saturation trick: it computes
+	 * `ux = (ux >> 31) + INT_MAX` using an ARITHMETIC (sign-extending)
+	 * shift on a SIGNED int32 -- giving -1 for a negative operand,
+	 * so `ux` becomes INT_MAX-1, not INT_MIN. The standard branchless
+	 * idiom this is built on needs an UNSIGNED (logical) shift here,
+	 * giving 0 or 1 so `ux` lands on INT_MAX or INT_MIN respectively.
+	 * css_add_fixed is shared between the CW8 double-path and the
+	 * portable int64 path (it's outside the #ifdef __MWERKS__ block),
+	 * so this reproduces identically on Linux -- test the REAL rule
+	 * text directly rather than a synthetic add(), since css_add_fixed
+	 * is only one candidate among several fixed-point primitives this
+	 * calc's evaluation touches. */
+	fprintf(stderr, "\n=== Test 99: real .x10cihs4 negative calc() "
+			"margin-bottom resolves to a real negative pixel "
+			"value ===\n");
+	{
+		const char *t99_html =
+			"<html class=\"x1s26u81\"><body>"
+			"<div class=\"x10cihs4\">X</div>"
+			"</body></html>";
+		/* Verbatim from harness/fbcdn.net-css-v5.css. */
+		const char *t99_css =
+			".x1s26u81.x1s26u81,.x1s26u81.x1s26u81:root"
+			"{--header-height:0px}"
+			".x10cihs4{margin-bottom:"
+			"calc(-100vh + var(--header-height))}";
+		struct html_content t99c;
+		dom_hubbub_parser *t99p = NULL;
+		dom_document *t99doc = NULL;
+		dom_node *t99root = NULL;
+		css_select_ctx *t99ctx = NULL;
+		css_stylesheet *t99ua = NULL;
+		css_stylesheet *t99auth = NULL;
+		dom_hubbub_parser_params t99params;
+		css_stylesheet_params t99sp;
+		void *t99_box_ctx = NULL;
+		nserror t99err;
+		dom_exception t99derr;
+		struct box *t99box;
+
+		memset(&t99params, 0, sizeof(t99params));
+		t99params.fix_enc = true;
+		t99derr = dom_hubbub_parser_create(&t99params, &t99p, &t99doc);
+		if (t99derr != DOM_HUBBUB_OK || t99p == NULL) {
+			fprintf(stderr, "FAIL: Test 99 parser create %d\n",
+					(int)t99derr);
+			return 1;
+		}
+		if (dom_hubbub_parser_parse_chunk(t99p,
+				(const uint8_t *)t99_html,
+				strlen(t99_html)) != DOM_HUBBUB_OK ||
+				dom_hubbub_parser_completed(t99p) !=
+					DOM_HUBBUB_OK) {
+			fprintf(stderr, "FAIL: Test 99 parse\n");
+			return 1;
+		}
+		dom_hubbub_parser_destroy(t99p);
+
+		memset(&t99c, 0, sizeof(t99c));
+		t99c.base_url = g_base_url;
+		t99c.document = t99doc;
+		t99c.quirks = DOM_DOCUMENT_QUIRKS_MODE_NONE;
+		t99c.enable_scripting = false;
+		if (css_select_ctx_create(&t99ctx) != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 99 select_ctx\n");
+			return 1;
+		}
+		t99c.select_ctx = t99ctx;
+
+		memset(&t99sp, 0, sizeof(t99sp));
+		t99sp.params_version = CSS_STYLESHEET_PARAMS_VERSION_1;
+		t99sp.level = CSS_LEVEL_3;
+		t99sp.charset = "UTF-8";
+		t99sp.url = "resource:default.css";
+		t99sp.title = "default";
+		t99sp.resolve = harness_css_resolve_url;
+		if (css_stylesheet_create(&t99sp, &t99ua) != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 99 UA sheet\n");
+			return 1;
+		}
+		{
+			const char *ua = "html,body,div{display:block}";
+			(void)css_stylesheet_append_data(t99ua,
+					(const uint8_t *)ua, strlen(ua));
+			(void)css_stylesheet_data_done(t99ua);
+		}
+		if (css_select_ctx_append_sheet(t99ctx, t99ua,
+				CSS_ORIGIN_UA, "screen") != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 99 UA append\n");
+			return 1;
+		}
+
+		memset(&t99sp, 0, sizeof(t99sp));
+		t99sp.params_version = CSS_STYLESHEET_PARAMS_VERSION_1;
+		t99sp.level = CSS_LEVEL_3;
+		t99sp.charset = "UTF-8";
+		t99sp.url = "http://local/t99.css";
+		t99sp.title = "author";
+		t99sp.resolve = harness_css_resolve_url;
+		if (css_stylesheet_create(&t99sp, &t99auth) != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 99 author sheet\n");
+			return 1;
+		}
+		{
+			css_error ae = css_stylesheet_append_data(t99auth,
+					(const uint8_t *)t99_css,
+					strlen(t99_css));
+			if (ae != CSS_OK && ae != CSS_NEEDDATA) {
+				fprintf(stderr, "FAIL: Test 99 author append=%d\n",
+						(int)ae);
+				return 1;
+			}
+			(void)css_stylesheet_data_done(t99auth);
+		}
+		if (css_select_ctx_append_sheet(t99ctx, t99auth,
+				CSS_ORIGIN_AUTHOR, "screen") != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 99 author append sheet\n");
+			return 1;
+		}
+
+		t99c.media.type = CSS_MEDIA_SCREEN;
+		t99c.media.width = INTTOFIX(993);
+		t99c.media.height = INTTOFIX(609);
+		t99c.media.orientation = CSS_MEDIA_ORIENTATION_LANDSCAPE;
+		t99c.unit_len_ctx.viewport_width = INTTOFIX(993);
+		t99c.unit_len_ctx.viewport_height = INTTOFIX(609);
+		t99c.unit_len_ctx.device_dpi = INTTOFIX(96);
+		t99c.unit_len_ctx.font_size_default = INTTOFIX(16);
+		t99c.unit_len_ctx.font_size_minimum = INTTOFIX(8);
+		if (lwc_intern_string("*", 1, &t99c.universal) !=
+				lwc_error_ok) {
+			fprintf(stderr, "FAIL: Test 99 universal\n");
+			return 1;
+		}
+		t99c.base.status = CONTENT_STATUS_LOADING;
+		t99c.base.active = 0;
+		t99c.base.handler = &g_dummy_handler;
+
+		if (dom_document_get_document_element(t99doc,
+				(void *)&t99root) != DOM_NO_ERR ||
+				t99root == NULL) {
+			fprintf(stderr, "FAIL: Test 99 doc element\n");
+			return 1;
+		}
+		g_initial_build_done = 0;
+		g_initial_build_ok = false;
+		t99err = dom_to_box(t99root, &t99c, initial_build_cb,
+				&t99_box_ctx);
+		dom_node_unref(t99root);
+		if (t99err != NSERROR_OK) {
+			fprintf(stderr, "FAIL: Test 99 dom_to_box=%d\n",
+					(int)t99err);
+			return 1;
+		}
+		harness_pump_all(100000);
+		if (!g_initial_build_done || !g_initial_build_ok) {
+			fprintf(stderr, "FAIL: Test 99 build done=%d ok=%d\n",
+					g_initial_build_done,
+					(int)g_initial_build_ok);
+			return 1;
+		}
+
+		t99box = t96_box_of_class(t99c.layout, "x10cihs4");
+		if (t99box == NULL || t99box->style == NULL) {
+			fprintf(stderr, "FAIL: Test 99 -- .x10cihs4 box not "
+					"found\n");
+			return 1;
+		}
+
+		{
+			uint8_t t99type;
+			css_fixed t99value = 0;
+			css_unit t99unit = CSS_UNIT_PX;
+			int t99px;
+
+			t99type = css_computed_margin_bottom(t99box->style,
+					&t99value, &t99unit);
+			fprintf(stderr, "  .x10cihs4 margin-bottom type=%d "
+					"unit=%d\n", (int)t99type,
+					(int)t99unit);
+			if (t99type != CSS_MARGIN_SET) {
+				fprintf(stderr, "FAIL: Test 99 -- margin-"
+						"bottom did not compute as "
+						"SET at all (type=%d)\n",
+						(int)t99type);
+				return 1;
+			}
+
+			t99px = (int)FIXTOINT(css_unit_len2device_px(
+					t99box->style, &t99c.unit_len_ctx,
+					t99value, t99unit));
+			fprintf(stderr, "  .x10cihs4 margin-bottom resolves "
+					"to %dpx (real viewport 993x609, "
+					"expected roughly -609px)\n", t99px);
+
+			/* THE ASSERTION: a negative calc() must resolve to a
+			 * real NEGATIVE value close to -609px (100vh of a
+			 * 609px viewport, minus 0px header-height), not a
+			 * large positive garbage value. Generous band: any
+			 * negative value down to -1218 (2x viewport) is
+			 * accepted as "roughly right direction and scale";
+			 * the real bug produces +21845, a completely
+			 * different sign AND magnitude, so this is not a
+			 * hair-trigger assertion. */
+			if (t99px > 0 || t99px < -1218) {
+				fprintf(stderr, "FAIL: Test 99 -- resolved "
+						"%dpx, expected a negative "
+						"value near -609px. %s\n",
+						t99px,
+						t99px > 10000 ?
+						"This reproduces the real "
+						"21845px symptom in isolation "
+						"-- negative calc() values "
+						"are being corrupted into "
+						"large positive ones "
+						"somewhere in the fixed-point "
+						"math or calc bytecode "
+						"evaluation." :
+						"Unexpected direction of "
+						"failure -- inspect manually.");
+				return 1;
+			}
+		}
+
+		fprintf(stderr, "=== Test 99 PASS: negative calc() margin-bottom resolves to a real negative pixel value ===\n");
+
+		fprintf(stderr, "\n=== Test 100: html_recascade_tree leak regression test ===\n");
+		{
+			extern nserror html_recascade_tree(struct html_content *c);
+			int i;
+			for (i = 0; i < 5; i++) {
+				nserror err = html_recascade_tree(&t99c);
+				if (err != NSERROR_OK) {
+					fprintf(stderr, "FAIL: Test 100 recascade %d\n", i);
+					return 1;
+				}
+			}
+			fprintf(stderr, "  5x html_recascade_tree completed. ASan will fail if leaks occurred.\n");
+		}
+		fprintf(stderr, "=== Test 100 PASS: recascade did not crash ===\n");
+
+		fprintf(stderr, "\n=== Test 101: Inline style paint fast path ===\n");
+		{
+			extern void macos9_js_mark_dom_dirty_node(struct content *c,
+					void *node, int kind);
+			extern int macos9_reconvert_flush_now(void *p);
+			#define MACOS9_DOMMUT_SETATTR_STYLE 10
+			#define MACOS9_DOMMUT_APPENDCHILD 4
+			struct box *box = t96_box_of_class(t99c.layout, "x10cihs4");
+			if (!box) { fprintf(stderr, "FAIL: Test 101 box missing\n"); return 1; }
+			/* Pin the DOM node independently -- box will be freed+replaced
+			 * on any full reconvert, but the DOM node survives all of them. */
+			dom_node *target_node = (dom_node *)box->node;
+			dom_node_ref(target_node);
+
+			t99c.base.status = CONTENT_STATUS_READY;
+			t99c.base.active = 0;
+
+			dom_string *style_str = NULL;
+			dom_string_create((const uint8_t *)"style", 5, &style_str);
+
+			/* Each mutation is tested independently: mark dirty, flush,
+			 * re-lookup box so we never touch freed memory. The precise
+			 * STYLE mark exercises the paint path for background-color and
+			 * the conservative inherited-colour path for color; geometry
+			 * changes still fall back to html_reconvert_content. */
+			const char *tests[] = {
+				"background-color: blue;",  /* fast path expected */
+				"color: red;",              /* inherited path      */
+				"width: 100px;",            /* fallback           */
+				"display: none;",           /* fallback           */
+				"position: absolute;",      /* fallback           */
+				"border-width: 10px;",      /* fallback           */
+				"background-image: url('test.png');", /* fallback */
+				"color: red; width: 10px;" /* multi-prop fallback */
+			};
+
+			for (int i = 0; i < 8; i++) {
+				dom_string *val_str = NULL;
+				dom_string_create((const uint8_t *)tests[i], strlen(tests[i]), &val_str);
+				dom_element_set_attribute((dom_element *)target_node, style_str, val_str);
+				dom_string_unref(val_str);
+
+				macos9_js_mark_dom_dirty_node((struct content *)&t99c,
+						target_node, MACOS9_DOMMUT_SETATTR_STYLE);
+				(void) macos9_reconvert_flush_now((void *)&t99c);
+				/* After a full reconvert the old box pointer is invalid.
+				 * We don't re-use `box` below, so no re-lookup needed. */
+			}
+
+			dom_node_unref(target_node);
+			dom_string_unref(style_str);
+			fprintf(stderr, "  Test 101: all 8 style mutations flushed cleanly under ASan\n");
+		}
+		fprintf(stderr, "=== Test 101 PASS ===\n");
+	} /* End of Test 99 scope */
+
+	phase2_diag:
+	/* --- Test 102: Phase 2 negative-state diagnostics ------------------
+	 * Exercise the diagnostic boundary directly: these are deterministic
+	 * MacSurf-owned state transitions, not an attempt to emulate a page or
+	 * network stack in the Linux harness. */
+	{
+		char p0[4096], p1[4096], p2[4096], settle[1024], ops[4096], timers[2048];
+		char readiness[2048];
+		char needle[128];
+		unsigned long op;
+		unsigned long mod;
+		int ti;
+
+		fprintf(stderr, "\n=== Test 102: Phase 2 negative-state diagnostics ===\n");
+
+		/* A decline before wire start is terminal and leaves no pending
+		 * request contract; its structured operation still retains req=0. */
+		op = ms_diag_operation_begin(MS_OP_FETCH, MS_ANSWER_NATIVE);
+		ms_diag_operation_record(op, MS_OP_FETCH, MS_OP_ATTEMPT,
+				MS_OP_DECLINE, MS_OPR_PRE_ABORTED,
+				MS_ANSWER_NATIVE, 0);
+		(void)macsurf_diag_serialize_operations(ops, (long)sizeof(ops));
+		snprintf(needle, sizeof(needle), "op=%lu", op);
+		if (strstr(ops, needle) == NULL ||
+				strstr(ops, "reason=pre_aborted") == NULL ||
+				strstr(ops, "req=0") == NULL) {
+			fprintf(stderr, "FAIL: Test 102 pre-wire decline missing\n");
+			return 1;
+		}
+		/* Readiness is a progress state machine, not an elapsed-load guess.
+		 * The deterministic harness clock is zero, but a real transition still
+		 * makes its progress sequence visible and reports active. */
+		(void)macsurf_diag_serialize_readiness(readiness, (long)sizeof(readiness));
+		if (strstr(readiness, "MSDIAG 1 readiness\n") == NULL ||
+				strstr(readiness, "progress_seq=0") != NULL ||
+				strstr(readiness, "state=active\n") == NULL ||
+				strstr(readiness, "capture_ready=0\n") == NULL) {
+			fprintf(stderr, "FAIL: Test 102 readiness progress state\n");
+			return 1;
+		}
+
+		/* A wire-started operation remains visible as WAITING until its
+		 * explicit settle record, and serialisation must not mutate it. */
+		op = ms_diag_operation_begin(MS_OP_FETCH, MS_ANSWER_NATIVE);
+		ms_diag_operation_record(op, MS_OP_FETCH, MS_OP_WIRE_START,
+				MS_OP_OK, MS_OPR_NONE, MS_ANSWER_NATIVE, 8123);
+		(void)macsurf_diag_serialize_pending(p0, (long)sizeof(p0));
+		(void)macsurf_diag_serialize_pending(p1, (long)sizeof(p1));
+		snprintf(needle, sizeof(needle), "op=%lu", op);
+		if (strcmp(p0, p1) != 0 || strstr(p0, needle) == NULL ||
+				strstr(p0, "expected=settle") == NULL) {
+			fprintf(stderr, "FAIL: Test 102 operation pending/reread\n");
+			return 1;
+		}
+		(void)macsurf_diag_serialize_settlement(settle, (long)sizeof(settle));
+		if (strstr(settle, "settled=0\nreason=unresolved_contracts") == NULL) {
+			fprintf(stderr, "FAIL: Test 102 unresolved settlement\n");
+			return 1;
+		}
+		/* A new top-level run must not inherit this old session contract into
+		 * its readiness decision; `pending` still retains it for diagnosis. */
+		macsurf_diag_navigation_begin();
+		(void)macsurf_diag_serialize_readiness(readiness, (long)sizeof(readiness));
+		if (strstr(readiness, "run_epoch=1\n") == NULL ||
+				strstr(readiness, "pending_contracts=0\n") == NULL ||
+				strstr(readiness, "state=active\n") == NULL) {
+			fprintf(stderr, "FAIL: Test 102 readiness navigation epoch\n");
+			return 1;
+		}
+		ms_diag_operation_record(op, MS_OP_FETCH, MS_OP_SETTLE,
+				MS_OP_RESOLVE, MS_OPR_NONE, MS_ANSWER_NATIVE, 8123);
+		(void)macsurf_diag_serialize_pending(p2, (long)sizeof(p2));
+		if (strstr(p2, needle) != NULL) {
+			fprintf(stderr, "FAIL: Test 102 resolved operation still pending\n");
+			return 1;
+		}
+
+		/* Observe -> check -> callback is a real shim-owned contract.  The
+		 * callback is terminal for the currently scheduled check; no later
+		 * scroll reevaluation is invented by diagnostics. */
+		ms_diag_io_record(991, MS_IO_OBSERVE, ".diag-pending",
+				0, 0, 0, 0, 0, 0, 0);
+		ms_diag_timer_arm(9191, 77, 88, 99, 3);
+		ms_diag_io_timer_bind(991, ".diag-pending", 9191);
+		(void)macsurf_diag_serialize_pending(p0, (long)sizeof(p0));
+		if (strstr(p0, "kind=io io=991") == NULL ||
+				strstr(p0, "expected=check") == NULL ||
+				strstr(p0, "timer=9191 timer_state=armed") == NULL) {
+			fprintf(stderr, "FAIL: Test 102 IO observe pending\n");
+			return 1;
+		}
+		ms_diag_timer_state(9191, MS_TIMER_FIRING);
+		ms_diag_timer_state(9191, MS_TIMER_FIRED);
+		/* Long-lived pages create enough unrelated timers to wrap the bounded
+		 * table. A joined IO record must survive that rotation. */
+		for (ti = 0; ti < 300; ti++)
+			ms_diag_timer_arm((unsigned long)(10000 + ti), 1, 2, 3, 4);
+		(void)macsurf_diag_serialize_timers(timers, (long)sizeof(timers));
+		if (strstr(timers, "timer=9191 nav=77 origin_script=88 origin_task=99 ctx_gen=3 state=fired") == NULL) {
+			fprintf(stderr, "FAIL: Test 102 IO timer join\n");
+			return 1;
+		}
+		/* If ordinary history already rotated before the JS-side bind, the
+		 * contract still retains a lifecycle record for its exact timer id. */
+		ms_diag_io_record(992, MS_IO_OBSERVE, ".diag-recover",
+				0, 0, 0, 0, 0, 0, 0);
+		ms_diag_io_timer_bind(992, ".diag-recover", 9292);
+		ms_diag_timer_state(9292, MS_TIMER_FIRED);
+		(void)macsurf_diag_serialize_timers(timers, (long)sizeof(timers));
+		if (strstr(timers, "timer=9292 nav=") == NULL ||
+				strstr(timers, "state=fired") == NULL) {
+			fprintf(stderr, "FAIL: Test 102 IO timer recovery\n");
+			return 1;
+		}
+		/* The JS shim can report that it has armed an expectation before the
+		 * native scheduler allocates its authoritative timer id.  Do not render
+		 * that zero id as a fictitious armed timer. */
+		ms_diag_io_record(993, MS_IO_OBSERVE, ".diag-expect",
+				0, 0, 0, 0, 0, 0, 0);
+		ms_diag_io_timer_expect(993, ".diag-expect");
+		(void)macsurf_diag_serialize_pending(p0, (long)sizeof(p0));
+		if (strstr(p0, "kind=io io=993") == NULL ||
+				strstr(p0, "timer=0 timer_state=awaiting_native_allocation timer_native=not_entered") == NULL) {
+			fprintf(stderr, "FAIL: Test 102 IO native allocation expectation\n");
+			return 1;
+		}
+		ms_diag_io_timer_native_state(993, ".diag-expect",
+				MS_IO_TIMER_NATIVE_ENTERED);
+		(void)macsurf_diag_serialize_pending(p0, (long)sizeof(p0));
+		if (strstr(p0, "timer_native=entered") == NULL) {
+			fprintf(stderr, "FAIL: Test 102 IO native timer entry\n");
+			return 1;
+		}
+		ms_diag_io_record(994, MS_IO_OBSERVE, ".diag-reject",
+				0, 0, 0, 0, 0, 0, 0);
+		ms_diag_io_timer_expect(994, ".diag-reject");
+		ms_diag_io_timer_native_state(994, ".diag-reject",
+				MS_IO_TIMER_NATIVE_NO_SLOT);
+		(void)macsurf_diag_serialize_pending(p0, (long)sizeof(p0));
+		if (strstr(p0, "kind=io io=994") == NULL ||
+				strstr(p0, "timer=0 timer_state=unbound timer_native=rejected_no_slot") == NULL) {
+			fprintf(stderr, "FAIL: Test 102 IO native timer rejection\n");
+			return 1;
+		}
+		ms_diag_io_record(994, MS_IO_UNOBSERVE, ".diag-reject",
+				0, 0, 0, 0, 0, 0, 0);
+		ms_diag_timer_arm(9393, 7, 8, 9, 10);
+		ms_diag_io_timer_bind(993, ".diag-expect", 9393);
+		ms_diag_io_record(992, MS_IO_CHECK, ".diag-recover",
+				0, 0, 0, 0, 1, 100, 0);
+		ms_diag_io_record(992, MS_IO_CALLBACK, ".diag-recover",
+				0, 0, 0, 0, 0, 0, 1);
+		ms_diag_io_record(991, MS_IO_CHECK, ".diag-pending",
+				0, 0, 0, 0, 1, 100, 0);
+		ms_diag_io_record(991, MS_IO_CALLBACK, ".diag-pending",
+				0, 0, 0, 0, 0, 0, 1);
+		ms_diag_io_record(993, MS_IO_CHECK, ".diag-expect",
+				0, 0, 0, 0, 1, 100, 0);
+		ms_diag_io_record(993, MS_IO_CALLBACK, ".diag-expect",
+				0, 0, 0, 0, 0, 0, 1);
+		(void)macsurf_diag_serialize_pending(p1, (long)sizeof(p1));
+		if (strstr(p1, "kind=io io=991") != NULL) {
+			fprintf(stderr, "FAIL: Test 102 IO callback still pending\n");
+			return 1;
+		}
+
+		/* A known module definition makes its lazy waiter eligible, but only
+		 * the callback release completes the contract. */
+		mod = ms_diag_module_id("diag-wait-module");
+		ms_diag_module_record(mod, 0, MS_MOD_WAIT_REGISTERED,
+				MS_MOD_REASON_NONE, 0, 761);
+		ms_diag_module_record(mod, 0, MS_MOD_DEFINE,
+				MS_MOD_REASON_NONE, 0, 0);
+		(void)macsurf_diag_serialize_pending(p0, (long)sizeof(p0));
+		if (strstr(p0, "kind=module_wait wait=761") == NULL ||
+				strstr(p0, "eligible=1") == NULL ||
+				strstr(p0, "expected=release") == NULL) {
+			fprintf(stderr, "FAIL: Test 102 eligible module wait\n");
+			return 1;
+		}
+		ms_diag_module_record(mod, 0, MS_MOD_CALLBACK_BEGIN,
+				MS_MOD_REASON_NONE, 0, 761);
+		(void)macsurf_diag_serialize_pending(p1, (long)sizeof(p1));
+		if (strstr(p1, "expected=callback_return") == NULL) {
+			fprintf(stderr, "FAIL: Test 102 module callback begin\n");
+			return 1;
+		}
+		ms_diag_module_record(mod, 0, MS_MOD_CALLBACK_RETURN,
+				MS_MOD_REASON_NONE, 0, 761);
+		(void)macsurf_diag_serialize_pending(p2, (long)sizeof(p2));
+		if (strstr(p2, "kind=module_wait wait=761") != NULL) {
+			fprintf(stderr, "FAIL: Test 102 module callback still pending\n");
+			return 1;
+		}
+		(void)macsurf_diag_serialize_settlement(settle, (long)sizeof(settle));
+		if (strstr(settle, "settled=1\nreason=no_known_unresolved_contracts") == NULL ||
+				strstr(settle, "page_complete=unknown") == NULL) {
+			fprintf(stderr, "FAIL: Test 102 conservative settled state\n");
+			return 1;
+		}
+		fprintf(stderr, "=== Test 102 PASS: contracts retain negative state and settle conservatively ===\n");
+	}
+
+	/* --- Test 103: Phase 3 capability/CSS gap aggregates --------------- */
+	{
+		char caps[16384], cssg[16384], caps_again[16384];
+		char name[32];
+		int i;
+		fprintf(stderr, "\n=== Test 103: Phase 3 capability/CSS gap aggregates ===\n");
+		ms_diag_capability_hit(MS_CAP_GEOMETRY, MS_CAP_GET,
+			"offsetWidth", MS_CAP_UNSUPPORTED, MS_ANSWER_UNSUPPORTED);
+		ms_diag_capability_hit(MS_CAP_GEOMETRY, MS_CAP_GET,
+			"offsetWidth", MS_CAP_UNSUPPORTED, MS_ANSWER_UNSUPPORTED);
+		ms_diag_capability_hit(MS_CAP_GEOMETRY, MS_CAP_GET,
+			"clientWidth", MS_CAP_UNSUPPORTED, MS_ANSWER_UNSUPPORTED);
+		ms_diag_capability_hit(MS_CAP_OBSERVER, MS_CAP_CONSTRUCT,
+			"ResizeObserver", MS_CAP_APPROXIMATE, MS_ANSWER_APPROX);
+		(void)macsurf_diag_serialize_capabilities(caps, (long)sizeof(caps));
+		(void)macsurf_diag_serialize_capabilities(caps_again, (long)sizeof(caps_again));
+		if (strcmp(caps, caps_again) != 0 || strstr(caps, "name=offsetWidth") == NULL ||
+			strstr(caps, "name=offsetWidth result=unsupported quality=3 count=2") == NULL ||
+			strstr(caps, "name=ResizeObserver result=approximate quality=1 count=1") == NULL) {
+			fprintf(stderr, "FAIL: Test 103 capability semantics/dedup/reread\n"); return 1;
+		}
+		/* Fill beyond the fixed table (128 entries). The output must say what was dropped. */
+		for (i = 0; i < 140; i++) {
+			snprintf(name, sizeof(name), "feature-%d", i);
+			ms_diag_capability_hit(MS_CAP_GLOBAL, MS_CAP_GET, name,
+				MS_CAP_UNSUPPORTED, MS_ANSWER_UNSUPPORTED);
+		}
+		(void)macsurf_diag_serialize_capabilities(caps, (long)sizeof(caps));
+		if (strstr(caps, "dropped=") == NULL) {
+			fprintf(stderr, "FAIL: Test 103 capability overflow\n"); return 1;
+		}
+		ms_diag_css_gap_hit(MS_CSS_GAP_VALUE, "display", "", "grid", MS_CAP_UNSUPPORTED);
+		ms_diag_css_gap_hit(MS_CSS_GAP_VALUE, "display", "", "grid", MS_CAP_UNSUPPORTED);
+		ms_diag_css_gap_hit(MS_CSS_GAP_PROPERTY, "aspect-ratio", "", "", MS_CAP_UNSUPPORTED);
+		(void)macsurf_diag_serialize_css_gaps(cssg, (long)sizeof(cssg));
+		if (strstr(cssg, "kind=value property=display name= value=grid result=unsupported count=2") == NULL ||
+			strstr(cssg, "kind=property property=aspect-ratio") == NULL ||
+			strstr(cssg, "dropped=") == NULL) {
+			fprintf(stderr, "FAIL: Test 103 CSS key/output\n"); return 1;
+		}
+		fprintf(stderr, "=== Test 103 PASS: semantic outcomes are bounded, deduplicated, and stable ===\n");
+	}
+
+	/* --- Test 104: Phase 4 & 5.1 gapreport census and coverage matrix -- */
+	{
+		char report[32768], report_again[32768];
+		fprintf(stderr, "\n=== Test 104: Phase 4 & 5.1 gapreport census and coverage matrix ===\n");
+		(void)macsurf_diag_serialize_gapreport(report, (long)sizeof(report));
+		(void)macsurf_diag_serialize_gapreport(report_again, (long)sizeof(report_again));
+		if (strcmp(report, report_again) != 0 ||
+			strstr(report, "MSDIAG 1 gapreport") == NULL ||
+			strstr(report, "census_lossless=0") == NULL ||
+			strstr(report, "coverage_complete=0") == NULL ||
+			strstr(report, "[coverage]") == NULL ||
+			strstr(report, "js_host_api=full") == NULL ||
+			strstr(report, "global_feature_get=unobservable reason=quickjs_global_lookup_no_safe_host_hook") == NULL ||
+			strstr(report, "[gaps]") == NULL ||
+			strstr(report, "key=js.geometry.offsetWidth.get result=unsupported quality=3 count=2") == NULL ||
+			strstr(report, "key=css.value.display.grid result=unsupported quality=0 count=2") == NULL ||
+			strstr(report, "key=css.property.aspect-ratio result=unsupported quality=0 count=1") == NULL) {
+			fprintf(stderr, "FAIL: Test 104 gapreport format/coverage/normalized keys\n"); return 1;
+		}
+		fprintf(stderr, "=== Test 104 PASS: gapreport produces stable normalized keys with explicit coverage ===\n");
+	}
+
+	/* --- Test 105: Group 2 / Round 2A CSS Transitions parser & cascade -- */
+	{
+		fprintf(stderr, "\n=== Test 105: Group 2 / Round 2A CSS Transitions ===\n");
+		if (!cssprobe_test_css_transitions()) {
+			fprintf(stderr, "FAIL: Test 105 CSS Transitions Round 2A\n");
+			return 1;
+		}
+		fprintf(stderr, "=== Test 105 PASS: CSS Transitions independent cascade & descriptor contract ===\n");
+	}
+
+	/* --- Test 106: Group 2 / Round 2B-1 Generic Transition Engine (synthetic) -- */
+	{
+		extern bool test_macos9_transition_2b1(void);
+		fprintf(stderr, "\n=== Test 106: Group 2 / Round 2B-1 Generic Transition Engine ===\n");
+		if (!test_macos9_transition_2b1()) {
+			fprintf(stderr, "FAIL: Test 106 Transition Engine 2B-1\n");
+			return 1;
+		}
+		fprintf(stderr, "=== Test 106 PASS: Generic engine synthetic (bounded, delay, wrap) ===\n");
+	}
+
+	/* --- Test 107: Group 2 / Round 2B-2 Opacity (synthetic + presentation) -- */
+	{
+		extern bool test_macos9_transition_opacity(void);
+		fprintf(stderr, "\n=== Test 107: Group 2 / Round 2B-2 Opacity ===\n");
+		if (!test_macos9_transition_opacity()) {
+			fprintf(stderr, "FAIL: Test 107 Opacity 2B-2\n");
+			return 1;
+		}
+		fprintf(stderr, "=== Test 107 PASS: Opacity presentation (interpolation, delay, interruption) ===\n");
+	}
 
 	return 0;
 }

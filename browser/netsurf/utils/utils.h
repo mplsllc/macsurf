@@ -120,4 +120,26 @@ bool is_dir(const char *path);
 #endif
 
 
+/**
+ * Format a libcss colour as "#RRGGBB" (fixes1268c, #167).
+ *
+ * css_color is 0xAARRGGBB. Open-coding the extraction has produced the
+ * SAME off-by-one-byte bug three times in the #167 diagnostics alone -
+ * `>> 8` rotates alpha into the red slot, so green (0xFF008000) prints
+ * as "#FF0080" and a working cascade reads as a broken one. Both
+ * helpers exist so no caller ever writes the mask again.
+ *
+ * \param buf  Receives the text; must be at least 8 bytes.
+ * \param col  Colour, 0xAARRGGBB.
+ */
+void ns_color_hex(char *buf, unsigned long col);
+
+/**
+ * Format a libcss colour as "#AARRGGBB", alpha included.
+ *
+ * \param buf  Receives the text; must be at least 10 bytes.
+ * \param col  Colour, 0xAARRGGBB.
+ */
+void ns_color_hex_alpha(char *buf, unsigned long col);
+
 #endif

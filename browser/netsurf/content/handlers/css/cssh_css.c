@@ -40,6 +40,8 @@
 #include "css/internal.h"
 
 #include "macsurf_debug.h"
+#include "macsurf_gap.h"
+#include "macsurf_capability.h"
 
 /* Define to trace import fetches */
 #undef NSCSS_IMPORT_TRACE
@@ -482,6 +484,7 @@ macsurf__emit_one_track(char *out, size_t cap,
 	size_t i;
 	bool is_value = false;
 	bool is_auto = false;
+	bool is_minmax_marker = false;
 
 	/* Detect if the token looks like a value (starts with digit, '.',
 	 * '+' or '-'). Anything else (auto, min-content, max-content,
@@ -501,7 +504,11 @@ macsurf__emit_one_track(char *out, size_t cap,
 			tok[2] == 't' && tok[3] == 'o') {
 		is_auto = true;
 	}
-	if (!is_value && !is_auto) {
+	if (tok_len > 2 && (tok[0] == 'm' || tok[0] == 'M') &&
+			(tok[1] == 'm' || tok[1] == 'M')) {
+		is_minmax_marker = true;
+	}
+	if (!is_value && !is_auto && !is_minmax_marker) {
 		tok_to_emit = fr_fallback;
 		emit_len = 3;
 	}
@@ -739,6 +746,14 @@ macsurf__emit_grid_tracks(const char *p, const char *end,
 				  p[4] == '('))) {
 			int depth = 0;
 			int n;
+			const char *fn_start = p;
+			bool is_minmax = (end - p) >= 7 &&
+				((p[0] == 'm' || p[0] == 'M') &&
+				 (p[1] == 'i' || p[1] == 'I') &&
+				 (p[2] == 'n' || p[2] == 'N') &&
+				 (p[3] == 'm' || p[3] == 'M') &&
+				 (p[4] == 'a' || p[4] == 'A') &&
+				 (p[5] == 'x' || p[5] == 'X') && p[6] == '(');
 			while (p < end) {
 				if (*p == '(') depth++;
 				else if (*p == ')') {
@@ -747,8 +762,28 @@ macsurf__emit_grid_tracks(const char *p, const char *end,
 				}
 				p++;
 			}
-			n = macsurf__emit_one_track(out + pos, cap - pos,
-					"1fr", 3);
+			if (is_minmax) {
+				const char *q = fn_start + 7;
+				int floor_px = 0;
+				char marker[32];
+				while (q < p && (*q == ' ' || *q == '\t')) q++;
+				while (q < p && *q >= '0' && *q <= '9') {
+					floor_px = floor_px * 10 + (*q - '0');
+					q++;
+				}
+				if (floor_px > 0 && q + 1 < p &&
+						(q[0] == 'p' || q[0] == 'P') &&
+						(q[1] == 'x' || q[1] == 'X')) {
+					n = snprintf(marker, sizeof(marker), "mm%d", floor_px);
+					if (n > 0)
+						n = macsurf__emit_one_track(out + pos,
+							cap - pos, marker, (size_t)n);
+					else n = -1;
+				} else n = -1;
+			} else n = -1;
+			if (n < 0)
+				n = macsurf__emit_one_track(out + pos, cap - pos,
+						"1fr", 3);
 			if (n < 0) break;
 			pos += (size_t)n;
 			room--;
@@ -3572,17 +3607,10 @@ macsurf__rewrite_modern_compat(const char *data, size_t in_size,
 		"font-variant-numeric",
 		"break-inside",
 		"outline-offset",
-		/* fixes191f -- transition/animation/keyframes-triggered props
-		 * silently dropped. MacSurf has no animation timer playback in
-		 * this round; the final static computed value still applies via
-		 * the regular cascade. The shorthand and all longhands need to
-		 * drop together so the value isn't a stray ident the parser
-		 * trips on. */
-		"transition",
-		"transition-property",
-		"transition-duration",
-		"transition-timing-function",
-		"transition-delay",
+		/* fixes191f / Group 2: transition properties PROMOTED out of DROP_PROPS.
+		 * LibCSS now has full independent cascade longhands (transition-property,
+		 * transition-duration, transition-timing-function, transition-delay) and
+		 * shorthand expansion. Animation properties remain in DROP_PROPS for Group 3. */
 		"animation",
 		"animation-name",
 		"animation-duration",
@@ -3669,6 +3697,8 @@ macsurf__rewrite_modern_compat(const char *data, size_t in_size,
 			continue;
 		}
 		memcpy(out + i, FV_REP, FV_LEN);
+		ms_diag_css_gap_hit(MS_CSS_GAP_SELECTOR, NULL, ":focus-visible",
+			NULL, MS_CAP_FALLBACK);
 		changed = 1;
 		i += FV_LEN;
 	}
@@ -3696,6 +3726,8 @@ macsurf__rewrite_modern_compat(const char *data, size_t in_size,
 			continue;
 		}
 		memcpy(out + i, FW_REP, FW_LEN);
+		ms_diag_css_gap_hit(MS_CSS_GAP_SELECTOR, NULL, ":focus-within",
+			NULL, MS_CAP_FALLBACK);
 		changed = 1;
 		i += FW_LEN;
 	}
@@ -3710,6 +3742,8 @@ macsurf__rewrite_modern_compat(const char *data, size_t in_size,
 			size_t j;
 			size_t end;
 			size_t p;
+			char value[48];
+			int value_len;
 			if (!macsurf__match_prop_name(out, in_size, i,
 					name, nlen)) {
 				i++;
@@ -3727,12 +3761,36 @@ macsurf__rewrite_modern_compat(const char *data, size_t in_size,
 			end = j + 1;
 			while (end < in_size && out[end] != ';' &&
 					out[end] != '}') end++;
+			value_len = 0;
+			p = j + 1;
+			while (p < end && value_len < 47) {
+				if (out[p] != ' ' && out[p] != '\t' &&
+					out[p] != '\n' && out[p] != '\r')
+					value[value_len++] = out[p];
+				p++;
+			}
+			value[value_len] = '\0';
 			for (p = i; p < end; p++) {
 				if (out[p] != '\n' && out[p] != '\r') {
 					out[p] = ' ';
 				}
 			}
 			changed = 1;
+			/* MacSurf Trace Phase 0 - census the specific
+			 * animation-family fallback taken (no timer playback
+			 * layer). Other DROP_PROPS entries are not gaps. */
+			if (strncmp(name, "transition", 10) == 0) {
+				macsurf_gap_hit(MS_GAP_CSS_TRANSITION_DROPPED);
+				ms_diag_css_gap_hit(MS_CSS_GAP_PROPERTY, name, NULL, value,
+					MS_CAP_FALLBACK);
+			} else if (strncmp(name, "animation", 9) == 0) {
+				macsurf_gap_hit(MS_GAP_CSS_ANIMATION_DROPPED);
+				ms_diag_css_gap_hit(MS_CSS_GAP_PROPERTY, name, NULL, value,
+					MS_CAP_FALLBACK);
+			} else {
+				ms_diag_css_gap_hit(MS_CSS_GAP_PROPERTY, name, NULL, value,
+					MS_CAP_UNSUPPORTED);
+			}
 			i = end;
 		}
 	}
@@ -4487,9 +4545,8 @@ macsurf__rewrite_at_rules(const char *data, size_t in_size,
 /* fixes274 (Bundle C, #25 + #64) - grid alignment shorthand expansion +
  * justify-items / justify-self bridge.
  *
- * libcss in this vintage does not expose justify-items / justify-self
- * accessors, and there's no `place-items` / `place-content` shorthand
- * support. fixes270 wired the four properties libcss DOES expose
+ * There is no `place-items` / `place-content` shorthand support. fixes270
+ * wired the four properties libcss DOES expose
  * (justify-content, align-content, align-items, align-self). This pass
  * extends authoring-side support by:
  *
@@ -4919,19 +4976,13 @@ macsurf__rewrite_grid_alignment(const char *data, size_t in_size,
 				tmp[tlen++] = ';';
 				tmp[tlen++] = ' ';
 			}
-			/* justify axis. justify-content AND justify-items are now
-			 * real libcss properties (justify-items added #279/fixes833
-			 * - it does the actual grid item box positioning), so emit
-			 * their declarations. justify-SELF is still unknown to libcss
-			 * (per-item override deferred): emitting it is dead weight and
-			 * a downstream stage keying off `justify-self:` corrupts the
-			 * PRECEDING align-* declaration, so for justify-self emit ONLY
-			 * the text-align shadow below. The text-align shadow is still
-			 * emitted for justify-items too (harmless: it aligns text
-			 * inside the now-content-sized item; a no-op there). */
+			/* These are now real libcss properties. Preserve every
+			 * justify-axis declaration for native grid layout, while keeping
+			 * the text-align shadow below for existing inline-content cases. */
 			if (justify_axis != NULL &&
 					(strcmp(justify_axis, "justify-content") == 0 ||
-					 strcmp(justify_axis, "justify-items") == 0)) {
+					 strcmp(justify_axis, "justify-items") == 0 ||
+					 strcmp(justify_axis, "justify-self") == 0)) {
 				memcpy(tmp + tlen, justify_axis,
 						strlen(justify_axis));
 				tlen += strlen(justify_axis);
@@ -6249,6 +6300,11 @@ css_error nscss_handle_import(void *pw, css_stylesheet *parent,
 
 	/** \todo fallback charset */
 	child.charset = NULL;
+	/* MacSurf Trace 1a: @import from a CSS sheet -- the parent CSS content's
+	 * nav isn't reachable from content_css_data without container_of; leave
+	 * unattributed for now (rare path). */
+	child.nav_id = 0;
+	child.doc_id = 0;
 	error = css_stylesheet_quirks_allowed(c->sheet, &child.quirks);
 	if (error != CSS_OK) {
 		free(ctx);

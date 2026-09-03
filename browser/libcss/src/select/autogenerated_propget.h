@@ -2285,21 +2285,10 @@ static inline uint8_t get_hanging_punctuation(const css_computed_style *style)
 #undef HANGING_PUNCTUATION_SHIFT
 #undef HANGING_PUNCTUATION_MASK
 
-/* #255 background-clip: bits[15] shift 28 (2 bits) */
-#define BACKGROUND_CLIP_INDEX 15
-#define BACKGROUND_CLIP_SHIFT 28
-#define BACKGROUND_CLIP_MASK 0x30000000
 static inline uint8_t get_background_clip(const css_computed_style *style)
 {
-	uint32_t bits = style->i.bits[BACKGROUND_CLIP_INDEX];
-	bits &= BACKGROUND_CLIP_MASK;
-	bits >>= BACKGROUND_CLIP_SHIFT;
-
-	return (bits & 0x3);
+	return (uint8_t)style->i.background_clip;
 }
-#undef BACKGROUND_CLIP_INDEX
-#undef BACKGROUND_CLIP_SHIFT
-#undef BACKGROUND_CLIP_MASK
 
 /* #279 justify-items: bits[15] shift 30 (2 bits) */
 #define JUSTIFY_ITEMS_INDEX 15

@@ -268,6 +268,31 @@ void *macsurf_safe_realloc(void *ptr, size_t size)
     return NULL; /* unreachable */
 }
 
+/* ------------------------------------------------------------------ */
+/* Fallible allocation entry points for recovery-aware subsystems.    */
+/* ------------------------------------------------------------------ */
+void *macsurf_try_alloc(size_t size)
+{
+    if (size == 0) size = 1;
+    return malloc(size);
+}
+
+void *macsurf_try_calloc(size_t count, size_t size)
+{
+    if (count == 0 || size == 0) { count = 1; size = 1; }
+    return calloc(count, size);
+}
+
+void *macsurf_try_realloc(void *ptr, size_t size)
+{
+    if (size == 0) {
+        free(ptr);
+        return NULL;
+    }
+    if (ptr == NULL) return macsurf_try_alloc(size);
+    return realloc(ptr, size);
+}
+
 /* ==================================================================
  * fixes719 (#207)  -  runtime application-partition pointer bounds.
  *

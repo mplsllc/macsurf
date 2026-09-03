@@ -41,6 +41,12 @@ typedef unsigned long bitmap_flags_t;
 /* fixes829 (#256): CSS image-rendering:pixelated/crisp-edges - force the
  * plotter to nearest-neighbor scaling (skip the box-filter downscale). */
 #define BITMAPF_NEAREST 4
+/* CSS background-blend-mode is carried through content redraw and knockout
+ * in spare flag bits. Values match css_background_blend_mode_e. */
+#define BITMAPF_BLEND_SHIFT 8
+#define BITMAPF_BLEND_MASK (0x1fUL << BITMAPF_BLEND_SHIFT)
+#define BITMAPF_BLEND_MODE(m) \
+	(((bitmap_flags_t)(m) & 0x1fUL) << BITMAPF_BLEND_SHIFT)
 
 enum path_command {
 	PLOTTER_PATH_MOVE,

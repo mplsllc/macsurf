@@ -253,7 +253,9 @@ For the verbatim scalar settings and the full file list, see the staged facts in
 When you write a new source file, CodeWarrior won't pick it up on its own — there's no autodiscovery. You add it by hand, and there are two steps that are easy to forget:
 
 1. **Make sure the file's folder is on an access path.** If you drop `my_feature.c` into a folder that has no (non-recursive) access-path entry, the compiler can't find files it references and the linker can't find the object. If it's a brand-new folder, add an access path for it.
-2. **Add the file to the project window.** Project menu **Add Files…**, navigate to the file, and add it to the appropriate group. Until you do this, the file isn't part of the build.
+2. **Add the file to the project window.** Project menu **Add Files…**, navigate to the containing folder (not a full file path), select the `.c` file from the dialog's file list, confirm its row is highlighted, then choose it. Until you do this, the file isn't part of the build.
+
+The add dialog is a folder browser, not a filename field. If navigation is needed, use Go to Folder with the directory only; then select the exact source file in the list. For example, adding `macsurf_capability.c` uses the folder `netsurf/frontends/macos9/`, highlights `macsurf_capability.c`, then clicks **Choose**. Confirm the project window's file count increases by one before building. Headers do not belong in the project list; the access paths resolve them.
 
 The trap here is subtle and has bitten this project more than once: if you add a *new* `.c` file that defines a symbol but forget to add it to the project, an *old* object file that defined the same symbol can still satisfy the linker. The build succeeds, and the new code is silently dead — the crash or wrong behavior only shows up at runtime when the feature is exercised. So whenever a change introduces a new file (a new libcss `p_*.c`/`s_*.c` pair is the classic case), call it out explicitly and add it deliberately. After file changes, do a **Remove Object Code** (Project menu) before rebuilding so CodeWarrior recompiles cleanly rather than relinking stale objects.
 

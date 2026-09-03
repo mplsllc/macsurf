@@ -1,10 +1,40 @@
 # MacSurf Status
 
-**Date:** 2026-07-17
-**Engine HEAD:** fixes894 (MacSurf side, `master`)
+**Date:** 2026-09-01
+**Release baseline:** fixes894 (`master`, MacSurf 2.0.5). **Active development:**
+`workflow` through 34ba58428 (Round 2B opacity hardware checkpoint); this work is not part of a released build.
+
+**Post-release workflow status:** fixes1197–1201 and fixes1203–1209 are shipped;
+fixes1208 native grid `justify-self` is iMac hardware-verified. fixes1210/1211
+replace the About-window Unix audio launcher with in-memory QuickTime playback;
+Gary and Kaija audio are iMac hardware-verified, with no audio files written to disk.
+fixes1215/1216 add longhand `background-origin`; `border-box`, `padding-box`,
+and `content-box` are iMac hardware-verified for raster backgrounds.
+fixes1218–1223 add `background-clip: text`; gradient and repeated-bitmap sources
+are iMac hardware-verified inside glyph masks.
+fixes1165–1168 are iMac hardware-verified: recascade style ownership is clean;
+single-node `background-color` mutations repaint through the fast path; width
+still falls back to full reconvert; and border/outline color mutations repaint
+correctly after synchronizing the box border cache. The focused probe confirms
+text, images, clickability, and geometry remain intact. Follow-on scope is
+tracked in GitHub [#320](https://github.com/mplsllc/macsurf/issues/320).
+
+**Round 2A checkpoint 2026-08-29:** current Round 2A parser/cascade/computed-style checkpoint is hardware-stable — MacSurf build 2026-8-29 12:44:22 launched 2026-8-29 12:45:55 on iMac G3, loaded https://macsurf.org/t.html?run=all, settled, build errors 0, compatibility gaps 0, dropped operations 0, network failures 0, existing crash report stale (predates build). Temporal transition presentation remains Round 2B; no visual transitions expected.
+
+**Round 2A final 2026-08-29 16:09:** Round 2A computed CSS transition specification is hardware-verified — MacSurf build 2026-8-29 16:09 (7060d0673) launched on iMac G3, loaded https://macsurf.org/t.html?run=all (NAV DONE 4829), CodeWarrior build clean (0 errors, MacSurf7060.sit 1622703 bytes), settled, existing crash report stale (2026-08-27 19:12 < 16:09, ignored). #322 remains OPEN; temporal presentation follows in Round 2B.
+
+**Round 2B-2 opacity 2026-09-01:** CSS opacity transition presentation is hardware-verified on the iMac using the existing QuickDraw stipple opacity renderer. The controlled page used the real construct-path recascade: its computed opacity changed from 0 to 1024, the `opacity` descriptor matched (10 s linear), an active effect was created, and the presentation overlay reached an intermediate value of 394 before the plotter consumed it through the stipple path. The observed midpoint was visibly translucent and the final target was solid blue. This is not true alpha blending, and #322 remains OPEN: only the `opacity` transition adapter is hardware-verified; color, background-color, transforms, and layout properties remain outside this checkpoint.
+
 **Current release:** **MacSurf 2.0.5 "HACKADAY"** (2026-07-17) — a polish release over 2.0. Headline: **hackaday.com renders at full desktop width**. The load-bearing fix underneath was browser-wide — every author `font-size` was drawing ~25% too small and CSS `em`/`rem`/`@media` width queries were computing against the wrong number, so pages came up cramped into a narrow column; MacSurf now measures type in real device pixels (#244/#287, fixes859). On top of that: a large modern-CSS pass (justified text #271, soft hyphens #272/#275, `tab-size`/typography cluster #251, box-alignment shorthands #253, logical properties #247, grid auto-track sizing #62, `caret-color`/`accent-color` #252, `background-clip` #255, `image-rendering` #256, inline-`style` rewriters #277); a much more capable on-device JavaScript engine (real `fetch()`/`XMLHttpRequest`, draining Promise chains, `document.cookie`, DOM traversal + `querySelector`, load lifecycle — #283–#302); tracker/ad-network blocking; text/plain rendering inline (#232); rgba backdrop compositing (#227); and a typing-latency dirty-rect fix (#212/#239). Full notes: [release-notes/MacSurf-2.0.5.md](release-notes/MacSurf-2.0.5.md). *(The 2.0, 1.68.1, and v1.4 narratives below are retained as history.)*
 
 **Historical (v1.4 round):** v1.4 "Open House" — **the JavaScript marathon closed.** Twenty-three GitHub issues went from open to closed across fixes319-352 — `setTimeout` / `setInterval` / `requestAnimationFrame`, `window.location` (full surface), `window.history` (`pushState` / `replaceState` / `state`), `URL` + `URLSearchParams`, `element.classList`, `element.style`, `Event` / `CustomEvent` / `MouseEvent` / `KeyboardEvent` constructors, `MutationObserver`, `DOMParser`, `FormData`, `localStorage`, `fetch`, `window.addEventListener` for `load` + `DOMContentLoaded`, `<details>` / `<summary>` click-to-toggle, `hidden` attribute. The purpose-built probe page at `mactrove.com/t.html` scored **`JS 19/19 pass, 0 fail`** on a G3 iMac. Two structural bugs caught along the way: **fixes349** repaired the IIFE per-element installer broken by fixes342's `_noresult` change (`TypeError: [object Object] not callable` on every element wrapper, the install aborted mid-stream and elements lost classList / style / matches / closest / etc); **fixes350** extended `js_fire_event` to dispatch `_winListeners` so `load` / `DOMContentLoaded` actually reach `addEventListener` listeners (was only firing the inline `on<type>` handler).
+
+Later source-level auditing found a partial implementation beneath that probe:
+native child-list and attribute paths queue real records with basic target,
+subtree, type, and attribute-filter matching. It still lacks standards-correct
+per-observer queues, option semantics, record fields, `takeRecords()`,
+character-data observation, and microtask delivery; #105 is reopened in the
+Modern Compatibility Foundation campaign.
 
 Diagnostic + power-user features also landed: **about:cache**, **about:memory**, **about:config**, **about:perf** all render real diagnostic pages (about:perf carries a live counters table including `reformat_ms` captured in `html_reformat`). **View Source** now uses `content_get_source_data` + a `data:text/html` URL — renders inline as HTML in a `<pre>` block (fixes352a fixed the underlying `data:` URL fetcher, which had been a stub returning empty body since launch, so every `data:` URL on every page now works). **Find-in-page** opens a real Carbon dialog (kDocumentWindowClass + TextEdit input + Find / Cancel buttons) routing to `browser_window_search`. **#99 root cause** turned out to be the URL-bar `strstr("://")` heuristic mangling opaque schemes (about:, data:, javascript:, mailto:, file:, resource:) to `https://about:cache` etc; replaced with a proper RFC 3986 scheme scanner that unblocks all five opaque schemes from URL-bar typing.
 
@@ -13,13 +43,13 @@ CSS / gradient fidelity also moved in this window: **fixes348** downgraded alpha
 **Latest release:** **MacSurf 2.0.5 "HACKADAY"** (2026-07-17). Full notes: [release-notes/MacSurf-2.0.5.md](release-notes/MacSurf-2.0.5.md). Predecessor: 2.0 ([notes](release-notes/MacSurf-2.0.md)), 1.68.1 "macQJS" ([notes](release-notes/MacSurf-1.68.1.md)), v1.4 "Open House" ([notes](release-notes/MacSurf-1.4.md)).
 **Last hardware-accepted:** the entire MacSurf 2.0 batch (blank-screen #207, cross-signed HTTPS #206, lazy images #223, text-select cluster, autocomplete #231, typing latency #212, History/Bookmark managers) on a G3 iMac OS 9.2.2 (2026-07-11). The 2.0.5 CSS/JS batch is shipped and awaiting hardware sign-off on the specific reported cases.
 **Companion site:** **[home.macsurf.org](https://home.macsurf.org/)** — server-rendered PHP portal with search, weather, and four news feeds. No JS dependency, class-based CSS only.
-**Open issues on `mplsllc/macsurf`:** ~90, the modern HTML5 / JS / CSS long tail the project intentionally tracks separately (the 2.0.5 batch just closed ~30). Nothing in the long tail blocks real-site rendering.
+**Open issues on `mplsllc/macsurf`:** 74, the modern HTML5 / JS / CSS long tail the project intentionally tracks separately (the 2.0.5 batch just closed ~30). Nothing in the long tail blocks real-site rendering.
 
 ---
 
 ## Where the project sits today
 
-MacSurf is a working web browser for Classic Mac OS 9.1–9.2.2 on PowerPC, built on a NetSurf fork with a Carbon / QuickDraw / Open Transport frontend. As of 2026-05-25 it speaks TLS end-to-end via macTLS (BearSSL on top of Open Transport), so the Go TLS-stripping proxy is no longer on the default path. As of 2026-05-29 (v1.2) the entropy backing those TLS handshakes is **macEntropy v1.0** — SHA-256 accumulator + BearSSL HMAC-DRBG, fed by OT packet jitter, event-loop input, high-res clock, and a persisted seed file. The pre-v1.2 insecure-stub entropy source is closed. **Also as of 2026-05-29 (v1.3), the wire protocol is TLS 1.3** — hand-written per RFC 8446 on BearSSL primitives, X25519 key exchange, ChaCha20-Poly1305 and AES-128-GCM, with transparent fallback to TLS 1.2. First native TLS 1.3 on Classic Mac OS, ever.
+MacSurf is a working web browser for Classic Mac OS 8.6–9.2.2, and Mac OS X 10.0–10.4 via the same Carbon binary, on PowerPC, built on a NetSurf fork with a Carbon / QuickDraw / Open Transport frontend. As of 2026-05-25 it speaks TLS end-to-end via macTLS (BearSSL on top of Open Transport), so the Go TLS-stripping proxy is no longer on the default path. As of 2026-05-29 (v1.2) the entropy backing those TLS handshakes is **macEntropy v1.0** — SHA-256 accumulator + BearSSL HMAC-DRBG, fed by OT packet jitter, event-loop input, high-res clock, and a persisted seed file. The pre-v1.2 insecure-stub entropy source is closed. **Also as of 2026-05-29 (v1.3), the wire protocol is TLS 1.3** — hand-written per RFC 8446 on BearSSL primitives, X25519 key exchange, ChaCha20-Poly1305 and AES-128-GCM, with transparent fallback to TLS 1.2. First native TLS 1.3 on Classic Mac OS, ever.
 
 The build runs on a G3 iMac for current work, with a beige G3 Minitower (Sonnet G4 upgrade) for the initial development arc. The target compiler is CodeWarrior 8 Pro with the 8.3 update, strict C89. The application partition is set to **224 MB preferred / 128 MB minimum, 16 MB stack** — validated stable across heavy JavaScript sites (~208 MB usable heap; on a smaller partition a single large allocation fails as "out of contiguous memory" long before total free is exhausted). That maps to **128 MB RAM minimum, 256 MB recommended, 384 MB for the heaviest JS sites**. Network fetches go direct to the origin over **TLS 1.3 (1.2 fallback)**, using the full Mozilla CA bundle (121 trust anchors) baked into the binary.
 
@@ -39,11 +69,11 @@ The build runs on a G3 iMac for current work, with a beige G3 Minitower (Sonnet 
 - Custom properties + `var()` resolution
 - **Type measured in real device pixels** (2.0.5, #244/#287) — author `font-size`, `em`/`rem`, and `@media` width queries all resolve at 96 dpi like a mainstream browser, so pages lay out at their designed desktop width instead of a cramped column
 - Flexbox: `justify-content`, `align-content`, `align-items`, `align-self`, `order`, `flex-direction`, `flex-wrap`, `flex-basis`, `flex-grow`, `flex-shrink`
-- **CSS Grid (V1 + V2)**: track grammar (`fr`, `repeat()`, `minmax()`), `grid-template-rows`, gaps, explicit placement (`grid-column*`, `grid-row*`, `grid-area`), `grid-template-areas` name lowering, auto-flow occupancy avoidance, **content auto-sized tracks** (2.0.5, #62), `align-items`/`align-self`, and `justify-items` (2.0.5, #279). Placement/span-aware auto sizing and `justify-self` are the open Round-2 remainder.
+- **CSS Grid (V1 + V2)**: track grammar (`fr`, `repeat()`, `minmax()`), `grid-template-rows`, gaps, explicit placement (`grid-column*`, `grid-row*`, `grid-area`), `grid-template-areas` name lowering, auto-flow occupancy avoidance, **content auto-sized tracks** (2.0.5, #62), `align-items`/`align-self`, `justify-items`, and native `justify-self` (fixes1204/1208, iMac hardware-verified). Placement/span-aware auto sizing and minmax composition remain in Grid Round 2.
 - **Box-alignment shorthands** `place-items` / `place-content` / `place-self` (2.0.5, #253) and **CSS Logical Properties** `margin-inline` / `padding-block` / `inset-*` (2.0.5, #247)
 - **Typography** (2.0.5): justified text (#271), soft hyphens `&shy;` (#272/#275), `tab-size`, `text-align-last`, `text-justify`, `word-break` (#251), `caret-color`/`accent-color` (#252), `text-decoration` color/style/thickness (#249) — several first-for-classic-Mac, not in upstream NetSurf
 - **Multi-column layout (V1)**: `column-count`, `column-width`, `column-gap`, `column-rule-*` paint (fixes179 onwards)
-- `border-radius`, `box-shadow`, opacity, linear and radial gradients; **rgba backgrounds composite against the real backdrop** (2.0.5, #227); `background-clip` box values + `background: none` reset (2.0.5, #255/#268)
+- `border-radius`, `box-shadow`, opacity, linear and radial gradients; **rgba backgrounds composite against the real backdrop** (2.0.5, #227); `background-clip` box values plus hardware-verified gradient/bitmap `text` clipping (fixes1218–1223), longhand `background-origin` (fixes1215/1216), all standard `background-blend-mode` values with hardware-verified gradient/bitmap `multiply` (fixes1224/1225), and `background: none` reset (2.0.5, #255/#268)
 - `text-shadow` and `transform` bridged from standard CSS3 via the `cssh_css` preprocessor; the modern-CSS rewriters now also run on inline `style=""` (2.0.5, #277)
 - z-index stacking contexts following CSS 2.1 painting order (fixes147)
 - CSS counters, viewport units (`vh`, `vw`), `aspect-ratio`
@@ -87,7 +117,7 @@ The build runs on a G3 iMac for current work, with a beige G3 Minitower (Sonnet 
 - **Output:** PEF / CFM, PowerPC only
 - **Project file:** `MacSurf.mcp` (binary, not in this repo — see [`builds/MacSurf-BuildPack.sit`](../builds/MacSurf-BuildPack.sit))
 - **Target settings:** 224 MB preferred / 128 MB minimum application partition, 16 MB stack (~208 MB usable heap, validated stable on heavy JS sites; ~76 MB leaner than the old 300/102 config, reclaimed from an oversized stack), 64 MB disk cache budget, 128/16 fetcher pool
-- **Prerequisites:** Mac OS 9.1+, CarbonLib 1.5+, StuffIt Expander, and a real Power Mac (G3 or G4) — or SheepShaver with caveats
+- **Prerequisites:** Mac OS 8.6+ (through Mac OS X 10.4 via the same Carbon binary), CarbonLib 1.6+, StuffIt Expander, and a real Power Mac (G3 or G4) — or SheepShaver with caveats
 - **Cross-dev pre-flight:** Retro68 PowerPC GCC + `scripts/verify_macsurf.sh` for `-std=c89 -pedantic` syntax checks before any fix ships
 
 See [codewarrior-setup.md](codewarrior-setup.md) for the Mac-side build walkthrough and [cross-dev-from-linux.md](cross-dev-from-linux.md) for the Linux-side workflow.
@@ -96,7 +126,7 @@ See [codewarrior-setup.md](codewarrior-setup.md) for the Mac-side build walkthro
 
 ## Current fix round
 
-**fixes876–894 — the 2.0.5 "HACKADAY" batch.** Post-2.0 this line landed the whole CSS-coverage push (fixes771–834), the Facebook Round 2 / JS-engine work (fixes835–875), and the revamp Phase 0/1 batch (fixes876–893), then shipped as 2.0.5. HEAD is **fixes894** (a revert of fixes884/885 — the cert-failure-no-cleartext gate broke bare-domain→http→https redirects like hackernews.com, so the http fallback the retro-http audience relies on was restored for the release, to be fixed forward). Highlights:
+**fixes876–894 — the 2.0.5 "HACKADAY" batch.** Post-2.0 this line landed the whole CSS-coverage push (fixes771–834), the Facebook Round 2 / JS-engine work (fixes835–875), and the revamp Phase 0/1 batch (fixes876–893), then shipped as 2.0.5. The release head is **fixes894** (a revert of fixes884/885 — the cert-failure-no-cleartext gate broke bare-domain→http→https redirects like hackernews.com, so the http fallback the retro-http audience relies on was restored for the release, to be fixed forward). Highlights:
 
 - **Device-pixel type (fixes859, #244/#287)** — the load-bearing fix: `css_unit_len2device_px` at 96 dpi so author `font-size`, `em`/`rem`, and `@media` queries resolve like a mainstream browser. This is what flipped Hackaday (and many sites) from a cramped column to full desktop layout.
 - **Modern-CSS pass (fixes804–834)** — typography cluster, box-alignment shorthands, logical properties, grid auto-track sizing, `justify-items`, `background-clip`, `image-rendering`, inline-`style` rewriters, rgba backdrop compositing.
@@ -123,26 +153,24 @@ See the [release notes](release-notes/) for per-version history.
 
 ## What's queued next
 
-Highest-value remaining work, from [research/css-gap-inventory-2026-07-13.md](research/css-gap-inventory-2026-07-13.md) and the open JS/DOM frontier:
-
-- **`appearance` + form-control styling (#80/#90)** — synthetic CSS-painted controls replacing Carbon Control Manager where `appearance:none` is set. Its own round.
-- **`min-content`/`max-content`/`fit-content` intrinsic sizing** — the structural prerequisite that unblocks `table-layout:auto` and correct flex/grid shrink-to-fit.
-- **Grid Round 2 (#279)** — placement/span-aware auto sizing, minmax composition, `justify-self` (needs the full `bits[16]` computed-style array extended first).
-- **`background-clip: text`** for gradient headings, plus `background-origin`.
-- **Reconvert crash chain** — land the hover/scrollbar/timer fixes so JS DOM mutation can repaint safely, then re-enable reconvert.
-- **Heavy DOM-mutation SPAs** — the open JS frontier (event bubbling/dispatch bridge #264, `getComputedStyle`/`getBoundingClientRect` #265, real in-page interactivity).
+The active roadmap is [masterplan.md](masterplan.md). Current work is the
+**Modern Compatibility Foundation** campaign: first real `matchMedia` /
+`MediaQueryList`, `:is()` / `:where()`, and MutationObserver semantics; then
+selectors, layout observers, modules, bounded browser APIs, and Grid V2.
+CSS Transitions #322 remains at its hardware-verified opacity checkpoint;
+additional adapters are paused pending the post-Grid compatibility census.
 
 ---
 
 ## Known limitations
 
 - **Cache-hit first-paint.** A navigation first-paints the placeholder before the deferred cache-hit delivery completes, so a cached page can flash `about:` before the real content lands. Cache STORE and READ both run; the bug is at the paint-trigger timing, not the fetcher. Open.
-- **Reconvert is off in this release.** JS that mutates the DOM after load won't repaint until the hover/scrollbar/timer crash chain is landed and reconvert is re-enabled.
+- **Reconvert remains deliberately conservative.** Full-document reconstruction is the current safe mutation fallback; incremental layout is future work.
 - **Heavy DOM-mutation SPAs** — GitHub, video, React-heavy apps — don't render. Deep in-page interactivity (event bubbling/dispatch bridge #264, `getComputedStyle`/`getBoundingClientRect` #265) is still being built.
 - **No preemptive threading.** Cooperative `WaitNextEvent` event loop only; all networking yields via `kOTSyncIdleEvent`.
 - **No Carbon mouse-wheel** — the event class was never back-ported to CarbonLib on OS 9; scroll via bar, arrows, Page Up/Down, Home/End.
 - **No subgrid.**
-- **8 grid tracks maximum** per row or column; max 256 children per grid container (excess fall back to the auto-flow path). Grid Round 2 (`justify-self`, placement/span-aware auto sizing, minmax) is the open remainder.
+- **8 grid tracks maximum** per row or column; max 256 children per grid container (excess fall back to the auto-flow path). `minmax()`/`fit-content()` composition, definite-height FR rows, and stretch remain open.
 - **JavaScript Date arithmetic** is anchored to a fixed 2026 baseline because Mac OS 9's `GetDateTime` returns 1904-epoch seconds with no DST handling.
 
 ---
@@ -152,7 +180,7 @@ Highest-value remaining work, from [research/css-gap-inventory-2026-07-13.md](re
 - [architecture.md](architecture.md) — system architecture, module map, networking model
 - [release-notes/](release-notes/) — per-version release notes back to v0.1
 - [css-support.md](css-support.md) — property-by-property CSS audit
-- [research/css-gap-inventory-2026-07-13.md](research/css-gap-inventory-2026-07-13.md) — the deep CSS gap inventory (current ground truth)
+- [masterplan.md](masterplan.md) — maintained development roadmap
 - [codewarrior-setup.md](codewarrior-setup.md) — Mac-side build walkthrough
 - [cross-dev-from-linux.md](cross-dev-from-linux.md) — Linux cross-dev workflow + Retro68 syntax pre-flight
 - [resources.md](resources.md) — the `'carb'` / icon / BNDL resource pipeline

@@ -590,7 +590,15 @@ box_input_text(html_content *html, struct box *box, struct dom_node *node)
 	box_add_child(inline_container, inline_box);
 	box_add_child(box, inline_container);
 
-	return box_textarea_create_textarea(html, box, node);
+	if (box_textarea_create_textarea(html, box, node) == false) {
+		macsurf_debug_log_writef(
+			"WORK form control: textarea widget creation failed"
+			" gadget_type=%d box=%p node=%p",
+			(int) box->gadget->type, (void *) box, (void *) node);
+		return false;
+	}
+
+	return true;
 }
 
 
@@ -1342,9 +1350,213 @@ box_image_pick_srcset(const char *srcset, void *talloc_ctx, char **out)
 	return true;
 }
 
-/* Choose the best image URL for the given <img>/<source>. Promotes
- * data-src / data-original / data-lazy-src / data-srcset / srcset
- * fallbacks when src is missing or looks like a placeholder. */
+/* Is `type` (a <source type="..."> MIME string) something MacSurf can
+ * actually decode? NULL/empty is "no declared type" and returns true -
+ * per the HTML picture-source algorithm, a <source> with no type is NOT
+ * skipped; a real browser attempts to load it. A DECLARED type is checked
+ * against the content factory's actual registered handlers (the same
+ * authority box_special.c's own <object>/<embed> codetype/type gating
+ * already asks, above) rather than a hardcoded MIME list or a file-
+ * extension guess, so this stays correct automatically as decoders are
+ * added or removed - no per-format special case to maintain here. */
+static bool
+box_image_type_supported(const char *type)
+{
+	const char *p;
+	const char *end;
+	lwc_string *itype;
+	lwc_error lerror;
+	bool supported;
+
+	if (type == NULL)
+		return true;
+	p = type;
+	while (ascii_is_space(*p))
+		p++;
+	if (*p == '\0')
+		return true;
+	end = p;
+	while (*end != '\0' && *end != ';' && !ascii_is_space(*end))
+		end++;
+
+	lerror = lwc_intern_string(p, (size_t)(end - p), &itype);
+	if (lerror != lwc_error_ok)
+		return true; /* fail open: don't block a source on an alloc hiccup */
+
+	supported = (content_factory_type_from_mime_type(itype) != CONTENT_NONE);
+	lwc_string_unref(itype);
+	return supported;
+}
+
+/* The HTML parser knows about <picture>/<source>, but the old special-element
+ * path only ever looked at the IMG's own attributes.  That silently selected
+ * the JPEG/PNG fallback on every responsive-image site, despite MacSurf now
+ * having an image/webp handler.  Keep the check deliberately narrow: select
+ * only an explicitly declared image/webp source and otherwise retain the IMG
+ * fallback exactly as before. */
+static bool
+box_image_text_is(const char *value, const char *wanted)
+{
+	char a;
+	char b;
+
+	if (value == NULL || wanted == NULL)
+		return false;
+	while (*wanted != '\0') {
+		a = *value++;
+		b = *wanted++;
+		if (a == '\0')
+			return false;
+		if (a >= 'A' && a <= 'Z')
+			a = (char)(a + ('a' - 'A'));
+		if (b >= 'A' && b <= 'Z')
+			b = (char)(b + ('a' - 'A'));
+		if (a != b)
+			return false;
+	}
+	return (*value == '\0');
+}
+
+static bool
+box_image_node_is(dom_node *node, const char *tag)
+{
+	dom_string *name = NULL;
+	dom_exception err;
+	bool result;
+
+	err = dom_element_get_tag_name((dom_element *)node, &name);
+	if (err != DOM_NO_ERR || name == NULL)
+		return false;
+	result = box_image_text_is(dom_string_data(name), tag);
+	dom_string_unref(name);
+	return result;
+}
+
+/* fixes1318: proper <picture>/<source> selection, replacing the old
+ * "only an explicit type=image/webp source, else fall through to IMG"
+ * special case. Per the HTML picture-source algorithm: walk SOURCE
+ * siblings in document order and use the first one MacSurf can actually
+ * decode - a source with NO type attribute is not skipped (a real
+ * browser attempts to load it), and a DECLARED type is accepted whenever
+ * box_image_type_supported() says the content factory has a handler for
+ * it (JPEG/PNG/GIF/BMP/TIFF/ICO/SVG/WebP today), not just image/webp
+ * specifically. A source whose declared type names a format MacSurf
+ * genuinely cannot decode (e.g. image/avif) is skipped, same as before. */
+static bool
+box_image_resolve_picture_url(dom_node *img, html_content *content,
+		nsurl **out_url)
+{
+	dom_node *parent = NULL;
+	dom_node *child = NULL;
+	dom_node *next = NULL;
+	dom_string *candidate_string = NULL;
+	dom_exception err;
+	char *type = NULL;
+	char *raw = NULL;
+	char *candidate = NULL;
+	bool ok = true;
+
+	*out_url = NULL;
+	err = dom_node_get_parent_node(img, &parent);
+	if (err != DOM_NO_ERR || parent == NULL)
+		return true;
+	if (!box_image_node_is(parent, "picture"))
+		goto done;
+
+	err = dom_node_get_first_child(parent, &child);
+	if (err != DOM_NO_ERR)
+		goto done;
+
+	while (child != NULL) {
+		if (child == img)
+			break;
+		if (box_image_node_is(child, "source")) {
+			type = NULL;
+			if (!box_get_attribute(child, "type", content->bctx,
+					&type)) {
+				ok = false;
+				goto done;
+			}
+			if (box_image_type_supported(type)) {
+				raw = NULL;
+				if (!box_get_attribute(child, "srcset", content->bctx,
+						&raw)) {
+					ok = false;
+					goto done;
+				}
+				if (raw == NULL || raw[0] == '\0') {
+					raw = NULL;
+					if (!box_get_attribute(child, "src", content->bctx,
+							&raw)) {
+						ok = false;
+						goto done;
+					}
+				}
+				if (raw != NULL && raw[0] != '\0') {
+					if (!box_image_pick_srcset(raw, content->bctx,
+							&candidate)) {
+						ok = false;
+						goto done;
+					}
+					if (candidate == NULL)
+						candidate = raw;
+					if (candidate[0] != '\0') {
+						err = dom_string_create_interned(
+							(const uint8_t *)candidate,
+							strlen(candidate), &candidate_string);
+						if (err != DOM_NO_ERR ||
+								candidate_string == NULL)
+							goto done;
+						ok = box_extract_link(content, candidate_string,
+								content->base_url, out_url);
+						/* fixes1319: per-source selection trace removed -
+						 * object.c's macsurf_log_final_image() reports
+						 * every loaded image from one place. */
+						goto done;
+					}
+				}
+			}
+		}
+		err = dom_node_get_next_sibling(child, &next);
+		if (err != DOM_NO_ERR) {
+			ok = false;
+			goto done;
+		}
+		dom_node_unref(child);
+		child = next;
+		next = NULL;
+	}
+
+done:
+	if (candidate_string != NULL)
+		dom_string_unref(candidate_string);
+	if (child != NULL)
+		dom_node_unref(child);
+	if (next != NULL)
+		dom_node_unref(next);
+	if (parent != NULL)
+		dom_node_unref(parent);
+	return ok;
+}
+
+/* Choose the best image URL for the given <img>/<source>. srcset (falling
+ * back to data-srcset) is the PREFERRED source whenever src is a real,
+ * usable pointer, not just a rescue for a missing one - fixes1318 (see
+ * box_image_resolve_url's history: fixes168b wrote src-wins-if-usable back
+ * when MacSurf's decoder only covered JPEG/PNG/GIF/BMP, so treating srcset
+ * as a last resort was a deliberate "stick to what we can decode" survival
+ * policy. Now that box_image_type_supported() (used by the <picture> path
+ * above) reflects whatever the content factory actually has registered,
+ * there is no format reason left to prefer src; this matches how srcset
+ * behaves in real browsers regardless. box_image_pick_srcset only ever
+ * takes the first candidate (no width/density matching, no format
+ * filtering) - deliberately no .webp/format string-matching here, the
+ * fetch+mimesniff pipeline decides what a candidate actually is once
+ * fetched, same as it already does for a plain src.
+ *
+ * data-src / data-original / data-lazy-src are a SEPARATE concern (lazy-
+ * load placeholder promotion, fixes168b) and keep their own precedence:
+ * only consulted when src itself is missing/empty/a placeholder. */
 static bool
 box_image_resolve_url(dom_node *n, html_content *content, nsurl **out_url)
 {
@@ -1356,11 +1568,51 @@ box_image_resolve_url(dom_node *n, html_content *content, nsurl **out_url)
 	bool ok;
 
 	*out_url = NULL;
+	if (!box_image_resolve_picture_url(n, content, out_url))
+		return false;
+	if (*out_url != NULL)
+		return true;
 
 	err = dom_element_get_attribute(n, corestring_dom_src, &s);
 	if (err == DOM_NO_ERR && s != NULL) {
 		const char *raw = dom_string_data(s);
 		if (!box_image_src_looks_placeholder(raw)) {
+			char *srcset_raw = NULL;
+
+			if (!box_get_attribute(n, "data-srcset",
+					content->bctx, &srcset_raw)) {
+				dom_string_unref(s);
+				return false;
+			}
+			if (srcset_raw == NULL || srcset_raw[0] == '\0') {
+				srcset_raw = NULL;
+				if (!box_get_attribute(n, "srcset",
+						content->bctx, &srcset_raw)) {
+					dom_string_unref(s);
+					return false;
+				}
+			}
+			if (srcset_raw != NULL && srcset_raw[0] != '\0') {
+				if (!box_image_pick_srcset(srcset_raw,
+						content->bctx, &srcset_url)) {
+					dom_string_unref(s);
+					return false;
+				}
+			}
+			if (srcset_url != NULL) {
+				dom_string *promoted = NULL;
+				dom_exception err2;
+				dom_string_unref(s);
+				err2 = dom_string_create_interned(
+						(const uint8_t *)srcset_url,
+						strlen(srcset_url), &promoted);
+				if (err2 != DOM_NO_ERR || promoted == NULL)
+					return true;
+				ok = box_extract_link(content, promoted,
+						content->base_url, out_url);
+				dom_string_unref(promoted);
+				return ok;
+			}
 			ok = box_extract_link(content, s,
 					content->base_url, out_url);
 			dom_string_unref(s);
@@ -2465,15 +2717,23 @@ static bool box_textarea(dom_node *n,
 {
 	/* Get the form_control for the DOM node */
 	box->gadget = html_forms_get_control_for_node(content->forms, n);
-	if (box->gadget == NULL)
+	if (box->gadget == NULL) {
+		macsurf_debug_log_writef(
+			"WORK form control: textarea has no gadget node=%p", (void *) n);
 		return false;
+	}
 
 	box->flags |= IS_REPLACED;
 	box->gadget->html = content;
 	box->gadget->box = box;
 
-	if (!box_input_text(content, box, n))
+	if (!box_input_text(content, box, n)) {
+		macsurf_debug_log_writef(
+			"WORK form control: textarea box setup failed"
+			" gadget_type=%d box=%p node=%p",
+			(int) box->gadget->type, (void *) box, (void *) n);
 		return false;
+	}
 
 	*convert_children = false;
 	return true;

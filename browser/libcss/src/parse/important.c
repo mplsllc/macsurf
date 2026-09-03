@@ -59,6 +59,7 @@ css_error css__parse_important(css_language *c,
 	return CSS_OK;
 }
 
+
 /**
  * Make a style important
  *
@@ -200,6 +201,31 @@ void css__make_style_important(css_style *style)
 			case CSS_PROP_COLOR:
 				if (value == COLOR_SET)
 					offset++; /* colour */
+				break;
+
+			case CSS_PROP_FILL:
+				if (value == FILL_SET)
+					offset++; /* colour */
+				break;
+
+			case CSS_PROP_TRANSITION_PROPERTY:
+				if (value == CSS_TRANSITION_PROPERTY_SET)
+					offset += 1 + bytecode[offset] * 3;
+				break;
+
+			case CSS_PROP_TRANSITION_DURATION:
+				if (value == CSS_TRANSITION_DURATION_SET)
+					offset += 1 + bytecode[offset];
+				break;
+
+			case CSS_PROP_TRANSITION_TIMING_FUNCTION:
+				if (value == CSS_TRANSITION_TIMING_FUNCTION_SET)
+					offset += 1 + bytecode[offset] * 7;
+				break;
+
+			case CSS_PROP_TRANSITION_DELAY:
+				if (value == CSS_TRANSITION_DELAY_SET)
+					offset += 1 + bytecode[offset];
 				break;
 
 			case CSS_PROP_COLUMN_COUNT:
@@ -450,4 +476,3 @@ void css__make_style_important(css_style *style)
 	}
 
 }
-

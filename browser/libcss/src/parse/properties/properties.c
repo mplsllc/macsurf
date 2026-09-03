@@ -197,7 +197,16 @@ const css_prop_handler property_handlers[LAST_PROP + 1 - FIRST_PROP] =
 	css__parse_hanging_punctuation,
 	css__parse_background_clip,   /* #255 */
 	css__parse_justify_items,   /* #279 */
-	css__parse_appearance   /* #80 */
+	css__parse_appearance,   /* #80 */
+	css__parse_justify_self,   /* #279 follow-up */
+	css__parse_background_origin,
+	css__parse_background_blend_mode,
+	css__parse_fill,
+	css__parse_transition,
+	css__parse_transition_property,
+	css__parse_transition_duration,
+	css__parse_transition_timing_function,
+	css__parse_transition_delay
 };
 
 /** Mapping from property bytecode index to bytecode unit class mask. */
@@ -208,6 +217,8 @@ const uint32_t property_unit_mask[CSS_N_PROPERTIES] = {
 	[CSS_PROP_BACKGROUND_IMAGE]      = UNIT_MASK_BACKGROUND_IMAGE,
 	[CSS_PROP_BACKGROUND_POSITION]   = UNIT_MASK_BACKGROUND_POSITION,
 	[CSS_PROP_BACKGROUND_REPEAT]     = UNIT_MASK_BACKGROUND_REPEAT,
+	[CSS_PROP_BACKGROUND_ORIGIN]     = 0,
+	[CSS_PROP_BACKGROUND_BLEND_MODE] = 0,
 	[CSS_PROP_BORDER_COLLAPSE]       = UNIT_MASK_BORDER_COLLAPSE,
 	[CSS_PROP_BORDER_SPACING]        = UNIT_MASK_BORDER_SPACING,
 	[CSS_PROP_BORDER_TOP_COLOR]      = UNIT_MASK_BORDER_SIDE_COLOR,
@@ -333,6 +344,7 @@ const uint32_t property_unit_mask[CSS_N_PROPERTIES] = {
 	[CSS_PROP_TEXT_DECORATION_THICKNESS] = 0,
 	[CSS_PROP_MACSURF_HSTRIPE_BG]    = 0,
 	[CSS_PROP_MACSURF_DOTGRID]       = 0,
+	[CSS_PROP_JUSTIFY_SELF]          = 0,
 	[CSS_PROP_BREAK_AFTER]		 = UNIT_MASK_BREAK_AFTER,	[CSS_PROP_BREAK_BEFORE]          = UNIT_MASK_BREAK_BEFORE,
 	[CSS_PROP_BREAK_INSIDE]          = UNIT_MASK_BREAK_INSIDE,
 	[CSS_PROP_COLUMN_COUNT]          = UNIT_MASK_COLUMN_COUNT,
@@ -356,4 +368,9 @@ const uint32_t property_unit_mask[CSS_N_PROPERTIES] = {
 	[CSS_PROP_FLEX_WRAP]             = UNIT_MASK_FLEX_WRAP,
 	[CSS_PROP_JUSTIFY_CONTENT]       = UNIT_MASK_JUSTIFY_CONTENT,
 	[CSS_PROP_ORDER]                 = UNIT_MASK_ORDER,
+	[CSS_PROP_FILL]                  = 0,
+	[CSS_PROP_TRANSITION_PROPERTY]   = 0,
+	[CSS_PROP_TRANSITION_DURATION]   = 0,
+	[CSS_PROP_TRANSITION_TIMING_FUNCTION] = 0,
+	[CSS_PROP_TRANSITION_DELAY]      = 0,
 };

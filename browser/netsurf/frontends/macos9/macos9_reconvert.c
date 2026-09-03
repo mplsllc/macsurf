@@ -27,6 +27,7 @@
 
 #include "macos9.h"
 #include "macsurf_debug.h"
+#include "macsurf_diag.h"		/* MacSurf Trace 1c: batch / render scope  */
 #include "macos9_reconvert.h"
 
 #include "netsurf/content.h"		/* content_get_type, CONTENT_HTML */
@@ -120,13 +121,23 @@ struct macos9_reconvert_pending {
 	unsigned long   token;
 	/* fixes910 Phase 0 - WHAT changed. `node` is an opaque, REFERENCED
 	 * dom_node (never dereferenced on this side; see macos9_reconvert.h for
-	 * why the ref is mandatory across the debounce). `multi` means more than
-	 * one distinct node/kind mutated before we fired, so precision is gone
-	 * and the consumer must assume the whole document - which is exactly
-	 * what it does today regardless. Recorded only; no consumer yet. */
+	 * why the ref is mandatory across the debounce). `multi` (a.k.a.
+	 * multi_node_or_kind) means more than one distinct node/kind mutated
+	 * before we fired, so precision is gone and the consumer must assume the
+	 * whole document. */
 	void           *node;
 	int             kind;
-	int             multi;
+	int             multi;		/* multi_node_or_kind (R2: independent of task) */
+	/* MacSurf Trace 1c: this slot IS one mutation batch (R1: batch belongs
+	 * to a document, allocated when this per-content slot is created; merged
+	 * marks keep batch_id). The tuple is frozen at mutation time -- the
+	 * debounced callback NEVER re-reads current scope (R3). */
+	unsigned long   batch_id;
+	unsigned long   nav;
+	unsigned long   frame;
+	unsigned long   doc;
+	unsigned long   script;
+	unsigned long   task;
 };
 
 /* fixes910 Phase 0 - implemented in content/handlers/html/html.c, where the real
@@ -137,6 +148,14 @@ extern void macsurf_reconvert_node_unref(void *n);
 
 static struct macos9_reconvert_pending g_pending[RECONVERT_MAX_PENDING];
 static int g_pending_overflow = 0;
+static int g_opacity_diag_mutations = 0;
+static int g_opacity_diag_paths = 0;
+
+/* MacSurf Trace 1c: last batch opened this debounce episode -- the mutcensus
+ * line reports its join keys (doc/batch/task). When more than one document
+ * mutated in the window, `g_episode_batches` > 1 flags it. */
+static struct ms_diag_provenance g_last_prov;
+static int g_episode_batches;
 
 /* fixes1024 - current debounce, doubled while only cosmetic batches arrive. */
 static int g_reconvert_debounce_ms = RECONVERT_DEBOUNCE_MS;
@@ -183,6 +202,26 @@ extern int macos9_content_token_valid(struct content *c, unsigned long token);
 static unsigned long g_mut_counts[MACOS9_DOMMUT_SETATTR_STYLE + 1];
 static unsigned long g_mut_total = 0;
 
+static long g_style_fast_attempt = 0;
+static long g_style_fast_commit = 0;
+static long g_style_fast_fallback = 0;
+static long g_inherited_color_attempt = 0;
+static long g_inherited_color_commit = 0;
+static long g_inherited_color_fallback = 0;
+
+static int
+macos9_reconvert_batch_has_structural_mutation(void)
+{
+	int kind;
+	for (kind = 0; kind <= MACOS9_DOMMUT_SETATTR_STYLE; kind++) {
+		if (kind != MACOS9_DOMMUT_SETATTR_CLASS &&
+			kind != MACOS9_DOMMUT_SETATTR_STYLE &&
+			g_mut_counts[kind] != 0)
+			return 1;
+	}
+	return 0;
+}
+
 static void macos9_reconvert_census_dump(void)
 {
 	if (g_mut_total == 0) {
@@ -193,6 +232,13 @@ static void macos9_reconvert_census_dump(void)
 	 * understands %d, %ld, %p, %s and %% ONLY. An unsupported specifier is
 	 * emitted literally, which is exactly what fixes925/926 did -- the whole
 	 * census round printed its format string and produced no data. */
+	/* MacSurf Trace 1c: join keys on their own line -- macsurf_debug_log_writef
+	 * caps at 255 bytes and the census line is already near it. */
+	macsurf_debug_log_writef(
+		"LIFE mutcensus doc=%ld batch=%ld task=%ld script=%ld batches=%ld",
+		(long) g_last_prov.doc, (long) g_last_prov.batch,
+		(long) g_last_prov.task, (long) g_last_prov.script,
+		(long) g_episode_batches);
 	macsurf_debug_log_writef(
 		"LIFE mutcensus total=%ld setattr=%ld rmattr=%ld text=%ld "
 		"innerhtml=%ld append=%ld remove=%ld insert=%ld chardata=%ld "
@@ -209,6 +255,13 @@ static void macos9_reconvert_census_dump(void)
 		(long) g_mut_counts[MACOS9_DOMMUT_UNKNOWN],
 		(long) g_mut_counts[MACOS9_DOMMUT_SETATTR_CLASS],
 		(long) g_mut_counts[MACOS9_DOMMUT_SETATTR_STYLE]);
+	if (g_style_fast_attempt > 0) {
+		macsurf_debug_log_writef("LIFE STYLEFAST attempt=%ld commit=%ld fallback=%ld",
+			g_style_fast_attempt, g_style_fast_commit, g_style_fast_fallback);
+		g_style_fast_attempt = 0;
+		g_style_fast_commit = 0;
+		g_style_fast_fallback = 0;
+	}
 	memset(g_mut_counts, 0, sizeof(g_mut_counts));
 	g_mut_total = 0;
 }
@@ -234,6 +287,12 @@ macos9_reconvert_slot_clear(int i)
 	g_pending[i].c = NULL;
 	g_pending[i].token = 0;
 	g_pending[i].multi = 0;
+	g_pending[i].batch_id = 0;
+	g_pending[i].nav = 0;
+	g_pending[i].frame = 0;
+	g_pending[i].doc = 0;
+	g_pending[i].script = 0;
+	g_pending[i].task = 0;
 }
 
 /* Record c as dirty. Idempotent per content, so a burst of mutations on one
@@ -244,10 +303,13 @@ macos9_reconvert_slot_clear(int i)
  * so a consumer can only ever be MORE conservative than the truth, never less.
  * Behaviour is unchanged today - nothing reads these fields yet. */
 static void
-macos9_reconvert_pending_add(struct content *c, void *node, int kind)
+macos9_reconvert_pending_add(struct content *c, void *node, int kind,
+	const struct ms_diag_provenance *prov)
 {
 	int i;
 	int freeslot = -1;
+	unsigned long mtask = (prov != (const struct ms_diag_provenance *) 0)
+		? prov->task : 0;
 
 	if (c == NULL)
 		return;
@@ -258,10 +320,18 @@ macos9_reconvert_pending_add(struct content *c, void *node, int kind)
 			 * validate against at fire time. */
 			g_pending[i].token = macos9_content_token(c);
 
+			/* MacSurf Trace 1c: this mark joins the existing batch;
+			 * keep its batch_id, accumulate the count + task-mix. */
+			ms_diag_batch_add(g_pending[i].batch_id, kind, mtask);
+			g_last_prov.batch = g_pending[i].batch_id;
+			g_last_prov.doc = g_pending[i].doc;
+
 			/* Merge this mutation into what the slot already holds.
 			 * Same node AND same kind = the same logical edit
 			 * repeating (a textContent loop), so stay precise;
-			 * anything else means we can no longer name one site. */
+			 * anything else means we can no longer name one site.
+			 * R2: node/kind precision loss is SEPARATE from task-mix
+			 * (tracked inside the batch record). */
 			if (g_pending[i].multi) {
 				return;			/* already coarse */
 			}
@@ -287,6 +357,30 @@ macos9_reconvert_pending_add(struct content *c, void *node, int kind)
 	g_pending[freeslot].node = macsurf_reconvert_node_ref(node);
 	g_pending[freeslot].kind = (node != NULL) ? kind : MACOS9_DOMMUT_UNKNOWN;
 	g_pending[freeslot].multi = (node == NULL) ? 1 : 0;
+
+	/* MacSurf Trace 1c (R1): a fresh per-content slot == a fresh batch. */
+	if (prov != (const struct ms_diag_provenance *) 0) {
+		g_pending[freeslot].nav = prov->nav;
+		g_pending[freeslot].frame = prov->frame;
+		g_pending[freeslot].doc = prov->doc;
+		g_pending[freeslot].script = prov->script;
+		g_pending[freeslot].task = prov->task;
+	}
+	g_pending[freeslot].batch_id = ms_diag_batch_open(prov);
+	ms_diag_batch_add(g_pending[freeslot].batch_id, kind, mtask);
+	g_last_prov.batch = g_pending[freeslot].batch_id;
+	g_last_prov.doc = g_pending[freeslot].doc;
+	g_last_prov.task = g_pending[freeslot].task;
+	g_last_prov.script = g_pending[freeslot].script;
+	g_last_prov.nav = g_pending[freeslot].nav;
+	g_last_prov.frame = g_pending[freeslot].frame;
+	g_episode_batches++;
+	if (g_opacity_diag_mutations < 32) {
+		g_opacity_diag_mutations++;
+		macsurf_debug_log_writef(
+			"LIFE 2B2 mutation kind=%d node=%p batch=%ld",
+			kind, node, (long)g_pending[freeslot].batch_id);
+	}
 }
 
 /* fixes1016 - is a JS DOM mutation awaiting its reconvert for this content?
@@ -527,6 +621,17 @@ macos9_reconvert_sync_reasons(long *notdone, long *active, long *paint,
 void
 macos9_reconvert_sync_reset(void)
 {
+	/* Navigation summary: unlike the mutation census (per batch), these
+	 * counters are intentionally accumulated until the JS navigation reset. */
+	if (g_inherited_color_attempt != 0) {
+		macsurf_debug_log_writef(
+			"LIFE INHERITEDCOLOR attempt=%ld commit=%ld fallback=%ld",
+			g_inherited_color_attempt, g_inherited_color_commit,
+			g_inherited_color_fallback);
+	}
+	g_inherited_color_attempt = 0;
+	g_inherited_color_commit = 0;
+	g_inherited_color_fallback = 0;
 	g_sync_flushes  = 0;
 	g_sync_declined = 0;
 	g_sync_us       = 0;
@@ -574,6 +679,8 @@ macos9_reconvert_flush_now(void *cv)
 	double t0;
 	int i;
 	int rc;
+	struct ms_diag_render_scope ms_rs;	/* MacSurf Trace 1c */
+	int ms_rs_open = 0;
 
 	if (c == NULL)
 		return 0;
@@ -646,12 +753,37 @@ macos9_reconvert_flush_now(void *cv)
 		g_sync_r_budget++; g_sync_declined++; return 0;
 	}
 
+	/* MacSurf Trace 1c: this synchronous flush IS a render transaction.
+	 * Build the frozen descriptor from c's pending slot (R3). */
+	for (i = 0; i < RECONVERT_MAX_PENDING; i++) {
+		if (g_pending[i].c == c) {
+			struct ms_diag_provenance ms_prov;
+			ms_prov.nav = g_pending[i].nav;
+			ms_prov.frame = g_pending[i].frame;
+			ms_prov.doc = g_pending[i].doc;
+			ms_prov.script = g_pending[i].script;
+			ms_prov.task = g_pending[i].task;
+			ms_prov.batch = g_pending[i].batch_id;
+			ms_prov.pass = 0;
+			ms_diag_batch_freeze(g_pending[i].batch_id);
+			(void) ms_diag_render_enter(&ms_rs, MS_RENDER_RECONVERT,
+				&ms_prov);
+			ms_rs_open = 1;
+			break;
+		}
+	}
+
 	in_flush = 1;
 	t0 = macos9_micros();
 	rc = html_reconvert_content(c);	/* SYNCHRONOUS -- see fixes903 */
 	in_flush = 0;
 
 	if (rc != 0) {
+		if (ms_rs_open) {
+			ms_diag_render_leave(&ms_rs, MS_RRES_QUEUED,
+				MS_SREASON_NONE);
+			ms_rs_open = 0;
+		}
 		/* Busy for a reason html_reconvert owns that we did not screen
 		 * for above (mid-layout, a convert already in flight, or -- the
 		 * dominant case on hardware -- no select_ctx yet, which arrives
@@ -667,6 +799,11 @@ macos9_reconvert_flush_now(void *cv)
 
 	g_sync_us += (long)(macos9_micros() - t0);
 	g_sync_flushes++;
+
+	if (ms_rs_open) {
+		ms_diag_render_leave(&ms_rs, MS_RRES_DONE, MS_SREASON_NONE);
+		ms_rs_open = 0;
+	}
 
 	/* This flush answered every pending mutation for c, so retire its
 	 * slots -- otherwise the debounced callback rebuilds the same tree
@@ -719,6 +856,16 @@ macos9_reconvert_cb(void *p)
 	int i;
 	int busy = 0;
 	int did_one = 0;
+	/* MacSurf Trace 1c: one render transaction per pending slot. Opened
+	 * inside the loop, closed at the TOP of the next iteration and once more
+	 * after the loop -- so exactly one _leave runs per _enter regardless of
+	 * which `continue` fired. */
+	struct ms_diag_render_scope ms_rs;
+	int ms_rs_open = 0;
+	int ms_rs_result = MS_RRES_FALLBACK;
+	extern int html_reconvert_fast_style(struct content *c, void *node);
+	extern int html_reconvert_fast_inherited_color(struct content *c,
+			void *node);
 
 	(void) p;	/* dedup key only - value is never dereferenced */
 
@@ -753,6 +900,13 @@ macos9_reconvert_cb(void *p)
 	 * whatever the front window happens to hold. See the pending-set comment
 	 * above for why those are not the same thing once frames are involved. */
 	for (i = 0; i < RECONVERT_MAX_PENDING; i++) {
+		/* close the previous slot's render transaction */
+		if (ms_rs_open) {
+			ms_diag_render_leave(&ms_rs, ms_rs_result,
+				MS_SREASON_NONE);
+			ms_rs_open = 0;
+		}
+
 		c = g_pending[i].c;
 		if (c == NULL)
 			continue;
@@ -791,7 +945,16 @@ macos9_reconvert_cb(void *p)
 					break;
 				}
 			}
+			/* A style edit has a correctness path: either the existing
+			 * single-box paint path, the inherited-colour transaction, or
+			 * a real fallback reconvert.  Never suppress it merely because
+			 * two earlier cosmetic batches ran: a multi-style batch can
+			 * contain geometry (for example parent colour plus child width).
+			 * Keep the animation-churn cap for the unsupported precise class
+			 * case only. */
 			if (!any_structural &&
+			    g_pending[i].multi == 0 &&
+			    g_pending[i].kind == MACOS9_DOMMUT_SETATTR_CLASS &&
 			    g_consecutive_cosmetic >=
 			    RECONVERT_COSMETIC_MAX_CONSECUTIVE) {
 				macsurf_debug_log_writef(
@@ -808,6 +971,76 @@ macos9_reconvert_cb(void *p)
 			}
 		}
 
+		/* MacSurf Trace 1c: open this slot's render transaction. R3 --
+		 * the descriptor is FROZEN from the slot's mutation-time tuple;
+		 * the fast paths below read it back via ms_diag_cur_provenance(),
+		 * never re-querying the live scope. */
+		{
+			struct ms_diag_provenance ms_prov;
+			ms_prov.nav = g_pending[i].nav;
+			ms_prov.frame = g_pending[i].frame;
+			ms_prov.doc = g_pending[i].doc;
+			ms_prov.script = g_pending[i].script;
+			ms_prov.task = g_pending[i].task;
+			ms_prov.batch = g_pending[i].batch_id;
+			ms_prov.pass = 0;
+			ms_diag_batch_freeze(g_pending[i].batch_id);
+			(void) ms_diag_render_enter(&ms_rs, MS_RENDER_RECONVERT,
+				&ms_prov);
+			ms_rs_open = 1;
+			ms_rs_result = MS_RRES_FALLBACK;
+		}
+
+		if (g_pending[i].multi == 0 && g_pending[i].kind == MACOS9_DOMMUT_SETATTR_STYLE && g_pending[i].node != NULL) {
+			if (c->status == CONTENT_STATUS_READY || c->status == CONTENT_STATUS_DONE) {
+				int fs_rc;
+				g_style_fast_attempt++;
+				if (g_opacity_diag_paths < 32) {
+					g_opacity_diag_paths++;
+					macsurf_debug_log_writef("LIFE 2B2 path=fast node=%p",
+						g_pending[i].node);
+				}
+				fs_rc = html_reconvert_fast_style(c, g_pending[i].node);
+				ms_diag_render_stage(MS_STAGE_STYLEFAST,
+					fs_rc == 0 ? MS_SRES_COMMIT : MS_SRES_FALLBACK,
+					MS_SREASON_NONE, 0, 0, 0,
+					(const char *) 0, 0);
+				if (fs_rc == 0) {
+					g_style_fast_commit++;
+					macos9_reconvert_slot_clear(i);
+					did_one = 1;
+					g_mut_counts[MACOS9_DOMMUT_SETATTR_STYLE]--;
+					g_mut_total--;
+					ms_rs_result = MS_RRES_DONE;
+					continue;
+				}
+				g_style_fast_fallback++;
+				/* A parent foreground colour can change every inheriting
+				 * descendant.  Only try this after the existing single-box
+				 * background/border/outline path declined, and never when the
+				 * batch also contains a structural mutation. */
+				if (!macos9_reconvert_batch_has_structural_mutation()) {
+					g_inherited_color_attempt++;
+					if (html_reconvert_fast_inherited_color(c,
+							g_pending[i].node) == 0) {
+						g_inherited_color_commit++;
+						macos9_reconvert_slot_clear(i);
+						did_one = 1;
+						g_mut_counts[MACOS9_DOMMUT_SETATTR_STYLE]--;
+						g_mut_total--;
+						ms_rs_result = MS_RRES_DONE;
+						continue;
+					}
+					g_inherited_color_fallback++;
+				}
+			}
+		}
+		if (g_opacity_diag_paths < 32) {
+			g_opacity_diag_paths++;
+			macsurf_debug_log_writef("LIFE 2B2 path=construct node=%p",
+				g_pending[i].node);
+		}
+
 		rc = html_reconvert_content(c);	/* 0 = queued, !=0 = busy */
 		macsurf_debug_log_writef(
 			"WORK reconvert: html_reconvert_content rc=%d c=%p", rc,
@@ -817,10 +1050,12 @@ macos9_reconvert_cb(void *p)
 			 * slot and re-arm, so a busy frame is retried rather than
 			 * silently dropped. */
 			busy = 1;
+			ms_rs_result = MS_RRES_QUEUED;
 			continue;
 		}
 		macos9_reconvert_slot_clear(i);
 		did_one = 1;
+		ms_rs_result = MS_RRES_DONE;
 
 		/* fixes1135 - track consecutive cosmetic-only reconverts. */
 		{
@@ -848,6 +1083,12 @@ macos9_reconvert_cb(void *p)
 		 * check or the consecutive-cosmetic tracker, both of which decide
 		 * from those counts. */
 		macos9_reconvert_census_dump();
+	}
+
+	/* MacSurf Trace 1c: close the last slot's render transaction. */
+	if (ms_rs_open) {
+		ms_diag_render_leave(&ms_rs, ms_rs_result, MS_SREASON_NONE);
+		ms_rs_open = 0;
 	}
 
 	/* Overflow fallback: more distinct frames mutated than the table holds,
@@ -894,6 +1135,8 @@ macos9_js_mark_dom_dirty(struct content *c)
 void
 macos9_js_mark_dom_dirty_node(struct content *c, void *node, int kind)
 {
+	struct ms_diag_provenance ms_prov;	/* MacSurf Trace 1c */
+
 	/* fixes489 - master switch. Still here as an emergency global
 	 * kill (macsurf_js_set_reconvert_enabled(0)); nothing currently calls
 	 * the setter, so it stays at its compiled-in default (armed - see
@@ -944,6 +1187,25 @@ macos9_js_mark_dom_dirty_node(struct content *c, void *node, int kind)
 	}
 	g_mut_total++;
 
+	/* MacSurf Trace 1c: freeze the causal tuple HERE, at mutation time. The
+	 * debounced callback fires ~400ms+ later and must NEVER ask "what task
+	 * is running now" (R3). nav is birth-stamped on the content; script/task
+	 * come from the live execution scope. */
+	{
+		extern unsigned long content_get_nav_id(struct content *c);
+		extern unsigned long html_content_get_doc_id(struct content *c);
+		extern unsigned long html_content_get_frame_id(struct content *c);
+		unsigned long ms_cur_nav = ms_diag_cur_nav();
+		ms_prov.nav = (ms_cur_nav != 0) ? ms_cur_nav
+			: content_get_nav_id(c);
+		ms_prov.frame = html_content_get_frame_id(c);
+		ms_prov.doc = html_content_get_doc_id(c);
+		ms_prov.script = ms_diag_cur_script();
+		ms_prov.task = ms_diag_cur_task();
+		ms_prov.batch = 0;
+		ms_prov.pass = 0;
+	}
+
 	/* fixes1024 - cadence control, decided by WHAT changed. */
 	if (macos9_reconvert_kind_is_cosmetic(kind)) {
 		if (g_reconvert_debounce_ms < RECONVERT_DEBOUNCE_MAX_MS) {
@@ -973,10 +1235,12 @@ macos9_js_mark_dom_dirty_node(struct content *c, void *node, int kind)
 	 * burst keep the ORIGINAL first-mark time; the callback measures the
 	 * mark-to-fire window against this (see the RECONVERT DEFERRED
 	 * diagnostic there) and resets it when the batch is consumed. */
-	if (g_first_mark_tick == 0)
+	if (g_first_mark_tick == 0) {
 		g_first_mark_tick = (unsigned long) TickCount();
+		g_episode_batches = 0;	/* MacSurf Trace 1c: new debounce episode */
+	}
 
-	macos9_reconvert_pending_add(c, node, kind);
+	macos9_reconvert_pending_add(c, node, kind, &ms_prov);
 	/* fixes1148 - DON'T reschedule if already queued.
 	 *
 	 * The old code called macos9_schedule() on EVERY mutation, which

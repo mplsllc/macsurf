@@ -68,6 +68,8 @@ PROPERTY_FUNCS(hyphens);
 PROPERTY_FUNCS(text_justify);
 PROPERTY_FUNCS(hanging_punctuation);
 PROPERTY_FUNCS(background_clip);   /* #255 */
+PROPERTY_FUNCS(background_origin);
+PROPERTY_FUNCS(background_blend_mode);
 PROPERTY_FUNCS(justify_items);   /* #279 */
 PROPERTY_FUNCS(overflow_wrap);
 PROPERTY_FUNCS(macsurf_grid_rows);
@@ -89,6 +91,7 @@ PROPERTY_FUNCS(box_decoration_break);
 PROPERTY_FUNCS(tab_size);
 PROPERTY_FUNCS(image_rendering);
 PROPERTY_FUNCS(appearance);
+PROPERTY_FUNCS(justify_self);
 PROPERTY_FUNCS(text_decoration_color);
 PROPERTY_FUNCS(text_decoration_style);
 PROPERTY_FUNCS(text_decoration_thickness);
@@ -199,6 +202,11 @@ PROPERTY_FUNCS(width);
 PROPERTY_FUNCS(word_spacing);
 PROPERTY_FUNCS(writing_mode);
 PROPERTY_FUNCS(z_index);
+PROPERTY_FUNCS(fill);
+PROPERTY_FUNCS(transition_property);
+PROPERTY_FUNCS(transition_duration);
+PROPERTY_FUNCS(transition_timing_function);
+PROPERTY_FUNCS(transition_delay);
 
 #undef PROPERTY_FUNCS
 

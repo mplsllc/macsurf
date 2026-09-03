@@ -19,6 +19,11 @@
 extern long   g_timer_fires;
 extern long   g_timer_us;
 
+/* fixes1236 (#167) - job-pump / rAF census, same per-nav lifecycle as the
+ * timer counters above (read+reset by macsurf_qjs_emit_js_profile). */
+extern long g_job_pump_cap_hits;
+extern long g_raf_fires;
+
 /* Interrupt/op counter */
 extern long g_qjs_interrupts;
 
@@ -74,6 +79,7 @@ extern long g_evreg_audit;
 extern long g_evmiss_audit;
 extern long g_evfire_audit;
 extern long g_mslife_audit;
+extern long g_console_err_audit;  /* fixes1246 */
 extern long g_geom_audit;
 extern int  g_pn_logged;
 
@@ -127,6 +133,7 @@ void macsurf_qjs_wrap_stats(long *wraps, long *hcompiles, long *hbytes);
 void macsurf_qjs_perf_totals(long *evals, long *compile_us, long *run_us,
 		long *gc_us, long *gc_runs, int *gc_armed);
 void macsurf_qjs_emit_js_profile(void);
+void macsurf_qjs_emit_fb_boot(struct JSContext *ctx);
 void macsurf_qjs_audit_reset(void);
 void macsurf_qjs_page_js_summary(void);
 

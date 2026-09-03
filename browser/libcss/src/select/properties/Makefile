@@ -53,6 +53,7 @@ display.c \
 elevation.c \
 empty_cells.c \
 fill_opacity.c \
+s_fill.c \
 flex_basis.c \
 flex_direction.c \
 flex_grow.c \

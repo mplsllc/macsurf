@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>MacSurf static opacity cases</title>
+<style>
+body { background: #fff; color: #000; font-family: Helvetica, sans-serif; }
+.case { width: 280px; height: 70px; margin: 12px; padding: 12px;
+        background: rgb(18,97,160); color: #fff; }
+#opacity-1 { opacity: 1; }
+#opacity-half { opacity: 0.5; }
+#opacity-0 { opacity: 0; }
+</style>
+</head>
+<body>
+<h1>Static opacity — no transitions</h1>
+<div id="opacity-1" class="case">CASE A — opacity: 1 (solid blue)</div>
+<div id="opacity-half" class="case">CASE B — opacity: 0.5 (dithered blue)</div>
+<div id="opacity-0" class="case">CASE C — opacity: 0 (not painted)</div>
+</body>
+</html>

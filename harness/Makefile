@@ -28,8 +28,10 @@ ASAN   := -fsanitize=address
 # fixes1022: the harness tests the FULL JS surface -- the Mac build quiesces
 # these behind default-off switches until Phase 3 lands.
 CFLAGS := -O0 -g $(ASAN) -std=gnu99 -w -include stdint.h -include stdbool.h \
+	  -DHARNESS_FIXTURE_ROOT='"$(ROOT)/harness"' \
           -DMACSURF_JS_GEOMETRY=1 -DMACSURF_JS_VIEW_EVENTS=1 \
           -DMACSURF_JS_FIRE_LOAD=1 -DMACSURF_JS_AUDIT=1 \
+          -DMACSURF_RECONVERT_TEST_HOOK \
           -include include/macsurf_safe_alloc_decls.h
 
 # include set: harness stubs FIRST (shadow Mac headers), then netsurf, real libs, quickjs
@@ -64,7 +66,9 @@ EXTRA_SRC := $(LIBDIR)/libdom/bindings/hubbub/dom_parser.c \
 QJS_SRC   := $(QJS)/quickjs.c $(QJS)/libregexp.c $(QJS)/libunicode.c $(QJS)/dtoa.c
 GLUE_SRC  := build/macsurf_qjs.c build/macos9_reconvert.c build/macsurf_dom_dispatch.c \
              build/macos9_content_registry.c build/misc_stub.c build/macos9_js_fetch.c
-HARN_SRC  := harness_stubs.c harness_gen_stubs.c driver.c
+# fixes1268a (#167): cssprobe.c includes libcss's PRIVATE headers, whose
+# enumerators collide with netsurf's in driver.c -- it must stay its own TU.
+HARN_SRC  := harness_stubs.c harness_gen_stubs.c driver.c cssprobe.c macos9_transition_test.c
 
 INC += -I$(LIBDIR)/libdom/bindings/hubbub
 
@@ -81,7 +85,10 @@ harn_of = $(OBJ)/$(notdir $(1:.c=.o))
 GLUE_QJS_SRC   := build/macsurf_qjs.c build/macsurf_dom_dispatch.c \
                   build/macos9_js_fetch.c build/macsurf_qjs_audit.c
 GLUE_PLAIN_SRC := build/macos9_reconvert.c build/macos9_content_registry.c \
-                  build/misc_stub.c build/macsurf_lwc_compat.c
+                   build/misc_stub.c build/macsurf_lwc_compat.c \
+                   build/macsurf_gap.c build/macsurf_diag.c build/macsurf_trace.c \
+                   $(NS)/frontends/macos9/macsurf_capability.c \
+                   $(NS)/frontends/macos9/macos9_transition.c
 
 # $(sort) dedupes: dedup.sh's `core` set and EXTRA_SRC both name corestrings.c,
 # and two rules for one object is a "overriding recipe" warning at best.
@@ -124,8 +131,24 @@ reconvert_harness: $(ALL_OBJ)
 
 -include $(ALL_OBJ:.o=.d)
 
-.PHONY: all run clean check-macdefault
+.PHONY: all run clean check check-c89 check-macdefault diag-phase2 webp-test
 all: reconvert_harness
+
+diag-phase2: reconvert_harness
+	ASAN_OPTIONS=detect_leaks=0 ./reconvert_harness --diag-phase2
+
+# Standalone libwebp regression.  This deliberately stays out of the large
+# NetSurf/ASan harness: it exercises the exact decoder/demux source subset and
+# its still/alpha/animation fixtures without needing Carbon bitmap stubs.
+WEBP_DIR := $(ROOT)/browser/libwebp
+WEBP_SRC := $(sort $(wildcard $(WEBP_DIR)/c/*.c))
+
+webp_codec_test: webp_codec_test.c $(WEBP_SRC)
+	$(CC) -std=c89 -O2 -DHARNESS_FIXTURE_ROOT='"$(ROOT)/harness"' \
+		-U__SSE2__ -U__SSE2_MATH__ -I$(WEBP_DIR)/h $^ -o $@
+
+webp-test: webp_codec_test
+	./webp_codec_test
 
 # fixes1023 — COMPILE THE MAC'S ACTUAL CONFIGURATION.
 #
@@ -148,7 +171,11 @@ MACDEFAULT_STRIP := -DMACSURF_JS_GEOMETRY=1 -DMACSURF_JS_VIEW_EVENTS=1 \
 check-macdefault: check-c89
 	@echo "== compiling glue in the MAC's config (quiesce switches OFF) =="
 	@$(CC) -fsyntax-only $(filter-out $(MACDEFAULT_STRIP),$(CFLAGS)) \
-		-DWITH_QUICKJS $(INC) build/macsurf_qjs.c && echo "   OK"
+		-DWITH_QUICKJS $(INC) build/macsurf_qjs.c && echo "   macsurf_qjs.c OK"
+	@$(CC) -fsyntax-only $(filter-out $(MACDEFAULT_STRIP),$(CFLAGS)) \
+		-DWITH_QUICKJS $(INC) build/macsurf_dom_dispatch.c && echo "   macsurf_dom_dispatch.c OK"
+	@$(CC) -fsyntax-only $(filter-out $(MACDEFAULT_STRIP),$(CFLAGS)) \
+		-DWITH_QUICKJS $(INC) build/macos9_js_fetch.c && echo "   macos9_js_fetch.c OK"
 
 # fixes1071a — MIXED DECLARATIONS, the one C89 rule this harness cannot see.
 #
@@ -183,6 +210,16 @@ check-c89:
 		build/macsurf_qjs.c && echo "   macsurf_qjs.c OK"
 	@$(CC) $(C89CHK) $(filter-out -w,$(CFLAGS)) -DWITH_QUICKJS $(INC) \
 		build/macsurf_qjs_audit.c && echo "   macsurf_qjs_audit.c OK"
+	@$(CC) $(C89CHK) $(filter-out -w,$(CFLAGS)) -DWITH_QUICKJS $(INC) \
+		build/macsurf_dom_dispatch.c && echo "   macsurf_dom_dispatch.c OK"
+	@$(CC) $(C89CHK) $(filter-out -w,$(CFLAGS)) -DWITH_QUICKJS $(INC) \
+		build/macos9_js_fetch.c && echo "   macos9_js_fetch.c OK"
+	@$(CC) $(C89CHK) $(filter-out -w,$(CFLAGS)) $(INC) \
+		build/macos9_reconvert.c && echo "   macos9_reconvert.c OK"
+	@$(CC) $(C89CHK) $(filter-out -w,$(CFLAGS)) $(INC) \
+		build/macos9_content_registry.c && echo "   macos9_content_registry.c OK"
+	@$(CC) $(C89CHK) $(filter-out -w,$(CFLAGS)) $(INC) \
+		build/macsurf_diag.c && echo "   macsurf_diag.c OK"
 # fixes1093 — html.c joins the gate. It was never covered, yet it is the other
 # file this project edits constantly (the pagemap, the reconvert resize/load
 # fire, and now the slider probe all live here) and it ships to CW8 as C89
@@ -201,7 +238,9 @@ check-c89:
 link objs: reconvert_harness
 
 run: reconvert_harness
-	./reconvert_harness
+	ASAN_OPTIONS=detect_leaks=0 ./reconvert_harness
+
+check: check-macdefault run
 
 clean:
 	rm -rf $(OBJ) reconvert_harness

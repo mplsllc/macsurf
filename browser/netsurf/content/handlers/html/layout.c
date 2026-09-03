@@ -7254,7 +7254,7 @@ static void layout_calculate_descendant_bboxes(
 
 		{
 			/* fixes574: clip the descendant extent PER AXIS for
-			 * overflow:hidden. The old test required BOTH overflow-x
+			 * overflow:hidden/clip. The old test required BOTH overflow-x
 			 * AND overflow-y hidden before skipping the child's
 			 * contribution, so a box with overflow-x:hidden and
 			 * overflow-y:visible (XenForo .hScroller-scroll - the nav
@@ -7265,11 +7265,15 @@ static void layout_calculate_descendant_bboxes(
 			 * clips independently: save the box's pre-child extent,
 			 * apply the child, then restore any axis that is hidden. */
 			bool ox_hidden = box->style != NULL &&
-					css_computed_overflow_x(box->style) ==
-						CSS_OVERFLOW_HIDDEN;
+					(css_computed_overflow_x(box->style) ==
+						CSS_OVERFLOW_HIDDEN ||
+					 css_computed_overflow_x(box->style) ==
+						CSS_OVERFLOW_CLIP);
 			bool oy_hidden = box->style != NULL &&
-					css_computed_overflow_y(box->style) ==
-						CSS_OVERFLOW_HIDDEN;
+					(css_computed_overflow_y(box->style) ==
+						CSS_OVERFLOW_HIDDEN ||
+					 css_computed_overflow_y(box->style) ==
+						CSS_OVERFLOW_CLIP);
 			int save_x0 = box->descendant_x0;
 			int save_x1 = box->descendant_x1;
 			int save_y0 = box->descendant_y0;

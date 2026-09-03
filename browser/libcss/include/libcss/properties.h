@@ -177,6 +177,14 @@ enum css_properties_e {
 	CSS_PROP_BACKGROUND_CLIP                = 0x0a0,
 	CSS_PROP_JUSTIFY_ITEMS                  = 0x0a1,
 	CSS_PROP_APPEARANCE                     = 0x0a2,
+	CSS_PROP_JUSTIFY_SELF                   = 0x0a3,
+	CSS_PROP_BACKGROUND_ORIGIN              = 0x0a4,
+	CSS_PROP_BACKGROUND_BLEND_MODE          = 0x0a5,
+	CSS_PROP_FILL                           = 0x0a6,
+	CSS_PROP_TRANSITION_PROPERTY            = 0x0a7,
+	CSS_PROP_TRANSITION_DURATION            = 0x0a8,
+	CSS_PROP_TRANSITION_TIMING_FUNCTION     = 0x0a9,
+	CSS_PROP_TRANSITION_DELAY               = 0x0aa,
 	CSS_N_PROPERTIES
 };
 
@@ -242,6 +250,14 @@ enum css_text_decoration_color_e {
 	CSS_TEXT_DECORATION_COLOR_INHERIT       = 0x0,
 	CSS_TEXT_DECORATION_COLOR_CURRENT_COLOR = 0x1,
 	CSS_TEXT_DECORATION_COLOR_COLOR         = 0x2
+};
+
+/* SVG fill V1. Inherited; initial = black. */
+enum css_fill_e {
+	CSS_FILL_INHERIT                       = 0x0,
+	CSS_FILL_NONE                          = 0x1,
+	CSS_FILL_CURRENT_COLOR                 = 0x2,
+	CSS_FILL_COLOR                         = 0x3
 };
 
 /* fixes357 (#44): text-decoration-style. Not inherited; initial = solid. */
@@ -498,13 +514,41 @@ enum css_hanging_punctuation_e {
 	CSS_HANGING_PUNCTUATION_ALLOW_END	= 0x5
 };
 
-/* #255 - background-clip. 'text' (gradient text) deferred; box-model values
- * only. Layout/redraw insets the background paint rect to the named box. */
+/* #255 - background-clip. Layout/redraw insets box-model values to the named
+ * box and routes `text` through the frontend glyph-mask painter. */
 enum css_background_clip_e {
 	CSS_BACKGROUND_CLIP_INHERIT		= 0x0,
 	CSS_BACKGROUND_CLIP_BORDER_BOX		= 0x1,
 	CSS_BACKGROUND_CLIP_PADDING_BOX		= 0x2,
-	CSS_BACKGROUND_CLIP_CONTENT_BOX		= 0x3
+	CSS_BACKGROUND_CLIP_CONTENT_BOX		= 0x3,
+	CSS_BACKGROUND_CLIP_TEXT		= 0x4
+};
+
+enum css_background_origin_e {
+	CSS_BACKGROUND_ORIGIN_INHERIT		= 0x0,
+	CSS_BACKGROUND_ORIGIN_PADDING_BOX		= 0x1,
+	CSS_BACKGROUND_ORIGIN_BORDER_BOX		= 0x2,
+	CSS_BACKGROUND_ORIGIN_CONTENT_BOX		= 0x3
+};
+
+enum css_background_blend_mode_e {
+	CSS_BACKGROUND_BLEND_MODE_INHERIT       = 0x0,
+	CSS_BACKGROUND_BLEND_MODE_NORMAL        = 0x1,
+	CSS_BACKGROUND_BLEND_MODE_MULTIPLY      = 0x2,
+	CSS_BACKGROUND_BLEND_MODE_SCREEN        = 0x3,
+	CSS_BACKGROUND_BLEND_MODE_OVERLAY       = 0x4,
+	CSS_BACKGROUND_BLEND_MODE_DARKEN        = 0x5,
+	CSS_BACKGROUND_BLEND_MODE_LIGHTEN       = 0x6,
+	CSS_BACKGROUND_BLEND_MODE_COLOR_DODGE   = 0x7,
+	CSS_BACKGROUND_BLEND_MODE_COLOR_BURN    = 0x8,
+	CSS_BACKGROUND_BLEND_MODE_HARD_LIGHT    = 0x9,
+	CSS_BACKGROUND_BLEND_MODE_SOFT_LIGHT    = 0xa,
+	CSS_BACKGROUND_BLEND_MODE_DIFFERENCE    = 0xb,
+	CSS_BACKGROUND_BLEND_MODE_EXCLUSION     = 0xc,
+	CSS_BACKGROUND_BLEND_MODE_HUE           = 0xd,
+	CSS_BACKGROUND_BLEND_MODE_SATURATION    = 0xe,
+	CSS_BACKGROUND_BLEND_MODE_COLOR         = 0xf,
+	CSS_BACKGROUND_BLEND_MODE_LUMINOSITY    = 0x10
 };
 
 /* #279 - justify-items (grid inline-axis item alignment). V1 = 2-bit slot:
@@ -515,6 +559,16 @@ enum css_justify_items_e {
 	CSS_JUSTIFY_ITEMS_STRETCH		= 0x1,
 	CSS_JUSTIFY_ITEMS_START			= 0x2,
 	CSS_JUSTIFY_ITEMS_CENTER		= 0x3
+};
+
+/* #279 follow-up - justify-self. Scalar-tail property: the bits[] array is
+ * full, so this must not consume another packed bit slot. */
+enum css_justify_self_e {
+	CSS_JUSTIFY_SELF_INHERIT		= 0x0,
+	CSS_JUSTIFY_SELF_AUTO			= 0x1,
+	CSS_JUSTIFY_SELF_STRETCH		= 0x2,
+	CSS_JUSTIFY_SELF_START			= 0x3,
+	CSS_JUSTIFY_SELF_CENTER			= 0x4
 };
 
 enum css_overflow_wrap_e {
@@ -711,7 +765,8 @@ enum css_display_e {
 	CSS_DISPLAY_FLEX			= 0x11,
 	CSS_DISPLAY_INLINE_FLEX			= 0x12,
 	CSS_DISPLAY_GRID			= 0x13,
-	CSS_DISPLAY_INLINE_GRID			= 0x14
+	CSS_DISPLAY_INLINE_GRID			= 0x14,
+	CSS_DISPLAY_CONTENTS			= 0x15
 };
 
 enum css_empty_cells_e {
@@ -997,7 +1052,8 @@ enum css_overflow_e {
 	CSS_OVERFLOW_VISIBLE			= 0x1,
 	CSS_OVERFLOW_HIDDEN			= 0x2,
 	CSS_OVERFLOW_SCROLL			= 0x3,
-	CSS_OVERFLOW_AUTO			= 0x4
+	CSS_OVERFLOW_AUTO			= 0x4,
+	CSS_OVERFLOW_CLIP			= 0x5
 };
 
 enum css_orphans_e {
@@ -1187,6 +1243,26 @@ enum css_z_index_e {
 	CSS_Z_INDEX_INHERIT			= 0x0,
 	CSS_Z_INDEX_SET				= 0x1,
 	CSS_Z_INDEX_AUTO			= 0x2
+};
+
+enum css_transition_property_e {
+	CSS_TRANSITION_PROPERTY_INHERIT		= 0x0,
+	CSS_TRANSITION_PROPERTY_SET		= 0x1
+};
+
+enum css_transition_duration_e {
+	CSS_TRANSITION_DURATION_INHERIT		= 0x0,
+	CSS_TRANSITION_DURATION_SET		= 0x1
+};
+
+enum css_transition_timing_function_e {
+	CSS_TRANSITION_TIMING_FUNCTION_INHERIT	= 0x0,
+	CSS_TRANSITION_TIMING_FUNCTION_SET	= 0x1
+};
+
+enum css_transition_delay_e {
+	CSS_TRANSITION_DELAY_INHERIT		= 0x0,
+	CSS_TRANSITION_DELAY_SET		= 0x1
 };
 
 #ifdef __cplusplus

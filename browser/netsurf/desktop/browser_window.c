@@ -45,6 +45,7 @@
 #include "netsurf/plotters.h"
 #include "content/content.h"
 #include "content/hlcache.h"
+#include "content/macsurf_nav_seed.h"
 #include "content/urldb.h"
 #include "content/content_debug.h"
 
@@ -342,6 +343,7 @@ browser_window_download(struct browser_window *bw,
 	fetch_flags |= LLCACHE_RETRIEVE_FORCE_FETCH;
 	fetch_flags |= LLCACHE_RETRIEVE_STREAM_DATA;
 
+	macsurf_llcache_seed_nav(bw->nav_id);	/* MacSurf Trace 1a */
 	error = llcache_handle_retrieve(url, fetch_flags, nsref,
 					fetch_is_post ? post : NULL,
 					NULL, NULL, &l);
@@ -1619,7 +1621,8 @@ browser_window_callback(hlcache_handle *c, const hlcache_event *event, void *pw)
 		assert(bw->current_content == c);
 		{
 			nsurl *du = hlcache_handle_get_url(c);
-			macsurf_debug_log_writef("NAV: DONE url=%s",
+			macsurf_debug_log_writef("NAV: DONE nav=%ld url=%s",
+				(long) bw->nav_id,
 				(du != NULL) ? nsurl_access(du) : "(null)");
 			/* fixes1034 - emit the phase breakdown HERE.
 			 *
@@ -1644,6 +1647,8 @@ browser_window_callback(hlcache_handle *c, const hlcache_event *event, void *pw)
 						const char *url);
 				extern void macsurf_qjs_emit_timer_profile(void);
 				extern void macsurf_qjs_emit_js_profile(void);
+				extern void macsurf_gap_emit_summary(unsigned long nav_id);
+				extern void macsurf_diag_nav_done(unsigned long nav_id);
 				macsurf_profile_emit_phases(
 					(du != NULL) ? nsurl_access(du) : "?");
 				/* fixes1037 - split the JS total: how much of it is
@@ -1655,6 +1660,18 @@ browser_window_callback(hlcache_handle *c, const hlcache_event *event, void *pw)
 				 * with no way to see which script or which half of
 				 * the engine was responsible. */
 				macsurf_qjs_emit_js_profile();
+				/* MacSurf Trace Phase 0 - compatibility-gap
+				 * census for this navigation. Temporary
+				 * validation bridge; superseded by an on-demand
+				 * 'MSdg GET gaps' AppleEvent query later. Extern
+				 * here so NetSurf core keeps no dependency on the
+				 * macos9 frontend header. */
+				macsurf_gap_emit_summary((unsigned long) bw->nav_id);
+				/* MacSurf Trace: freeze the per-nav request tally
+				 * into the last-nav snapshot for on-demand
+				 * `MSdg GET summary`. Must run AFTER the gap
+				 * freeze above so both snapshots agree on nav. */
+				macsurf_diag_nav_done((unsigned long) bw->nav_id);
 			}
 		}
 		res = browser_window_content_done(bw);
@@ -1709,6 +1726,11 @@ browser_window_callback(hlcache_handle *c, const hlcache_event *event, void *pw)
 
 		if (!(event->data.background)) {
 			/* Reformatted content should be redrawn */
+			/* The Mac front end requests this redraw through window invalidation,
+			 * rather than content_request_redraw().  Record it while the render
+			 * diagnostic scope that delivered CONTENT_MSG_REFORMAT is still live. */
+			extern void ms_diag_paint_note(void);
+			ms_diag_paint_note();
 			browser_window_update(bw, false);
 		}
 		break;
@@ -1993,7 +2015,13 @@ static void scheduled_reformat(void *vbw)
 /* exported interface documented in desktop/browser_private.h */
 nserror browser_window_destroy_internal(struct browser_window *bw)
 {
+	/* MacSurf Trace 1c: retire the pointer-keyed browsing-context identity
+	 * before this browser_window storage can be released or reused.  The
+	 * diagnostic side table deliberately keeps trace state out of this core
+	 * struct: frames.c owns contiguous browser_window arrays. */
+	extern void ms_diag_frame_close(void *bw);
 	assert(bw);
+	ms_diag_frame_close((void *) bw);
 
 	browser_window_destroy_children(bw);
 	browser_window_destroy_iframes(bw);
@@ -2915,6 +2943,7 @@ browser_window_redraw(struct browser_window *bw,
 	data.repeat_x = false;
 	data.repeat_y = false;
 	data.nearest = false;  /* fixes829 (#256) */
+	data.background_blend_mode = 0;
 
 	content_clip = *clip;
 
@@ -3410,7 +3439,13 @@ browser_window_initialise_common(enum browser_window_create_flags flags,
 				 const struct browser_window *existing)
 {
 	nserror err;
+	/* MacSurf Trace 1c: MacSurf-owned pointer-keyed frame identity.  Do not
+	 * add a field to struct browser_window: frames.c owns arrays of this core
+	 * type, so trace state must not change its cross-TU layout or stride. */
+	extern void ms_diag_frame_open(void *bw);
 	assert(bw);
+
+	ms_diag_frame_open((void *) bw);
 
 	/* new javascript context for each window/(i)frame */
 	err = js_newheap(nsoption_int(script_timeout), &bw->jsheap);
@@ -3673,6 +3708,27 @@ browser_window_navigate(struct browser_window *bw,
 		}
 	}
 
+	/* MacSurf Trace 1a: past the same-document fragment short-circuit, this
+	 * is a real network/document navigation -- allocate its id here, the one
+	 * convergence point every genuinely-new nav reaches (URL bar, GURL, JS
+	 * location, link, form, back/forward, reload, meta refresh). Internal
+	 * redirects and about:query interstitials go straight to
+	 * browser_window__navigate_internal and keep this id. */
+	if (bw->browser_window_type == BROWSER_WINDOW_IFRAME &&
+		bw->parent != NULL) {
+		/* A child document belongs to its root navigation.  Its frame and
+		 * document identities remain distinct; only the causal navigation
+		 * transaction is inherited. */
+		bw->nav_id = bw->parent->nav_id;
+	} else {
+		static unsigned long ms_nav_id_seq;
+		ms_nav_id_seq++;
+		if (ms_nav_id_seq == 0) {
+			ms_nav_id_seq = 1;
+		}
+		bw->nav_id = ms_nav_id_seq;
+	}
+
 	browser_window_stop(bw);
 	browser_window_remove_caret(bw, false);
 	browser_window_destroy_children(bw);
@@ -3768,7 +3824,13 @@ navigate_internal_real(struct browser_window *bw,
 	if (params->parent_charset != NULL) {
 		child.charset = params->parent_charset;
 		child.quirks = params->parent_quirks;
+		child.nav_id = bw->nav_id;	/* MacSurf Trace 1a */
+		child.doc_id = 0;
 	}
+
+	/* MacSurf Trace 1a: covers the top-level (child == NULL) case; the
+	 * frame case above carries nav_id on the child context instead. */
+	macsurf_hlcache_seed_nav(bw->nav_id);
 
 	browser_window_set_status(bw, messages_get("Loading"));
 	bw->history_add = (params->flags & BW_NAVIGATE_HISTORY);
@@ -4026,7 +4088,8 @@ browser_window__navigate_internal(struct browser_window *bw,
 	/* fixes551 - start of every navigation (real pages, internal redirects,
 	 * and the about:query/* error/login/cert pages), so the NAV trace reads
 	 * START -> (ERROR why | DONE) -> content_ready switch. */
-	macsurf_debug_log_writef("NAV: START url=%s",
+	macsurf_debug_log_writef("NAV: START nav=%ld url=%s",
+		(long) bw->nav_id,
 		((params != NULL) && (params->url != NULL)) ?
 			nsurl_access(params->url) : "(null)");
 
@@ -4606,6 +4669,14 @@ browser_window_set_scale(struct browser_window *bw, float scale, bool absolute)
 	}
 
 	return res;
+}
+
+
+/* exported interface documented in netsurf/browser_window.h */
+unsigned long browser_window_get_frame_id(struct browser_window *bw)
+{
+	extern unsigned long ms_diag_frame_get(const void *bw);
+	return ms_diag_frame_get((const void *) bw);
 }
 
 

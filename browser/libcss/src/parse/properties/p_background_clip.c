@@ -4,8 +4,8 @@
  *                http://www.opensource.org/licenses/mit-license.php
  * Copyright 2026 MacSurf (#255)
  *
- * Parse `background-clip`: border-box | padding-box | content-box.
- * ('text' deferred -- box-model values only.) Single-keyword grammar,
+ * Parse `background-clip`: border-box | padding-box | content-box | text.
+ * Single-keyword grammar,
  * cloned from p_object_fit.c.
  */
 
@@ -76,6 +76,13 @@ css_error css__parse_background_clip(css_language *c,
 		error = css__stylesheet_style_appendOPV(result,
 				CSS_PROP_BACKGROUND_CLIP,
 				0, CSS_BACKGROUND_CLIP_CONTENT_BOX);
+
+	} else if ((lwc_string_caseless_isequal(
+			token->idata, c->strings[LIBCSS_TEXT],
+			&match) == lwc_error_ok && match)) {
+		error = css__stylesheet_style_appendOPV(result,
+				CSS_PROP_BACKGROUND_CLIP,
+				0, CSS_BACKGROUND_CLIP_TEXT);
 
 	} else {
 		error = CSS_INVALID;

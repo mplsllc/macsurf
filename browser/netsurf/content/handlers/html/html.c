@@ -24,6 +24,7 @@
 
 #include <assert.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 #include <strings.h>
 #include <stdlib.h>
@@ -43,6 +44,7 @@
 #include "utils/ascii.h"
 #include "netsurf/content.h"
 #include "netsurf/browser_window.h"
+#include "netsurf/css.h"
 #include "netsurf/utf8.h"
 #include "netsurf/keypress.h"
 #include "netsurf/layout.h"
@@ -59,6 +61,11 @@
 
 #include "html/html.h"
 #include "macsurf_debug.h"
+#include "macsurf_diag.h"	/* MacSurf Trace 1c: doc_id + render-stage records */
+#include "frontends/macos9/macos9_transition.h"
+#ifdef __MACOS9__
+#include <Timer.h>
+#endif
 
 /* fixes518: frontend scheduler cancellation (forward-declared here, Mac-only
  * fork, same approach as macsurf_debug_log_writef in content_protected.h).
@@ -79,6 +86,7 @@ long macos9_html_bytes_processed = 0;
  * per-reformat cost (ms_after-ms_before, already in the SITE line) be read
  * against the count.  See project_mactrove_reflow_storm. */
 static long macos9_html_reformat_seq = 0;
+
 /* fixes848 (#167 perf investigation) - wall-clock span of box construction
  * + per-element CSS cascade (dom_to_box is an incremental, self-rescheduling
  * walk, so its own synchronous return does NOT mean it finished -- the true
@@ -95,6 +103,57 @@ unsigned int macos9_html_head_len = 0;
 #include "html/private.h"
 #include "html/dom_event.h"
 #include "html/css.h"
+
+/* Count parsed Facebook data-sjs nodes directly from libdom at the instant
+ * hubbub reports completion. This is deliberately independent of QuickJS's
+ * querySelectorAll audit: paired with the fetcher's raw token count it tells
+ * us whether the two platforms received different HTML or lost nodes while
+ * parsing the same bytes. */
+static void html_log_facebook_parse_fingerprint(html_content *htmlc)
+{
+	const char *url;
+	dom_string *script_name = NULL;
+	dom_string *data_sjs_name = NULL;
+	dom_nodelist *scripts = NULL;
+	dom_exception exc;
+	uint32_t length = 0;
+	uint32_t i;
+	long parsed = 0;
+
+	url = nsurl_access(content_get_url((struct content *)htmlc));
+	if (url == NULL || strstr(url, "facebook.com") == NULL) return;
+	exc = dom_string_create((const uint8_t *)"script", 6, &script_name);
+	if (exc != DOM_NO_ERR || script_name == NULL) goto done;
+	exc = dom_string_create((const uint8_t *)"data-sjs", 8,
+		&data_sjs_name);
+	if (exc != DOM_NO_ERR || data_sjs_name == NULL) goto done;
+	exc = dom_document_get_elements_by_tag_name(htmlc->document,
+		script_name, &scripts);
+	if (exc != DOM_NO_ERR || scripts == NULL) goto done;
+	exc = dom_nodelist_get_length(scripts, &length);
+	if (exc != DOM_NO_ERR) goto done;
+	for (i = 0; i < length; i++) {
+		dom_node *node = NULL;
+		dom_string *value = NULL;
+		exc = dom_nodelist_item(scripts, i, &node);
+		if (exc != DOM_NO_ERR || node == NULL) continue;
+		exc = dom_element_get_attribute((dom_element *)node,
+			data_sjs_name, &value);
+		if (exc == DOM_NO_ERR && value != NULL) {
+			parsed++;
+			dom_string_unref(value);
+		}
+		dom_node_unref(node);
+	}
+	macsurf_debug_log_writef("LIFE FBDOCPARSE parsed_sjs=%ld scripts=%ld",
+		parsed, (long)length);
+	macsurf_debug_log_writef("LIFE FBDOCPARSE url=%s", url);
+
+done:
+	if (scripts != NULL) dom_nodelist_unref(scripts);
+	if (data_sjs_name != NULL) dom_string_unref(data_sjs_name);
+	if (script_name != NULL) dom_string_unref(script_name);
+}
 #include "html/object.h"
 #include "html/html_save.h"
 #include "html/interaction.h"
@@ -327,6 +386,14 @@ static void html_box_convert_done(html_content *c, bool success)
 
 	c->box_conversion_context = NULL;
 
+	/* MacSurf Trace 1c: the INITIAL layout pass (opened in dom_to_box) is
+	 * complete. A reconvert closes its own pass in macos9_reconvert_cb. */
+	if (c->last_layout_pass_id != 0) {
+		ms_diag_render_close(c->last_layout_pass_id,
+			success ? MS_RRES_DONE : MS_RRES_FAIL, 0);
+		c->last_layout_pass_id = 0;
+	}
+
 	/* Clean up and report error if unsuccessful or aborted */
 	if ((success == false) || (c->aborted)) {
 		html_object_free_objects(c);
@@ -494,7 +561,7 @@ static void html_box_convert_done(html_content *c, bool success)
  *
  * Capped at 40 dumps, one per section, so it is a handful of lines rather than
  * a firehose. Turn it off again once the hero is understood. */
-#define MACSURF_PAGEMAP 1
+/* #define MACSURF_PAGEMAP 1 */
 #define MACSURF_PAGEMAP_MAX_DUMPS 40
 
 static long macsurf_pagemap_dumps = 0;
@@ -515,8 +582,11 @@ static void html_pagemap_append(char *out, int cap, int *pos,
 	out[*pos] = '\0';
 }
 
-/* "TAG#id.class" (truncated). Element nodes only; caller checks the type. */
-static void html_pagemap_brief(dom_node *n, char *out, int cap)
+/* "TAG#id.class" (truncated). Element nodes only; caller checks the type.
+ * fixes1315 (#167, 68kmla) - exported (was static) so layout_flex.c's own
+ * diagnostics can report a box's real identity instead of a bare pointer,
+ * the same lookup fixes1305/1307 already proved for the pagemap dump. */
+void html_pagemap_brief(dom_node *n, char *out, int cap)
 {
 	static dom_string *s_id = NULL;
 	static dom_string *s_class = NULL;
@@ -549,8 +619,18 @@ static void html_pagemap_brief(dom_node *n, char *out, int cap)
 		ds = NULL;
 		exc = dom_element_get_attribute((dom_element *)n, s_class, &ds);
 		if (exc == DOM_NO_ERR && ds != NULL) {
+			/* fixes1307 (#167, C0) - was 36: real Facebook Comet
+			 * elements commonly carry 15-25+ atomic classes
+			 * averaging ~7-8 chars each, so 36 only ever showed
+			 * the first 4-5 -- every pagemap/FBGAP line for a
+			 * real Facebook box has been hiding the rest of that
+			 * box's classes, which is exactly the data needed to
+			 * check whether some OTHER class (not the one named
+			 * in a truncated log line) is the real min-height/
+			 * layout culprit. Widened to use the caller's full
+			 * remaining buffer instead of a small fixed cap. */
 			html_pagemap_append(out, cap, &pos, dom_string_data(ds),
-					36, '.', 1);
+					cap, '.', 1);
 			dom_string_unref(ds);
 		}
 	}
@@ -620,9 +700,17 @@ static int html_pagemap_line(dom_node *n, int depth, int *susp_out)
 	 * container squashed to less than a text line. The walk uses it to
 	 * keep descending PAST the normal depth cap, straight into e.g. the
 	 * 22px-tall slider, where the ordinary dump kept stopping one level
-	 * above the answer. */
+	 * above the answer.
+	 * fixes1305 (#167, C0) -- the SAME "broken" question can point the
+	 * other way: a container implausibly TALL for its child count
+	 * (matches the FLEXLINE/FLEXMINH >3000px threshold already used for
+	 * the xpvvgw5 investigation) is exactly as suspicious as one
+	 * squashed to nothing, and the original check had no way to flag
+	 * it -- the walk would stop at the normal depth cap one level above
+	 * a box like that too. */
 	if (susp_out != NULL)
-		*susp_out = (b == NULL || h == 0 || (h < 30 && kids > 0));
+		*susp_out = (b == NULL || h == 0 || (h < 30 && kids > 0) ||
+				(h > 3000 && kids <= 2));
 	return kids;
 }
 
@@ -644,8 +732,19 @@ static void html_pagemap_walk(dom_node *n, int depth)
 
 	if (macsurf_pagemap_line_budget <= 0) return;
 	if (dom_node_get_node_name(n, &nm) == DOM_NO_ERR && nm != NULL) {
+		/* fixes1305 (#167, C0) - LINK/META never produce a box and
+		 * carry no rendered content, but Facebook's Comet injects
+		 * dozens of resource-hint LINKs directly into <body> (not
+		 * just <head>). Before this, a real hardware pagemap[done]
+		 * dump for facebook.com/ptricky3 spent its entire 130-line
+		 * budget on 129 back-to-back "LINK kids=0 box=0 h=0" lines
+		 * and never printed a single real body section -- the dump
+		 * has been silently useless for any Facebook page since it
+		 * shipped. Skip both, same as script/style. */
 		int skip = (strcasecmp(dom_string_data(nm), "script") == 0 ||
-				strcasecmp(dom_string_data(nm), "style") == 0);
+				strcasecmp(dom_string_data(nm), "style") == 0 ||
+				strcasecmp(dom_string_data(nm), "link") == 0 ||
+				strcasecmp(dom_string_data(nm), "meta") == 0);
 		dom_string_unref(nm);
 		if (skip) return;
 	}
@@ -989,6 +1088,157 @@ void html_slider_probe(html_content *c, const char *when)
 }
 /* ====================================================================== */
 
+/* fixes1262 (#167) - direct C-side replacement for fixes1261's JS-side
+ * FBCSS query, which came back empty (html_bg=/body_bg=/body_color= all
+ * blank) because qjs_get_computed_style's box lookup (qjs_box_for) gates
+ * on qjs_geometry_settled() - a gate meant for getBoundingClientRect/
+ * offsetWidth's relayout-cost problem, but qjs_get_computed_style bundles
+ * color/backgroundColor into the SAME box lookup as the true geometry
+ * fields, so they got swept into a gate that has nothing to do with them.
+ * That was a diagnostic-timing bug, not a finding.
+ *
+ * This calls box_for_node() directly, the same function html_pagemap_line
+ * (right above) already calls successfully at this exact point in this
+ * exact function - no JS round-trip, no geometry-settle gate, reading the
+ * SAME struct box/css_computed_style the real renderer used for THIS
+ * document. he/body are already resolved by the caller; reused, not
+ * re-walked. */
+static void html_fbcss_report(dom_element *he, dom_node *body,
+		const char *when)
+{
+	struct box *hb;
+	struct box *bb;
+	char htmlcolor[10] = "-";
+	char htmlbg[10]    = "-";
+	char bodycolor[10] = "-";
+	char bodybg[10]    = "-";
+	char clsbuf[256] = "";
+
+	if (he != NULL) {
+		dom_string *class_name = NULL;
+		if (dom_string_create((const uint8_t *) "class", 5,
+				&class_name) == DOM_NO_ERR &&
+				class_name != NULL) {
+			dom_string *cls = NULL;
+			if (dom_element_get_attribute(he, class_name, &cls) ==
+					DOM_NO_ERR && cls != NULL) {
+				const char *cdata = dom_string_data(cls);
+				size_t clen = dom_string_byte_length(cls);
+				if (cdata != NULL) {
+					if (clen >= sizeof clsbuf)
+						clen = sizeof clsbuf - 1;
+					memcpy(clsbuf, cdata, clen);
+					clsbuf[clen] = '\0';
+				}
+				dom_string_unref(cls);
+			}
+			dom_string_unref(class_name);
+		}
+	}
+
+	/* fixes1262 - css_computed_color/background_color's return code is
+	 * not checked, matching qjs_get_computed_style's own already-proven
+	 * usage (macsurf_qjs.c) exactly: `color` is an inherited property,
+	 * fully resolved by the time a box has a computed style at all, so
+	 * the out-parameter is always the real answer here. */
+	hb = (he != NULL) ? box_for_node((dom_node *) he) : NULL;
+	if (hb != NULL && hb->style != NULL) {
+		css_color col = 0;
+		css_computed_color(hb->style, &col);
+		ns_color_hex(htmlcolor, (unsigned long) col);
+		col = 0;
+		css_computed_background_color(hb->style, &col);
+		ns_color_hex(htmlbg, (unsigned long) col);
+	}
+
+	bb = (body != NULL) ? box_for_node(body) : NULL;
+	if (bb != NULL && bb->style != NULL) {
+		css_color col = 0;
+		css_computed_color(bb->style, &col);
+		ns_color_hex(bodycolor, (unsigned long) col);
+		col = 0;
+		css_computed_background_color(bb->style, &col);
+		ns_color_hex(bodybg, (unsigned long) col);
+	}
+
+	macsurf_debug_log_writef(
+		"LIFE FBCSS[%s] class=[%s] html_color=%s html_bg=%s "
+		"body_color=%s body_bg=%s",
+		when, clsbuf, htmlcolor, htmlbg, bodycolor, bodybg);
+}
+
+/* fixes1264 (#167) - fixes1263's clean FBCSS read proved body_color=#1C1E21
+ * (Facebook's own correct light-mode --fds-primary-text) against
+ * body_bg=#1F1F22 (dark, wrong for a light-mode page) - the invisible text
+ * is correct foreground over incorrect background, not a bad --fds-*
+ * lookup for the TEXT itself. What FBCSS could not show: html_redraw_box.c
+ * has real, independent CSS 2.1 SS14.2 root/body background-propagation
+ * logic (html_redraw_find_bg_box, box_html/box_body in box_special.c) -
+ * if the root <html> box has no background, BODY's background propagates
+ * to become the page canvas fill. So body_bg=#1F1F22 could very plausibly
+ * BE why the entire canvas goes dark, but nothing yet proves which box the
+ * renderer actually selected. This reads html's and body's own
+ * background-color directly (same box_for_node() pattern as
+ * html_fbcss_report, called from the same safe point) and applies the
+ * IDENTICAL selection rule html_redraw_find_bg_box uses, so root_source/
+ * canvas_bg reflect what real paint decided, not a re-guess. Full
+ * AARRGGBB this time (css_color's native packing needs no shift/mask at
+ * all - printing it raw sidesteps the exact mistake fixes1263 had to
+ * fix). */
+static void html_fbpaint_report(dom_element *he, dom_node *body,
+		const char *when)
+{
+	struct box *hb;
+	struct box *bb;
+	css_color hcol = 0;
+	css_color bcol = 0;
+	int h_has_bg = 0;
+	int b_has_bg = 0;
+	const char *root_source = "none";
+	char htmlbgbuf[12] = "-";
+	char bodybgbuf[12] = "-";
+	char canvasbg[12] = "-";
+
+	hb = (he != NULL) ? box_for_node((dom_node *) he) : NULL;
+	if (hb != NULL && hb->style != NULL) {
+		css_computed_background_color(hb->style, &hcol);
+		h_has_bg = !nscss_color_is_transparent(hcol);
+		ns_color_hex_alpha(htmlbgbuf, (unsigned long) hcol);
+	}
+
+	bb = (body != NULL) ? box_for_node(body) : NULL;
+	if (bb != NULL && bb->style != NULL) {
+		css_computed_background_color(bb->style, &bcol);
+		b_has_bg = !nscss_color_is_transparent(bcol);
+		ns_color_hex_alpha(bodybgbuf, (unsigned long) bcol);
+	}
+
+	/* Mirrors html_redraw_find_bg_box's root-box branch exactly: root's
+	 * own background wins if non-transparent; otherwise body's
+	 * propagates; otherwise neither paints (canvas stays UA default). */
+	if (h_has_bg) {
+		root_source = "html";
+		ns_color_hex_alpha(canvasbg, (unsigned long) hcol);
+	} else if (b_has_bg) {
+		root_source = "body";
+		ns_color_hex_alpha(canvasbg, (unsigned long) bcol);
+	}
+
+	/* fixes1264 CRASH-CLASS NOTE: every value below reaches
+	 * macsurf_debug_log_writef via %s from a buffer pre-formatted with
+	 * REAL sprintf above, never via %X/%08lX directly in this call.
+	 * macsurf_debug_log.c's hand-rolled formatter only recognizes
+	 * %d/%ld/%p/%s/%% (fixes1255) - an unrecognized specifier consumes
+	 * no va_arg, so a later %s in the SAME call reads the wrong slot and
+	 * dereferences an integer as a pointer. Caught in review before this
+	 * ever reached hardware; see the fixes1255 commit for the exact
+	 * mechanism. */
+	macsurf_debug_log_writef(
+		"LIFE FBPAINT[%s] html_bg=%s body_bg=%s "
+		"root_source=%s canvas_bg=%s",
+		when, htmlbgbuf, bodybgbuf, root_source, canvasbg);
+}
+
 void html_pagemap_dump(html_content *c, const char *when)
 {
 	dom_element *root = NULL;
@@ -1023,7 +1273,15 @@ void html_pagemap_dump(html_content *c, const char *when)
 	if (macsurf_pagemap_dumps >= MACSURF_PAGEMAP_MAX_DUMPS) return;
 	macsurf_pagemap_dumps++;
 	nav_dumps++;
-	macsurf_pagemap_line_budget = 130;
+	/* fixes1305 (#167, C0) - 130 was sized for a probe on a specific
+	 * shallow hero container (fixes1016/1093), never for a whole real
+	 * Facebook page: even with LINK/META now skipped, Comet's real DOM
+	 * is thousands of elements deep in a way this budget can't reach
+	 * past the first section or two of. Raised for the current
+	 * whole-page-story investigation (#167 C0); OS X 10.3 test target
+	 * has real headroom for this, unlike the OS 9 hardware floor this
+	 * number originally had to respect. */
+	macsurf_pagemap_line_budget = 600;
 
 	/* find <body>: documentElement's first element child named BODY */
 	if (dom_document_get_document_element(c->document, &root) != DOM_NO_ERR
@@ -1071,6 +1329,8 @@ void html_pagemap_dump(html_content *c, const char *when)
 		if (dom_document_get_document_element(c->document, &he)
 				== DOM_NO_ERR && he != NULL) {
 			(void) html_pagemap_line((dom_node *)he, 0, NULL);
+			html_fbcss_report(he, body, when);
+			html_fbpaint_report(he, body, when);
 			dom_node_unref((dom_node *)he);
 		}
 	}
@@ -1087,8 +1347,19 @@ void html_pagemap_dump(html_content *c, const char *when)
 		dom_node_unref(ch);
 		ch = nx;
 	}
-	macsurf_debug_log_writef("LIFE pagemap[%s] ---- end (%d sections)",
-			when, shown);
+	/* fixes1305 (#167, C0) - "sections" only ever counted top-level body
+	 * children VISITED (shown++ above), not lines actually printed --
+	 * with the budget exhausted deep inside child #1, every dump ever
+	 * emitted read as "328 sections" regardless of whether 3 lines or
+	 * 3000 actually made it out. State the truncation explicitly so a
+	 * dump can be trusted (or distrusted) at a glance instead of by
+	 * counting what's missing. */
+	macsurf_debug_log_writef(
+		"LIFE pagemap[%s] ---- end (%d sections visited, "
+		"budget %s, %d remaining)",
+		when, shown,
+		(macsurf_pagemap_line_budget <= 0) ? "EXHAUSTED" : "ok",
+		macsurf_pagemap_line_budget);
 	dom_node_unref(body);
 }
 /* ====================================================================== */
@@ -1370,9 +1641,12 @@ void html_finish_conversion(html_content *htmlc)
 	nserror error;
 
 	/* fixes311 -- byte-in count crosses parser-boundary here. Lets us
-	 * cross-check the http fetcher's body_bytes summary. */
+	 * cross-check the http fetcher's body_bytes summary. LIFE-prefixed so
+	 * a near-empty response (e.g. a JS-shell page with no static markup)
+	 * is distinguishable from a genuine parse failure without guessing --
+	 * this line was silently dropped on every release build before. */
 	macsurf_debug_log_writef(
-		"finish_conversion: parser_bytes=%ld head=%s",
+		"LIFE finish_conversion: parser_bytes=%ld head=%s",
 		macos9_html_bytes_processed,
 		macos9_html_head_len > 0 ? macos9_html_head : "(none)");
 
@@ -1566,14 +1840,35 @@ html_create_html_data(html_content *c, const http_parameter *params)
 	 * m.facebook.com so the plain-HTML login/checkpoint flow (and any
 	 * <noscript> fallback, which hubbub only parses to real DOM when
 	 * scripting is off - in_head.c:147) run as they did pre-Phase-2.
-	 * www.facebook.com (the feed, which NEEDS JS) is unaffected. */
+	 * www.facebook.com (the feed, which NEEDS JS) is unaffected.
+	 *
+	 * fixes1229 (#167) - 2026-08-20 hardware log: on m., the
+	 * /two_step_verification/authentication/ checkpoint DOES render real
+	 * HTML (pagemap: 18 sections, ~46 KB body per the finish_conversion
+	 * byte delta) but the verification dialog itself (DIV#modalDialog,
+	 * DIV#dialogSpinner) is box=0 -- a JS-toggled-visible modal that
+	 * fixes852's scripting-off gate can never reveal. On www, the SAME
+	 * checkpoint URL confirmed (curl probe + a 9-byte finish_conversion
+	 * delta on hardware, matching the curl 404's content-length exactly)
+	 * to return next to nothing on a direct navigation -- not a MacSurf
+	 * gap, a route Facebook's server won't serve outside its own SPA
+	 * router. m. is therefore the only reachable surface for this
+	 * checkpoint, and the modal's visibility is the only thing blocking
+	 * it. Narrow exception: scripting stays OFF for m.facebook.com
+	 * everywhere EXCEPT this one confirmed-JS-gated path, so the
+	 * login/checkpoint plain-HTML flow fixes852 protects everywhere else
+	 * is untouched. */
 	if (c->base_url != NULL) {
 		lwc_string *hcomp = nsurl_get_component(c->base_url, NSURL_HOST);
 		if (hcomp != NULL) {
 			const char *hs = lwc_string_data(hcomp);
 			size_t hl = lwc_string_length(hcomp);
 			if (hl == 14 && strncasecmp(hs, "m.facebook.com", 14) == 0) {
-				c->enable_scripting = false;
+				const char *full = nsurl_access(c->base_url);
+				if (full == NULL || strstr(full,
+						"/two_step_verification/") == NULL) {
+					c->enable_scripting = false;
+				}
 			}
 			lwc_string_unref(hcomp);
 		}
@@ -1896,6 +2191,13 @@ html_process_encoding_change(struct content *c,
 
 	}
 
+	/* MacSurf Trace 1c: the parser just replaced html->document. Retire the
+	 * old DOM-document id; html_begin_conversion opens a fresh one. */
+	if (html->doc_id != 0) {
+		ms_diag_document_close(html->doc_id);
+		html->doc_id = 0;
+	}
+
 	source_data = content__get_source_data(c, &source_size);
 
 	/* fixes506: don't feed a NULL/empty buffer to the parser. After
@@ -1955,15 +2257,23 @@ html_process_data(struct content *c, const char *data, unsigned int size)
 		extern double macos9_micros(void);
 		extern void macsurf_profile_accum_parse(long us);
 		extern long macsurf_profile_get_js_us(void);
-		double t_parse = macos9_micros();
-		long js_before = macsurf_profile_get_js_us();
+		extern int macos9_debug_integrations_enabled(void);
+		int profile = macos9_debug_integrations_enabled();
+		double t_parse = 0.0;
+		long js_before = 0;
 		long parse_us;
+		if (profile) {
+			t_parse = macos9_micros();
+			js_before = macsurf_profile_get_js_us();
+		}
 		dom_ret = dom_hubbub_parser_parse_chunk(html->parser,
 						      (const uint8_t *) data,
 						      size);
-		parse_us = (long)(macos9_micros() - t_parse)
-				- (macsurf_profile_get_js_us() - js_before);
-		macsurf_profile_accum_parse(parse_us);
+		if (profile) {
+			parse_us = (long)(macos9_micros() - t_parse)
+					- (macsurf_profile_get_js_us() - js_before);
+			macsurf_profile_accum_parse(parse_us);
+		}
 	}
 
 	err = libdom_hubbub_error_to_nserror(dom_ret);
@@ -2081,6 +2391,19 @@ html_begin_conversion(html_content *htmlc)
 	dom_hubbub_error error;
 
 	MS_LOG("html begin conversion");
+
+	/* MacSurf Trace 1c: register this DOM document. Idempotent -- this
+	 * function re-enters while the parser flushes late style/script nodes;
+	 * the doc_id == 0 guard opens exactly one id per DOM lifetime.
+	 * html_process_encoding_change() clears doc_id when it replaces
+	 * htmlc->document, so a reparse gets a fresh id. */
+	if (htmlc->doc_id == 0) {
+		htmlc->frame_id = browser_window_get_frame_id(htmlc->bw);
+		htmlc->doc_id = ms_diag_document_open(
+			content_get_nav_id((struct content *) htmlc),
+			htmlc->frame_id);
+	}
+
 	/* fixes848 (#167 perf investigation) -- see html_box_convert_done's
 	 * comment; this is the matching "about to start" bracket. */
 	macsurf_debug_log_writef("WORK pipeline: begin_conversion c=%p url=%s",
@@ -2155,6 +2478,7 @@ html_begin_conversion(html_content *htmlc)
 			return false;
 		}
 		htmlc->parse_completed = true;
+		html_log_facebook_parse_fingerprint(htmlc);
 	}
 
 	/* Walk DOM for <style> and <link rel=stylesheet> once parse is
@@ -2574,6 +2898,79 @@ static void html_reconvert_detach_forms(html_content *c)
 	}
 }
 
+/* Form controls are normally discovered just once after parsing. Script-made
+ * forms and controls arrive later, so a reconvert needs a fresh registry for
+ * its replacement boxes. Keep the old registry until success: its controls
+ * still belong to the retained old tree if conversion has to roll back. */
+static void html_reconvert_free_forms(struct form *forms)
+{
+	struct form *prev;
+
+	while (forms != NULL) {
+		prev = forms->prev;
+		form_free(forms);
+		forms = prev;
+	}
+}
+
+static bool html_reconvert_rebuild_forms(html_content *c)
+{
+	struct form *f;
+	nsurl *action = NULL;
+	nserror error;
+
+	if (c == NULL || c->document == NULL)
+		return false;
+
+	c->forms = html_forms_get_forms(c->encoding,
+			(dom_html_document *) c->document);
+	for (f = c->forms; f != NULL; f = f->prev) {
+		/* Keep dynamic forms subject to the same absolute-action rule as
+		 * parser-time forms. */
+		if (f->action == NULL || f->action[0] == '\0') {
+			nsurl *doc_addr = content_get_url(&c->base);
+			/* A manually constructed content (the deterministic harness) has
+			 * no document URL. Keep an empty action rather than asserting in
+			 * nsurl_access; real fetched pages always take the join below. */
+			if (c->base_url == NULL || doc_addr == NULL) {
+				free(f->action);
+				f->action = strdup("");
+				if (f->action == NULL)
+					goto failed;
+				continue;
+			}
+			error = nsurl_join(c->base_url, nsurl_access(doc_addr),
+					&action);
+		} else {
+			error = nsurl_join(c->base_url, f->action, &action);
+		}
+		if (error != NSERROR_OK || action == NULL)
+			goto failed;
+
+		free(f->action);
+		f->action = strdup(nsurl_access(action));
+		nsurl_unref(action);
+		action = NULL;
+		if (f->action == NULL)
+			goto failed;
+
+		if (f->document_charset == NULL) {
+			f->document_charset = strdup(c->encoding);
+			if (f->document_charset == NULL)
+				goto failed;
+		}
+	}
+
+	return true;
+
+failed:
+	if (action != NULL)
+		nsurl_unref(action);
+	html_reconvert_free_forms(c->forms);
+	c->forms = NULL;
+	return false;
+}
+
 /* fixes843 (#167 S2) - pin the OLD tree's text-node dom_strings across the
  * teardown+rebuild window, the same way fixes421 already defers the OLD box
  * CONTEXT to protect shared/interned CSS styles. The gap fixes421 left open:
@@ -2826,6 +3223,21 @@ void html_reconvert_phase_report(void)
  * Freed in html_reconvert_done after the new tree + reformat are live.
  * Single-window browser => one re-convert at a time; file-scope is safe. */
 static void *g_reconvert_old_bctx = NULL;
+/* A reconvert is transactional: until the new tree completes, this is the
+ * rendered tree that must return if construction fails. */
+static struct box *g_reconvert_old_layout = NULL;
+static struct content_html_iframe *g_reconvert_old_iframe = NULL;
+static struct form *g_reconvert_old_forms = NULL;
+
+#ifdef MACSURF_RECONVERT_TEST_HOOK
+/* Harness-only deterministic failure injection. */
+static int g_reconvert_test_fail_once = 0;
+
+void macsurf_reconvert_test_fail_once(void)
+{
+	g_reconvert_test_fail_once = 1;
+}
+#endif
 
 /* fixes889 - reconvert sequence + the layout pointer each one installed.
  * The click crash (box_for_node -> freed box -> illegal instruction) and a
@@ -3254,6 +3666,444 @@ static void html_reconvert_relink_objects(html_content *c)
 	}
 }
 
+int html_reconvert_fast_style(struct content *base_c, void *vnode)
+{
+	html_content *c = (html_content *)base_c;
+	dom_node *node = vnode;
+	struct box *box;
+	css_select_results *new_styles;
+	css_custom_env *new_env = NULL;
+	css_custom_env *use_parent_env = NULL;
+	const css_computed_style *use_parent = NULL;
+	const css_computed_style *use_root = NULL;
+	extern struct gui_window *macos9_paint_gw;
+	extern int macsurf_reconvert_in_progress;
+	css_color border_color;
+
+	if (node == NULL || c == NULL) return -1;
+	if (c->select_ctx == NULL) return -1;
+	
+	if (macos9_paint_gw != NULL || macsurf_reconvert_in_progress != 0 || base_c->active != 0) return -1;
+
+	box = box_for_node(node);
+	if (box == NULL || box->styles == NULL || box->style == NULL) return -1;
+
+	if (box->type == BOX_CONTENTS) return -1;
+
+	nscss_reset_node_data(node);
+
+	if (box->parent != NULL) {
+		use_parent = (box->parent == c->layout) ? NULL : box->parent->style;
+		use_parent_env = (box->parent == c->layout) ? NULL : box->parent->custom_env;
+	}
+	use_root = (box == c->layout) ? NULL : c->layout->style;
+
+	new_styles = box_get_style((html_content *)c, use_parent, use_root, node, use_parent_env, &new_env);
+	if (new_styles == NULL) return -1;
+
+	if (css_computed_style_is_paint_only_diff(box->style, new_styles->styles[CSS_PSEUDO_ELEMENT_NONE])) {
+		/* 2B-2 opacity: A->B transition check before style replacement */
+		{
+			uint32_t now = 0;
+#ifdef __MACOS9__
+			now = (uint32_t)TickCount();
+#endif
+			macsurf_transition_handle_style_change(c, node, box->style, new_styles->styles[CSS_PSEUDO_ELEMENT_NONE], now);
+		}
+		if (box->custom_env != NULL && !(box->flags & CLONE))
+			css_custom_env_unref(box->custom_env);
+		if (!(box->flags & CLONE)) box->custom_env = new_env;
+		else if (new_env != NULL) css_custom_env_unref(new_env);
+
+		if (box->styles != NULL && !(box->flags & CLONE)) css_select_results_destroy(box->styles);
+		
+		box->styles = new_styles;
+		box->style = new_styles->styles[CSS_PSEUDO_ELEMENT_NONE];
+		/* Border painting uses the layout-time cache on the box.  Keep
+		 * that cache in sync while geometry remains unchanged. */
+		css_computed_border_top_color(box->style, &border_color);
+		box->border[TOP].c = border_color;
+		css_computed_border_right_color(box->style, &border_color);
+		box->border[RIGHT].c = border_color;
+		css_computed_border_bottom_color(box->style, &border_color);
+		box->border[BOTTOM].c = border_color;
+		css_computed_border_left_color(box->style, &border_color);
+		box->border[LEFT].c = border_color;
+		
+		html__redraw_a_box(c, box);
+		return 0;
+	}
+
+	css_select_results_destroy(new_styles);
+	if (new_env != NULL) css_custom_env_unref(new_env);
+	return -1;
+}
+
+/* Candidate state for the inherited-colour mutation path.  Nothing in this
+ * array is published to a box until every affected box has passed the libcss
+ * semantic classifier. */
+struct inherited_color_candidate {
+	struct box *box;
+	css_select_results *styles;
+	css_custom_env *custom_env;
+	css_computed_style *style;
+	struct box *clone_owner;
+};
+
+struct inherited_color_frame {
+	struct box *box;
+	css_computed_style *parent_style;	/* parent's post-recascade style */
+	const css_computed_style *parent_style_old;	/* pointer children currently borrow */
+	css_custom_env *parent_env;
+};
+
+static void
+html_inherited_color_discard(struct inherited_color_candidate *candidate,
+		int count)
+{
+	int i;
+
+	for (i = 0; i < count; i++) {
+		if (candidate[i].styles != NULL)
+			css_select_results_destroy(candidate[i].styles);
+		if (candidate[i].custom_env != NULL)
+			css_custom_env_unref(candidate[i].custom_env);
+	}
+}
+
+/* Re-cascade just one already-built element-box subtree.  This is deliberately
+ * more conservative than html_recascade_tree: boxes that fail to select cause
+ * a full reconvert, because candidate ownership must remain wholly private
+ * until the transaction commits. */
+int
+html_reconvert_fast_inherited_color(struct content *base_c, void *vnode)
+{
+	html_content *c = (html_content *)base_c;
+	dom_node *node = vnode;
+	struct box *root;
+	struct inherited_color_candidate *candidate = NULL;
+	struct inherited_color_frame *stack = NULL;
+	css_select_ctx *candidate_select_ctx = NULL;
+	int candidate_count = 0, candidate_cap = 0;
+	int stack_count = 0, stack_cap = 0;
+	int i;
+	int ok = 0;
+	const char *decline = "commit";
+	int decline_detail = 0;
+	char decline_tag[40];
+	extern struct gui_window *macos9_paint_gw;
+	extern int macsurf_reconvert_in_progress;
+
+	decline_tag[0] = '\0';
+
+	if (c == NULL || node == NULL || c->select_ctx == NULL ||
+		c->layout == NULL || macos9_paint_gw != NULL ||
+		macsurf_reconvert_in_progress != 0 || base_c->active != 0)
+		return -1;
+
+	root = box_for_node(node);
+	if (root == NULL || root->styles == NULL || root->style == NULL ||
+		root->type == BOX_CONTENTS)
+		return -1;
+	if (html_css_new_selection_context(c, &candidate_select_ctx) !=
+		NSERROR_OK || candidate_select_ctx == NULL) {
+		decline = "new_select_ctx";
+		goto done;
+	}
+
+	stack_cap = 32;
+	stack = malloc(sizeof(*stack) * stack_cap);
+	candidate_cap = 32;
+	candidate = malloc(sizeof(*candidate) * candidate_cap);
+	if (stack == NULL || candidate == NULL) {
+		decline = "alloc";
+		goto done;
+	}
+
+	stack[stack_count].box = root;
+	stack[stack_count].parent_style = (root->parent == NULL ||
+		root->parent == c->layout) ? NULL : root->parent->style;
+	/* root's parent is not part of this transaction, so old == new */
+	stack[stack_count].parent_style_old = stack[stack_count].parent_style;
+	stack[stack_count].parent_env = (root->parent == NULL ||
+		root->parent == c->layout) ? NULL : root->parent->custom_env;
+	stack_count++;
+
+	while (stack_count > 0) {
+		struct inherited_color_frame frame;
+		struct box *box;
+		css_computed_style *style_for_children;
+		const css_computed_style *style_for_children_old;
+		css_custom_env *env_for_children;
+		struct box *child;
+
+		frame = stack[--stack_count];
+		box = frame.box;
+		if (box == NULL)
+			continue;
+
+		/* Descendant boxes with no style of their own borrow this
+		 * pointer; track it so the anonymous-borrow test below compares
+		 * against what the child actually holds, not the recascaded
+		 * replacement. Anonymous containers (style == NULL) pass through
+		 * their enclosing parent's style. */
+		if (box->style != NULL) {
+			style_for_children_old = box->style;
+			style_for_children = box->style;
+			env_for_children = box->custom_env;
+		} else {
+			style_for_children_old = frame.parent_style_old;
+			style_for_children = frame.parent_style;
+			env_for_children = frame.parent_env;
+		}
+		if (box->flags & CLONE) {
+			struct box *owner = box->prev;
+
+			/* Continuations borrow their original box's result.  Defer the
+			 * pointer update until the owner has committed; independently
+			 * selecting a clone can observe an implementation-only difference. */
+			while (owner != NULL && owner->node != box->node)
+				owner = owner->prev;
+			if (owner == NULL) {
+				decline = "clone_no_owner";
+				goto done;
+			}
+			if (candidate_count == candidate_cap) {
+				struct inherited_color_candidate *p;
+				candidate_cap *= 2;
+				p = realloc(candidate, sizeof(*candidate) * candidate_cap);
+				if (p == NULL) {
+					decline = "realloc";
+					goto done;
+				}
+				candidate = p;
+			}
+			candidate[candidate_count].box = box;
+			candidate[candidate_count].styles = NULL;
+			candidate[candidate_count].custom_env = NULL;
+			candidate[candidate_count].style = NULL;
+			candidate[candidate_count].clone_owner = owner;
+			candidate_count++;
+		} else if (box->node != NULL && box->styles != NULL) {
+			css_select_results *styles;
+			css_custom_env *env = NULL;
+			const css_computed_style *use_root;
+			const css_computed_style *use_parent;
+			css_custom_env *use_parent_env;
+			enum css_computed_style_diff diff;
+			/* Compare this box's OWN previous cascade result against
+			 * its fresh one.  box->style itself is not a valid
+			 * baseline: an empty inline box (a zero-width <span>
+			 * whose text is a sibling, not a child) keeps box->style
+			 * pointing at its parent, while box->styles still holds
+			 * the box's own selection - comparing the two reports a
+			 * border/width difference that is purely that mismatch. */
+			const css_computed_style *own_old =
+				box->styles->styles[CSS_PSEUDO_ELEMENT_NONE];
+
+			if (candidate_count == candidate_cap) {
+				struct inherited_color_candidate *p;
+				candidate_cap *= 2;
+				p = realloc(candidate, sizeof(*candidate) * candidate_cap);
+				if (p == NULL) {
+					decline = "realloc";
+					goto done;
+				}
+				candidate = p;
+			}
+
+			use_root = (box == c->layout) ? NULL : c->layout->style;
+			use_parent = (box == c->layout) ? NULL : frame.parent_style;
+			use_parent_env = (box == c->layout) ? NULL : frame.parent_env;
+			styles = box_get_style_with_select_ctx(c, candidate_select_ctx,
+					use_parent, use_root, box->node, use_parent_env, &env);
+			if (styles == NULL) {
+				decline = "styles_null";
+				goto done;
+			}
+
+			diff = css_computed_style_diff(own_old,
+					styles->styles[CSS_PSEUDO_ELEMENT_NONE]);
+			if (diff == CSS_COMPUTED_STYLE_OTHER_DIFF) {
+				dom_string *dnm = NULL;
+				const css_computed_style *ns =
+					styles->styles[CSS_PSEUDO_ELEMENT_NONE];
+				char b0[48];
+				decline = "classifier_other";
+				decline_detail = css_computed_style_color_diff_detail(
+					own_old, ns);
+				if (box->node != NULL &&
+					dom_node_get_node_name(box->node, &dnm) == DOM_NO_ERR &&
+					dnm != NULL) {
+					strncpy(decline_tag, dom_string_data(dnm),
+						sizeof(decline_tag) - 1);
+					decline_tag[sizeof(decline_tag) - 1] = '\0';
+					dom_string_unref(dnm);
+				}
+				sprintf(b0, "%08lX/%08lX",
+					css_computed_style_debug_bits0(own_old),
+					css_computed_style_debug_bits0(ns));
+				macsurf_debug_log_writef(
+					"LIFE INHERITEDCOLOR classifier bits0=%s", b0);
+				/* MacSurf Trace 1c: the structured record. Join keys
+				 * (pass/batch/doc/task) come from the live render
+				 * scope the reconvert callback pushed; this is the
+				 * only place the bits + tag + detail are in scope. */
+				ms_diag_render_stage(MS_STAGE_INHERITED_COLOR,
+					MS_SRES_DECLINE,
+					MS_SREASON_BORDER_WIDTH_BITS_DIFFER,
+					(int) decline_detail,
+					(unsigned long)
+						css_computed_style_debug_bits0(own_old),
+					(unsigned long)
+						css_computed_style_debug_bits0(ns),
+					decline_tag[0] != '\0' ? decline_tag : "-",
+					candidate_count);
+				css_select_results_destroy(styles);
+				if (env != NULL) css_custom_env_unref(env);
+				goto done;
+			}
+
+			candidate[candidate_count].box = box;
+			candidate[candidate_count].styles = styles;
+			candidate[candidate_count].custom_env = env;
+			candidate[candidate_count].style =
+				styles->styles[CSS_PSEUDO_ELEMENT_NONE];
+			candidate[candidate_count].clone_owner = NULL;
+			candidate_count++;
+			style_for_children = styles->styles[CSS_PSEUDO_ELEMENT_NONE];
+			style_for_children_old = own_old;
+			env_for_children = env;
+		} else if (box->style != NULL && box->style == frame.parent_style_old) {
+			/* Anonymous/text boxes borrow their parent's computed style. Keep
+			 * their pointer change in the candidate set as well: text boxes
+			 * otherwise continue to paint the old inherited foreground.
+			 * Match against the pointer the child actually holds (the
+			 * parent's pre-recascade style), not the replacement. */
+			if (candidate_count == candidate_cap) {
+				struct inherited_color_candidate *p;
+				candidate_cap *= 2;
+				p = realloc(candidate, sizeof(*candidate) * candidate_cap);
+				if (p == NULL)
+					goto done;
+				candidate = p;
+			}
+			candidate[candidate_count].box = box;
+			candidate[candidate_count].styles = NULL;
+			candidate[candidate_count].custom_env = NULL;
+			candidate[candidate_count].style = frame.parent_style;
+			candidate[candidate_count].clone_owner = NULL;
+			candidate_count++;
+			style_for_children = frame.parent_style;
+			style_for_children_old = frame.parent_style_old;
+			env_for_children = frame.parent_env;
+		}
+
+		for (child = box->children; child != NULL; child = child->next) {
+			if (stack_count == stack_cap) {
+				struct inherited_color_frame *p;
+				stack_cap *= 2;
+				p = realloc(stack, sizeof(*stack) * stack_cap);
+				if (p == NULL) {
+					decline = "realloc";
+					goto done;
+				}
+				stack = p;
+			}
+			stack[stack_count].box = child;
+			stack[stack_count].parent_style = style_for_children;
+			stack[stack_count].parent_style_old = style_for_children_old;
+			stack[stack_count].parent_env = env_for_children;
+			stack_count++;
+		}
+	}
+
+	/* Every deferred clone must name an owner selected in this transaction. */
+	for (i = 0; i < candidate_count; i++) {
+		int j;
+		if (candidate[i].clone_owner == NULL)
+			continue;
+		for (j = 0; j < candidate_count; j++) {
+			if (candidate[j].box == candidate[i].clone_owner &&
+				candidate[j].styles != NULL)
+				break;
+		}
+		if (j == candidate_count) {
+			decline = "clone_unresolved";
+			goto done;
+		}
+	}
+
+	/* Commit phase: this is the first point live box style pointers move. */
+	for (i = 0; i < candidate_count; i++) {
+		struct box *box = candidate[i].box;
+		if (candidate[i].clone_owner != NULL)
+			continue;
+		if (candidate[i].styles != NULL) {
+			if (box->custom_env != NULL)
+				css_custom_env_unref(box->custom_env);
+			box->custom_env = candidate[i].custom_env;
+			if (box->styles != NULL)
+				css_select_results_destroy(box->styles);
+			box->styles = candidate[i].styles;
+		}
+		box->style = candidate[i].style;
+		candidate[i].custom_env = NULL;
+		candidate[i].styles = NULL;
+	}
+	for (i = 0; i < candidate_count; i++) {
+		int j;
+		if (candidate[i].clone_owner == NULL)
+			continue;
+		for (j = 0; candidate[j].box != candidate[i].clone_owner; j++)
+			;
+		candidate[i].box->custom_env = candidate[j].box->custom_env;
+		candidate[i].box->styles = candidate[j].box->styles;
+		candidate[i].box->style = candidate[j].box->style;
+	}
+
+	/* Geometry is proven unchanged.  Redraw the whole affected subtree without
+	 * conversion or layout so descendant text gets repainted too. */
+	for (i = 0; i < candidate_count; i++)
+		html__redraw_a_box(c, candidate[i].box);
+	ok = 1;
+
+done:
+	if (!ok) {
+		macsurf_debug_log_writef(
+			"LIFE INHERITEDCOLOR decline stage=%s tag=%s detail=%d "
+			"cand=%d",
+			decline, decline_tag[0] != '\0' ? decline_tag : "-",
+			decline_detail, candidate_count);
+		/* MacSurf Trace 1c: structured decline for reasons other than
+		 * classifier_other (which already recorded its own, richer one
+		 * with the border-width bits before jumping here). */
+		if (decline == NULL || strcmp(decline, "classifier_other") != 0) {
+			int reason_e = MS_SREASON_NONE;
+			if (decline != NULL && strcmp(decline, "structural") == 0)
+				reason_e = MS_SREASON_STRUCTURAL_IN_BATCH;
+			else if (decline != NULL &&
+				 strcmp(decline, "no_candidate") == 0)
+				reason_e = MS_SREASON_NO_CANDIDATE;
+			ms_diag_render_stage(MS_STAGE_INHERITED_COLOR,
+				MS_SRES_DECLINE, reason_e, (int) decline_detail,
+				0, 0,
+				decline_tag[0] != '\0' ? decline_tag : "-",
+				candidate_count);
+		}
+		html_inherited_color_discard(candidate, candidate_count);
+	} else {
+		ms_diag_render_stage(MS_STAGE_INHERITED_COLOR, MS_SRES_COMMIT,
+			MS_SREASON_NONE, 0, 0, 0,
+			decline_tag[0] != '\0' ? decline_tag : "-",
+			candidate_count);
+	}
+	if (candidate_select_ctx != NULL)
+		css_select_ctx_destroy(candidate_select_ctx);
+	free(candidate);
+	free(stack);
+	return ok ? 0 : -1;
+}
 
 static void html_reconvert_free_old(void)
 {
@@ -3295,11 +4145,104 @@ static void html_reconvert_free_old(void)
 			" have handed a FREED box to box_for_node)",
 			(long) (macsurf_box_backlink_cleared - before));
 	}
+	if (g_reconvert_old_forms != NULL) {
+		html_reconvert_free_forms(g_reconvert_old_forms);
+		g_reconvert_old_forms = NULL;
+	}
+	g_reconvert_old_layout = NULL;
+	g_reconvert_old_iframe = NULL;
+}
+
+/* Restore the persistent DOM's box links after discarding a failed
+ * replacement tree. Float and marker boxes are explicit because they are not
+ * reliably reachable through children/next alone. */
+static void html_reconvert_restore_box_links(struct box *b, int depth,
+		unsigned long *rebound)
+{
+	struct box *fl;
+	void *old = NULL;
+
+	if (b == NULL || depth > 512)
+		return;
+
+	while (b != NULL) {
+		if (b->node != NULL) {
+			(void) dom_node_set_user_data(b->node,
+					corestring_dom___ns_key_box_node_data,
+					b, NULL, &old);
+			(*rebound)++;
+		}
+		if (b->gadget != NULL)
+			b->gadget->box = b;
+
+		if (b->list_marker != NULL) {
+			html_reconvert_restore_box_links(b->list_marker,
+					depth + 1, rebound);
+		}
+
+		/* A float is normally also in the regular tree, but revisiting it
+		 * is harmless and covers a detached float subtree as well. */
+		for (fl = b->float_children; fl != NULL; fl = fl->next_float) {
+			html_reconvert_restore_box_links(fl, depth + 1, rebound);
+		}
+
+		if (b->children != NULL) {
+			html_reconvert_restore_box_links(b->children,
+					depth + 1, rebound);
+		}
+		b = b->next;
+	}
+}
+
+/* A failed reconvert must preserve the last fully rendered tree. The old
+ * failure path freed it after c->layout was cleared, blanking the document. */
+static void html_reconvert_rollback(html_content *c)
+{
+	void *new_bctx;
+	unsigned long rebound = 0;
+
+	if (c == NULL)
+		return;
+
+	new_bctx = c->bctx;
+	c->bctx = NULL;
+	c->layout = NULL;
+	c->iframe = NULL;
+
+	/* The partial tree owns its boxes, styles, and partial iframe list. */
+	if (new_bctx != NULL) {
+		extern const char *macsurf_talloc_free_ctx;
+		macsurf_talloc_free_ctx = "reconvert-failed-new-tree";
+		talloc_free(new_bctx);
+		macsurf_talloc_free_ctx = "(none)";
+	}
+
+	html_reconvert_release_pinned_strings();
+	html_reconvert_free_forms(c->forms);
+	c->forms = g_reconvert_old_forms;
+	c->bctx = g_reconvert_old_bctx;
+	c->layout = g_reconvert_old_layout;
+	c->iframe = g_reconvert_old_iframe;
+	g_reconvert_old_bctx = NULL;
+	g_reconvert_old_layout = NULL;
+	g_reconvert_old_iframe = NULL;
+	g_reconvert_old_forms = NULL;
+
+	if (c->layout != NULL) {
+		c->unit_len_ctx.root_style = c->layout->style;
+		html_reconvert_restore_box_links(c->layout, 0, &rebound);
+		(void) imagemap_extract(c);
+	}
+
+	macsurf_debug_log_writef(
+		"LIFE reconvert rollback layout=%p bctx=%p links=%ld",
+		(void *) c->layout, (void *) c->bctx, (long) rebound);
 }
 
 static void html_reconvert_done(html_content *c, bool success)
 {
 	nserror err;
+	content_status saved_status;
 
 	c->box_conversion_context = NULL;
 	/* fixes895 - the box build finished (or failed); this brackets the dark
@@ -3320,14 +4263,7 @@ static void html_reconvert_done(html_content *c, bool success)
 	if ((success == false) || (c->aborted)) {
 		macsurf_debug_log_writef("WORK reconvert #%ld: FAILED/aborted",
 				(long) macsurf_reconvert_seq);
-		{	/* fixes1095 */
-			double t0 = html_reconv_now();
-			html_reconvert_relink_objects(c);
-			html_reconv_ph_add(RECONV_PH_RELINK, t0);
-			t0 = html_reconv_now();
-			html_reconvert_free_old(); /* don't leak the deferred old tree */
-			html_reconv_ph_add(RECONV_PH_FREEOLD, t0);
-		}
+		html_reconvert_rollback(c);
 		/* fixes895 - disarm the hunt: the async span is over. */
 		macsurf_reconvert_in_progress = 0;
 		macsurf_debug_log_writef("LIFE reconvert in_progress=0 seq=%ld (done-failed)",
@@ -3367,11 +4303,20 @@ static void html_reconvert_done(html_content *c, bool success)
 	macsurf_reconv_pos_flush();
 	{	/* fixes1095 - REFORMAT (cascade + layout + first paint) */
 		double t0 = html_reconv_now();
+		/* content__reformat deliberately accepts only an already-live
+		 * content. A JS geometry read may force this reconvert while the
+		 * parser is still LOADING, though. The tree is complete at this
+		 * point; borrow READY solely for the formatter assertion and restore
+		 * LOADING immediately so the fetch/load lifecycle cannot advance. */
+		saved_status = c->base.status;
+		if (saved_status == CONTENT_STATUS_LOADING)
+			c->base.status = CONTENT_STATUS_READY;
 		content__reformat(&c->base, false,
 				c->base.available_width, c->base.available_height);
+		if (saved_status == CONTENT_STATUS_LOADING)
+			c->base.status = saved_status;
 		html_reconv_ph_add(RECONV_PH_REFORMAT, t0);
 	}
-
 	/* fixes895 - the full cycle repainted without a crash. Disarm. */
 	macsurf_debug_log_writef(
 			"WORK reconvert #%ld: first-paint OK", (long) macsurf_reconvert_seq);
@@ -3379,6 +4324,13 @@ static void html_reconvert_done(html_content *c, bool success)
 	macsurf_debug_log_writef("LIFE reconvert in_progress=0 seq=%ld (done-ok)",
 			(long) macsurf_reconvert_seq);
 	macsurf_debug_log_reconv_flush(0);
+	/* fixes1288 (#167) - relink can retire the final in-flight duplicate.
+	 * Its handle is gone, so no later object callback exists to notice that
+	 * active reached zero.  Complete the same READY->DONE transition here. */
+	if (c->base.active == 0 &&
+			c->base.status == CONTENT_STATUS_READY) {
+		(void) html_proceed_to_done(c);
+	}
 	html_pagemap_dump(c, "reconvert"); /* fixes1015 */
 	html_slider_probe(c, "reconvert"); /* fixes1093 */
 
@@ -3462,6 +4414,18 @@ static void html_reconvert_done(html_content *c, bool success)
 		}
 	}
 #endif
+	/* fixes1235 (#167) - deliver a MutationObserver batch to any
+	 * registered observer. Unlike the resize/load hooks above, this is
+	 * NOT height-gated: a real DOM mutation just completed (that is why
+	 * reconvert ran at all), so every registered observer should hear
+	 * about it, not only ones whose consequence changed the page's
+	 * height. Fires once per completed reconvert -- see js_fire_mutation_
+	 * batch's own comment (macsurf_qjs.c) for why this cannot introduce a
+	 * new feedback-loop frequency beyond what reconvert's debounce/floor
+	 * already bounds. */
+	if (c->js_thread != NULL) {
+		js_fire_mutation_batch(c->js_thread);
+	}
 	macsurf_reconv_pos_set("reconvert-idle", (long) macsurf_reconvert_seq,
 			0, "");
 	macsurf_reconv_pos_flush();
@@ -3793,6 +4757,13 @@ nserror html_reconvert(html_content *c)
 			" root_style=NULL", (long) macsurf_reconvert_seq, ncleared);
 	}
 
+	/* CSS Transitions 2B-2: full reconstruction normally replaces the box
+	 * tree wholesale, bypassing html_reconvert_fast_style's old/new style
+	 * comparison. Re-cascade the still-live old tree first so it can start
+	 * presentation effects from each genuine Style A -> Style B pair. The
+	 * normal reconstruction below still owns geometry and installs Style B. */
+	(void)html_recascade_tree(c);
+
 	/* fixes896 - pin the DOM's live text-node dom_strings across the rebuild
 	 * window. Was fixes843, which walked c->layout (the box tree) for BOX_TEXT
 	 * boxes with a node backlink that box_construct never sets -> pinned 0 ->
@@ -3817,8 +4788,12 @@ nserror html_reconvert(html_content *c)
 	 * above (H1/H2/H3), so the old tree is orphaned-but-alive until then. */
 	MS_LOG("reconvert: defer old bctx free");
 	g_reconvert_old_bctx = c->bctx;
+	g_reconvert_old_layout = c->layout;
+	g_reconvert_old_iframe = c->iframe;
+	g_reconvert_old_forms = c->forms;
 	c->bctx = NULL;
 	c->layout = NULL;
+	c->forms = NULL;
 
 	/* fixes915 - THE IFRAME LIST DIES WITH THE OLD bctx. Drop it here.
 	 *
@@ -3857,7 +4832,7 @@ nserror html_reconvert(html_content *c)
 		macsurf_debug_log_writef(
 			"WORK reconvert #%ld: doc_element FAILED exc=%d",
 			(long) macsurf_reconvert_seq, (int) exc);
-		html_reconvert_free_old();
+		html_reconvert_rollback(c);
 		/* fixes895 - disarm: html_reconvert_done will never run. */
 		macsurf_reconvert_in_progress = 0;
 		macsurf_debug_log_writef("LIFE reconvert in_progress=0 seq=%ld (doc-element-failed)",
@@ -3870,6 +4845,20 @@ nserror html_reconvert(html_content *c)
 		"WORK reconvert #%ld: doc_element=%p -> dims -> dom_to_box",
 		(long) macsurf_reconvert_seq, (void *) html);
 	html_get_dimensions(c);
+	if (html_reconvert_rebuild_forms(c) == false) {
+		macsurf_debug_log_writef(
+			"WORK reconvert #%ld: form registry rebuild FAILED",
+			(long) macsurf_reconvert_seq);
+		dom_node_unref(html);
+		html_reconvert_rollback(c);
+		macsurf_reconvert_in_progress = 0;
+		macsurf_debug_log_writef(
+			"LIFE reconvert in_progress=0 seq=%ld (forms-failed)",
+			(long) macsurf_reconvert_seq);
+		macsurf_debug_log_reconv_flush(0);
+		g_html_reconvert_depth--;
+		return NSERROR_NOMEM;
+	}
 	macsurf_reconv_pos_set("pre-dom_to_box", (long) macsurf_reconvert_seq,
 			0, "");
 	macsurf_reconv_pos_flush();
@@ -3882,8 +4871,16 @@ nserror html_reconvert(html_content *c)
 			g_reconv_ph_us[RECONV_PH_FREEOLD] +
 			g_reconv_ph_us[RECONV_PH_REFORMAT];
 		long spent;
-		error = dom_to_box(html, c, html_reconvert_done,
-				&c->box_conversion_context);
+#ifdef MACSURF_RECONVERT_TEST_HOOK
+		if (g_reconvert_test_fail_once) {
+			g_reconvert_test_fail_once = 0;
+			error = NSERROR_NOMEM;
+		} else
+#endif
+		{
+			error = dom_to_box(html, c, html_reconvert_done,
+					&c->box_conversion_context);
+		}
 		spent = (long)(html_reconv_now() - t0) -
 			((g_reconv_ph_us[RECONV_PH_RELINK] +
 			  g_reconv_ph_us[RECONV_PH_FREEOLD] +
@@ -3895,7 +4892,7 @@ nserror html_reconvert(html_content *c)
 		macsurf_debug_log_writef(
 			"WORK reconvert #%ld: dom_to_box FAILED err=%d",
 			(long) macsurf_reconvert_seq, (int) error);
-		html_reconvert_free_old();   /* dom_to_box failed: _done won't run */
+		html_reconvert_rollback(c);
 		/* fixes895 - disarm: html_reconvert_done will never run. */
 		macsurf_reconvert_in_progress = 0;
 		macsurf_debug_log_writef("LIFE reconvert in_progress=0 seq=%ld (dom_to_box-failed)",
@@ -4452,7 +5449,7 @@ static void html_reformat(struct content *c, int width, int height)
 				if (bx == NULL) continue;
 				bot = (int)bx->y + (int)bx->height;
 				if (bot >= cut && bot < 1000000) {
-					char nm[64];
+					char nm[256];
 					nm[0] = '\0';
 					if (bx->node != NULL)
 						html_pagemap_brief(bx->node, nm,
@@ -4473,6 +5470,352 @@ static void html_reformat(struct content *c, int width, int height)
 					stack[sp++] = ch;
 			}
 			tall_dumped_c = (void *)c;
+		}
+	}
+
+	/* fixes1294 (#167, C0.2) - LOCATE THE BLANK BAND, take 2.
+	 *
+	 * fixes1293's first hardware run (2026-08-23, all three of ptricky3/
+	 * kaija.prohofsky/minnesotastatefair) exposed two bugs in the
+	 * diagnostic itself, not new facts about Facebook:
+	 *
+	 * 1. The occupancy map only covered the first 3000px of the document,
+	 *    but these pages are 22000-25000px tall -- every gap it found was
+	 *    reported as "y1=3000" because the window ran out, not because the
+	 *    empty region actually ended there. Fix: size the map to the WHOLE
+	 *    document (c->height), with the per-bucket pixel width scaled up
+	 *    so the fixed-size bucket array still covers it.
+	 * 2. Pass 2's "any box intersecting the gap, capped at 8" walk just
+	 *    re-printed the top of the ancestor chain every time (HTML -> BODY
+	 *    -> mount point -> generic wrapper divs), because EVERY ancestor of
+	 *    literally any content trivially "intersects" a gap near the top of
+	 *    a 22000px document -- it never reached anything specific. Its
+	 *    `kids=` field was also a bare boolean (children != NULL), not a
+	 *    count, so "kids=1" on every line looked like a suspicious
+	 *    single-child chain when it was just "has any children at all."
+	 *    Fix: DRILL DOWN instead of flat-searching. From the root, at each
+	 *    level look at which of the box's DIRECT children overlap the gap.
+	 *    Exactly one overlapping child -> that child is still just part of
+	 *    the ancestor spine, descend into it. Zero or multiple overlapping
+	 *    children -> stop: this is the box actually responsible for (or
+	 *    branching across) the gap. Report it (owner, with a real bounded
+	 *    child COUNT) plus every child that overlaps the gap (branch
+	 *    candidates, same fields). Reading it: owner has zero overlapping
+	 *    children but a nonzero total child count -> its real children are
+	 *    positioned outside the gap (margin/flow, or off in a part of the
+	 *    tree that never reaches these coordinates) -- not a mount gap.
+	 *    Owner has zero children at all -> genuine empty leaf -> JS/mount
+	 *    gap. Multiple overlapping children -> look at what's reported for
+	 *    each: real content-bearing ones with nothing rendered points at
+	 *    clip/visibility; empty ones with big height/min-height points at
+	 *    CSS/layout.
+	 *
+	 * Same one-shot-per-navigation, bounded-depth (64), capped-output
+	 * discipline as fixes1293 -- cannot blow the OS 9 stack or flood the
+	 * log. Diagnostic only: still no CSS or JS theory assumed. */
+	if (layout != NULL && c->height > 0) {
+		static void *fbgap_dumped_c = NULL;
+		if ((void *)c != fbgap_dumped_c) {
+#define FBGAP_BUCKETS 300
+#define FBGAP_MIN_RUN_PX 150
+#define FBGAP_MAX_GAPS 3
+#define FBGAP_MAX_BRANCH 12
+			unsigned char occ[FBGAP_BUCKETS];
+			struct box *stack[256];
+			int sp;
+			int i;
+			int gap_y0[FBGAP_MAX_GAPS];
+			int gap_y1[FBGAP_MAX_GAPS];
+			int gap_count;
+			int bucket_px;
+
+			/* Cover the WHOLE document with a fixed-size bucket array
+			 * by scaling the bucket width up to fit. */
+			bucket_px = ((int)c->height / FBGAP_BUCKETS) + 1;
+			if (bucket_px < 1) bucket_px = 1;
+
+			for (i = 0; i < FBGAP_BUCKETS; i++) occ[i] = 0;
+
+			/* Pass 1: mark occupancy from content-bearing boxes'
+			 * GLOBAL bounds. */
+			sp = 0;
+			stack[sp++] = layout;
+			while (sp > 0) {
+				struct box *bx = stack[--sp];
+				struct box *ch;
+				if (bx == NULL) continue;
+				if (bx->text != NULL || bx->object != NULL) {
+					int gx = 0, gy = 0;
+					int b0, b1, bi;
+					box_coords(bx, &gx, &gy);
+					b0 = gy / bucket_px;
+					b1 = (gy + (int)bx->height) / bucket_px;
+					if (b0 < 0) b0 = 0;
+					if (b1 >= FBGAP_BUCKETS)
+						b1 = FBGAP_BUCKETS - 1;
+					for (bi = b0; bi <= b1; bi++) {
+						if (bi >= 0 && bi < FBGAP_BUCKETS)
+							occ[bi] = 1;
+					}
+				}
+				for (ch = bx->children; ch != NULL && sp < 256;
+						ch = ch->next)
+					stack[sp++] = ch;
+			}
+
+			/* Find empty runs >= FBGAP_MIN_RUN_PX, in document order,
+			 * capped at FBGAP_MAX_GAPS. */
+			gap_count = 0;
+			i = 0;
+			while (i < FBGAP_BUCKETS && gap_count < FBGAP_MAX_GAPS) {
+				int run_start;
+				int run_len;
+				if (occ[i]) { i++; continue; }
+				run_start = i;
+				while (i < FBGAP_BUCKETS && !occ[i]) i++;
+				run_len = i - run_start;
+				if (run_len * bucket_px >= FBGAP_MIN_RUN_PX) {
+					gap_y0[gap_count] = run_start * bucket_px;
+					gap_y1[gap_count] = i * bucket_px;
+					macsurf_debug_log_writef(
+						"LIFE FBGAP y0=%d y1=%d h=%d bucket_px=%d",
+						gap_y0[gap_count], gap_y1[gap_count],
+						gap_y1[gap_count] - gap_y0[gap_count],
+						bucket_px);
+					gap_count++;
+				}
+			}
+
+			/* Pass 2: for each gap, DRILL DOWN from the root through
+			 * whichever single child still covers the gap, until we
+			 * reach a box with zero or multiple overlapping children
+			 * -- the box actually responsible for the gap, not just
+			 * another link in the ancestor spine. */
+			for (i = 0; i < gap_count; i++) {
+				struct box *cur = layout;
+				struct box *branch[FBGAP_MAX_BRANCH];
+				int branch_n;
+				int depth;
+
+				for (depth = 0; depth < 64; depth++) {
+					struct box *ch;
+					branch_n = 0;
+					for (ch = cur->children; ch != NULL;
+							ch = ch->next) {
+						int cgx = 0, cgy = 0;
+						int cb0, cb1;
+						box_coords(ch, &cgx, &cgy);
+						cb0 = cgy;
+						cb1 = cgy + (int)ch->height;
+						if (cb1 > gap_y0[i] &&
+								cb0 < gap_y1[i]) {
+							if (branch_n < FBGAP_MAX_BRANCH)
+								branch[branch_n] = ch;
+							branch_n++;
+						}
+					}
+					if (branch_n == 1) {
+						cur = branch[0];
+						continue;
+					}
+					break;
+				}
+
+				/* Report the owner: the box the descent stopped at,
+				 * with a REAL bounded total child count (not the old
+				 * boolean) so "zero overlapping children" can be told
+				 * apart from "zero children at all". fixes1295 (C0.3)
+				 * adds actual height/min-height PIXEL values (not just
+				 * set/auto -- a min-height that's SET but small isn't
+				 * the same finding as one set to thousands of px) plus
+				 * flex-grow/basis/align, since both owners in the
+				 * fixes1294 hardware run were flex containers (type=14)
+				 * with mht=set and it matters whether that min-height
+				 * value is what's actually driving the box's oversized
+				 * height, or whether a flex-grow/align-items mismatch
+				 * is the real cause. */
+				{
+					int gx = 0, gy = 0;
+					int total_kids = 0;
+					struct box *ch;
+					char nm[256];
+					const char *disp = "-";
+					const char *ht = "auto";
+					const char *mht = "auto";
+					int pos = -1;
+					int htpx = -1, mhtpx = -1;
+					int grow_x100 = -1;
+					int basis_px = -1;
+					int align_items = -1, align_self = -1;
+					int flex_dir = -1;
+
+					box_coords(cur, &gx, &gy);
+					for (ch = cur->children;
+							ch != NULL && total_kids < 999;
+							ch = ch->next)
+						total_kids++;
+
+					nm[0] = '\0';
+					if (cur->node != NULL)
+						html_pagemap_brief(cur->node, nm,
+								(int)sizeof nm);
+					if (cur->style != NULL) {
+						css_fixed hv = 0, mhv = 0, gv = 0, bv = 0;
+						css_unit hu = CSS_UNIT_PX,
+							 mhu = CSS_UNIT_PX,
+							 bu = CSS_UNIT_PX;
+						disp = (css_computed_display_static(
+								cur->style) ==
+								CSS_DISPLAY_NONE) ?
+								"NONE" : "ok";
+						if (css_computed_height(cur->style,
+								&hv, &hu) == CSS_HEIGHT_SET) {
+							ht = "set";
+							if (hu == CSS_UNIT_PX)
+								htpx = (int) FIXTOINT(hv);
+						}
+						if (css_computed_min_height(cur->style,
+								&mhv, &mhu) ==
+								CSS_MIN_HEIGHT_SET) {
+							mht = "set";
+							if (mhu == CSS_UNIT_PX)
+								mhtpx = (int) FIXTOINT(mhv);
+						}
+						pos = (int) css_computed_position(
+								cur->style);
+						if (css_computed_flex_grow(cur->style,
+								&gv) == CSS_FLEX_GROW_SET)
+							grow_x100 = (int)
+								(((long)gv * 100) >>
+								 CSS_RADIX_POINT);
+						if (css_computed_flex_basis(cur->style,
+								&bv, &bu) ==
+								CSS_FLEX_BASIS_SET &&
+								bu == CSS_UNIT_PX)
+							basis_px = (int) FIXTOINT(bv);
+						align_items = (int)
+							css_computed_align_items(
+									cur->style);
+						align_self = (int)
+							css_computed_align_self(
+									cur->style);
+						flex_dir = (int)
+							css_computed_flex_direction(
+									cur->style);
+					}
+					macsurf_debug_log_writef(
+						"LIFE FBGAPOWNER box=%p gap=%d %s type=%d x=%d y=%d w=%d h=%d totalkids=%d overlapkids=%d txt=%d obj=%d disp=%s pos=%d ht=%s(%d) mht=%s(%d) grow=%d basis=%d align=%d/%d dir=%d",
+						(void *)cur, i,
+						nm[0] ? nm : "(no node)",
+						(int)cur->type, gx, gy,
+						(int)cur->width, (int)cur->height,
+						total_kids, branch_n,
+						cur->text != NULL,
+						cur->object != NULL,
+						disp, pos, ht, htpx, mht, mhtpx,
+						grow_x100, basis_px,
+						align_items, align_self, flex_dir);
+				}
+
+				/* Report each overlapping child (branch candidates),
+				 * capped at FBGAP_MAX_BRANCH. */
+				{
+					int bi;
+					int cap = branch_n;
+					if (cap > FBGAP_MAX_BRANCH)
+						cap = FBGAP_MAX_BRANCH;
+					for (bi = 0; bi < cap; bi++) {
+						struct box *bx = branch[bi];
+						int gx = 0, gy = 0;
+						int total_kids = 0;
+						struct box *ch;
+						char nm[256];
+						const char *disp = "-";
+						const char *ht = "auto";
+						const char *mht = "auto";
+						int pos = -1;
+						int htpx = -1, mhtpx = -1;
+						int grow_x100 = -1;
+						int basis_px = -1;
+						int align_items = -1, align_self = -1;
+
+						box_coords(bx, &gx, &gy);
+						for (ch = bx->children;
+								ch != NULL && total_kids < 999;
+								ch = ch->next)
+							total_kids++;
+
+						nm[0] = '\0';
+						if (bx->node != NULL)
+							html_pagemap_brief(bx->node,
+									nm, (int)sizeof nm);
+						if (bx->style != NULL) {
+							css_fixed hv = 0, mhv = 0,
+								  gv = 0, bv = 0;
+							css_unit hu = CSS_UNIT_PX,
+								 mhu = CSS_UNIT_PX,
+								 bu = CSS_UNIT_PX;
+							disp = (css_computed_display_static(
+									bx->style) ==
+									CSS_DISPLAY_NONE) ?
+									"NONE" : "ok";
+							if (css_computed_height(
+									bx->style, &hv, &hu)
+									== CSS_HEIGHT_SET) {
+								ht = "set";
+								if (hu == CSS_UNIT_PX)
+									htpx = (int)
+										FIXTOINT(hv);
+							}
+							if (css_computed_min_height(
+									bx->style, &mhv,
+									&mhu) ==
+									CSS_MIN_HEIGHT_SET) {
+								mht = "set";
+								if (mhu == CSS_UNIT_PX)
+									mhtpx = (int)
+										FIXTOINT(mhv);
+							}
+							pos = (int) css_computed_position(
+									bx->style);
+							if (css_computed_flex_grow(
+									bx->style, &gv) ==
+									CSS_FLEX_GROW_SET)
+								grow_x100 = (int)
+									(((long)gv * 100) >>
+									 CSS_RADIX_POINT);
+							if (css_computed_flex_basis(
+									bx->style, &bv, &bu) ==
+									CSS_FLEX_BASIS_SET &&
+									bu == CSS_UNIT_PX)
+								basis_px = (int)
+									FIXTOINT(bv);
+							align_items = (int)
+								css_computed_align_items(
+										bx->style);
+							align_self = (int)
+								css_computed_align_self(
+										bx->style);
+						}
+						macsurf_debug_log_writef(
+							"LIFE FBGAPBRANCH gap=%d %s type=%d x=%d y=%d w=%d h=%d totalkids=%d txt=%d obj=%d disp=%s pos=%d ht=%s(%d) mht=%s(%d) grow=%d basis=%d align=%d/%d",
+							i, nm[0] ? nm : "(no node)",
+							(int)bx->type, gx, gy,
+							(int)bx->width, (int)bx->height,
+							total_kids,
+							bx->text != NULL,
+							bx->object != NULL,
+							disp, pos, ht, htpx, mht, mhtpx,
+							grow_x100, basis_px,
+							align_items, align_self);
+					}
+				}
+			}
+#undef FBGAP_BUCKETS
+#undef FBGAP_MIN_RUN_PX
+#undef FBGAP_MAX_GAPS
+#undef FBGAP_MAX_BRANCH
+			fbgap_dumped_c = (void *)c;
 		}
 	}
 
@@ -4578,6 +5921,14 @@ static void html_reformat(struct content *c, int width, int height)
 	htmlc->reflowing = false;
 	htmlc->had_initial_layout = true;
 
+	/* The completed layout now owns the same css_media state author CSS used.
+	 * Let MediaQueryLists compare their prior value only at this safe boundary;
+	 * a listener-induced DOM mutation will follow the ordinary reconvert path. */
+#ifdef WITH_QUICKJS
+	if (htmlc->js_thread != NULL)
+		js_media_state_changed(htmlc->js_thread);
+#endif
+
 	/* calculate next reflow time at three times what it took to reflow */
 	nsu_getmonotonic_ms(&ms_after);
 
@@ -4633,9 +5984,13 @@ void html__redraw_a_box(struct html_content *html, struct box *box)
 
 	box_coords(box, &x, &y);
 
+	x -= box->border[LEFT].width;
+	y -= box->border[TOP].width;
 	content__request_redraw((struct content *)html, x, y,
-			box->padding[LEFT] + box->width + box->padding[RIGHT],
-			box->padding[TOP] + box->height + box->padding[BOTTOM]);
+			box->border[LEFT].width + box->padding[LEFT] +
+			box->width + box->padding[RIGHT] + box->border[RIGHT].width,
+			box->border[TOP].width + box->padding[TOP] +
+			box->height + box->padding[BOTTOM] + box->border[BOTTOM].width);
 }
 
 static void html_destroy_frameset(struct content_html_frames *frameset)
@@ -4719,6 +6074,12 @@ static void html_destroy(struct content *c)
 
 	macsurf_debug_log_writef("html_destroy: htmlc=%p content=%p", (void*)html, (void*)c);
 	NSLOG(netsurf, INFO, "content %p", c);
+
+	/* MacSurf Trace 1c: this DOM document's lifetime ends here. */
+	if (html->doc_id != 0) {
+		ms_diag_document_close(html->doc_id);
+		html->doc_id = 0;
+	}
 
 	/* fixes502: set aborted before cancel so that if convert_xml_to_box
 	 * was already dequeued by the scheduler (cancel_dom_to_box is then a
@@ -4866,6 +6227,17 @@ html_open(struct content *c,
 
 	html->bw = bw;
 	html->page = (html_content *) page;
+
+	/* MacSurf Trace 1c: the browsing context is now known. Copy its stable
+	 * frame_id and backfill the document record (an iframe's doc is often
+	 * opened before its child browser_window attaches). */
+	if (bw != NULL) {
+		html->frame_id = browser_window_get_frame_id(bw);
+		if (html->doc_id != 0) {
+			ms_diag_document_set_frame(html->doc_id,
+				html->frame_id);
+		}
+	}
 
 	html->drag_type = HTML_DRAG_NONE;
 	html->drag_owner.no_owner = true;
@@ -5537,6 +6909,24 @@ dom_document *html_get_document(hlcache_handle *h)
 	assert(c != NULL);
 
 	return c->document;
+}
+
+/* MacSurf Trace 1c: read the document / frame id off an HTML content. Used by
+ * the frontend reconvert path, which only has `struct content *` in scope. The
+ * DOM-mutation callers only ever operate on the page's HTML document, so a
+ * NULL guard is sufficient. New uniquely-named symbols: no existing signature
+ * widened. */
+unsigned long html_content_get_doc_id(struct content *c)
+{
+	if (c == NULL)
+		return 0;
+	return ((html_content *) c)->doc_id;
+}
+unsigned long html_content_get_frame_id(struct content *c)
+{
+	if (c == NULL)
+		return 0;
+	return ((html_content *) c)->frame_id;
 }
 
 /**

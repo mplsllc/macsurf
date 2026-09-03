@@ -159,6 +159,11 @@ static OSErr ot13_appdata(EndpointRef ep, const char *server_name,
         while (rlen >= 5) {
             size_t reclen = ((size_t)rbuf[3] << 8) | (size_t)rbuf[4];
             int dr;
+            /* fixes1197 - same out-of-spec-length guard as ostls_async.c. */
+            if (reclen > sizeof gT13IoBuf) {
+                ot13_status(out_msg, out_msg_len, "T13: app-data record too large", 0);
+                return (OSErr)22;
+            }
             if (rlen < 5 + reclen) break;
             plen = 0; inner = 0;
             dr = tls13_record_decrypt(&gpT13Hs->read_ctx, rbuf + 5, reclen,

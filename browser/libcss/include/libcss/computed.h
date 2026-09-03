@@ -77,7 +77,85 @@ typedef struct css_computed_content_item {
 	} data;
 } css_computed_content_item;
 
+#define CSS_TRANSITION_MAX_LIST 8
+
+enum css_transition_prop_kind {
+	CSS_TRANS_PROP_ALL = 0,
+	CSS_TRANS_PROP_NONE,
+	CSS_TRANS_PROP_KNOWN,       /* Known CSS_PROP_* numeric opcode */
+	CSS_TRANS_PROP_CUSTOM_IDENT /* Preserved lwc_string* for custom/unsupported property */
+};
+
+typedef struct css_transition_prop_entry {
+	enum css_transition_prop_kind kind;
+	uint32_t prop_id;           /* CSS_PROP_* when kind == CSS_TRANS_PROP_KNOWN */
+	lwc_string *custom_name;    /* Refcounted when kind == CSS_TRANS_PROP_CUSTOM_IDENT */
+} css_transition_prop_entry;
+
+enum css_transition_timing_type {
+	CSS_TIMING_EASE = 0,
+	CSS_TIMING_LINEAR,
+	CSS_TIMING_EASE_IN,
+	CSS_TIMING_EASE_OUT,
+	CSS_TIMING_EASE_IN_OUT,
+	CSS_TIMING_CUBIC_BEZIER,
+	CSS_TIMING_STEPS
+};
+
+typedef struct css_transition_timing_entry {
+	enum css_transition_timing_type type;
+	int32_t x1, y1, x2, y2;     /* Q16.16 for cubic-bezier */
+	uint32_t step_count;        /* for steps(n, pos) */
+	uint8_t step_pos;           /* JUMP_START, JUMP_END, etc. */
+} css_transition_timing_entry;
+
+typedef struct css_computed_transition_data {
+	uint8_t inherit_flags;
+	uint8_t prop_count;
+	css_transition_prop_entry props[CSS_TRANSITION_MAX_LIST];
+
+	uint8_t duration_count;
+	css_fixed durations[CSS_TRANSITION_MAX_LIST]; /* css_fixed (seconds) */
+
+	uint8_t timing_count;
+	css_transition_timing_entry timings[CSS_TRANSITION_MAX_LIST];
+
+	uint8_t delay_count;
+	css_fixed delays[CSS_TRANSITION_MAX_LIST];    /* css_fixed (seconds), can be negative */
+} css_computed_transition_data;
+
+typedef struct css_effective_transition_descriptor {
+	css_transition_prop_entry prop;
+	css_fixed duration;
+	css_transition_timing_entry timing;
+	css_fixed delay;
+} css_effective_transition_descriptor;
+
 css_error css_computed_style_destroy(css_computed_style *style);
+
+/* Semantic difference classification for conservative incremental styling. */
+enum css_computed_style_diff {
+	CSS_COMPUTED_STYLE_NO_DIFF = 0,
+	CSS_COMPUTED_STYLE_COLOR_DIFF,
+	CSS_COMPUTED_STYLE_OTHER_DIFF
+};
+
+enum css_computed_style_diff css_computed_style_diff(
+		const css_computed_style *a,
+		const css_computed_style *b);
+
+/* Diagnostic companion for the conservative colour classifier.
+ * Returns the first differing byte in the computed scalar payload after
+ * foreground colour is normalised, or -1 when the mismatch is in an
+ * out-of-line representation, or 1000 when the scalar payload matches. */
+int css_computed_style_color_diff_detail(const css_computed_style *a,
+		const css_computed_style *b);
+unsigned long css_computed_style_debug_bits0(const css_computed_style *style);
+
+/* Fast-path comparator for incremental styling */
+bool css_computed_style_is_paint_only_diff(
+		const css_computed_style *a,
+		const css_computed_style *b);
 
 css_error css_computed_style_compose(
 		const css_computed_style *restrict parent,
@@ -392,6 +470,10 @@ uint8_t css_computed_color(
 		const css_computed_style *style,
 		css_color *color);
 
+/* SVG fill V1. Returns CSS_FILL_*; color is valid for CSS_FILL_COLOR. */
+uint8_t css_computed_fill(const css_computed_style *style,
+		css_color *color);
+
 uint8_t css_computed_list_style_image(
 		const css_computed_style *style,
 		lwc_string **url);
@@ -469,8 +551,17 @@ uint8_t css_computed_hanging_punctuation(
 uint8_t css_computed_background_clip(
 		const css_computed_style *style);   /* #255 */
 
+uint8_t css_computed_background_origin(
+		const css_computed_style *style);
+
+uint8_t css_computed_background_blend_mode(
+		const css_computed_style *style);
+
 uint8_t css_computed_justify_items(
 		const css_computed_style *style);   /* #279 */
+
+uint8_t css_computed_justify_self(
+		const css_computed_style *style);   /* #279 follow-up */
 
 uint8_t css_computed_overflow_wrap(
 		const css_computed_style *style);
@@ -775,6 +866,22 @@ uint8_t css_computed_justify_content(
 uint8_t css_computed_order(
 		const css_computed_style *style,
 		int32_t *order);
+
+/* CSS Transition Accessors */
+const css_computed_transition_data *css_computed_transition_data_get(
+		const css_computed_style *style);
+
+uint32_t css_computed_transition_descriptor_count(
+		const css_computed_style *style);
+
+bool css_computed_transition_descriptor(
+		const css_computed_style *style,
+		uint32_t index,
+		css_effective_transition_descriptor *out);
+
+bool css_computed_transition_data_equal(
+		const css_computed_style *a,
+		const css_computed_style *b);
 
 #ifdef __cplusplus
 }

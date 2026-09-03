@@ -145,6 +145,9 @@ css_error css__parse_hanging_punctuation(css_language *c,
 css_error css__parse_background_clip(css_language *c,   /* #255 */
                 const parserutils_vector *vector, int32_t *ctx,
                 css_style *result);
+css_error css__parse_background_origin(css_language *c,
+                const parserutils_vector *vector, int32_t *ctx,
+                css_style *result);
 css_error css__parse_justify_items(css_language *c,   /* #279 */
                 const parserutils_vector *vector, int32_t *ctx,
                 css_style *result);
@@ -184,6 +187,9 @@ css_error css__parse_tab_size(css_language *c,
 css_error css__parse_appearance(css_language *c,
 		const parserutils_vector *vector, int32_t *ctx,
 		css_style *result);
+css_error css__parse_justify_self(css_language *c,   /* #279 follow-up */
+                const parserutils_vector *vector, int32_t *ctx,
+                css_style *result);
 css_error css__parse_image_rendering(css_language *c,
 		const parserutils_vector *vector, int32_t *ctx,
 		css_style *result);
@@ -590,6 +596,10 @@ css_error css__parse_z_index(css_language *c,
 /** Mapping from property bytecode index to bytecode unit class mask. */
 extern const uint32_t property_unit_mask[CSS_N_PROPERTIES];
 
+css_error css__parse_fill(css_language *c,
+		const parserutils_vector *vector, int32_t *ctx,
+		css_style *result);
+
 #define UNIT_MASK_AZIMUTH               (UNIT_ANGLE)
 #define UNIT_MASK_BACKGROUND_ATTACHMENT (0)
 #define UNIT_MASK_BACKGROUND_COLOR      (0)
@@ -702,5 +712,24 @@ extern const uint32_t property_unit_mask[CSS_N_PROPERTIES];
 #define UNIT_MASK_JUSTIFY_CONTENT       (0)
 #define UNIT_MASK_ORDER                 (0)
 #define UNIT_MASK_BORDER_RADIUS         UNIT_MASK_MARGIN_SIDE
+
+css_error css__parse_background_blend_mode(css_language *c,
+		const parserutils_vector *vector, int32_t *ctx,
+		css_style *result);
+css_error css__parse_transition(css_language *c,
+		const parserutils_vector *vector, int32_t *ctx,
+		css_style *result);
+css_error css__parse_transition_property(css_language *c,
+		const parserutils_vector *vector, int32_t *ctx,
+		css_style *result);
+css_error css__parse_transition_duration(css_language *c,
+		const parserutils_vector *vector, int32_t *ctx,
+		css_style *result);
+css_error css__parse_transition_timing_function(css_language *c,
+		const parserutils_vector *vector, int32_t *ctx,
+		css_style *result);
+css_error css__parse_transition_delay(css_language *c,
+		const parserutils_vector *vector, int32_t *ctx,
+		css_style *result);
 
 #endif

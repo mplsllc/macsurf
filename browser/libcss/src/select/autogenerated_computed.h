@@ -424,6 +424,10 @@ struct css_computed_style_i {
 	 * bits[] slot -- keyword-valued so it is byte-deterministic across
 	 * cascade paths, and appending here shifts no existing field. */
 	int32_t appearance;
+	/* fixes833b (#279): justify-self. Scalar tail, not a bits[] slot:
+	 * justify-items consumed bits[15] shift 30 and the packed array is
+	 * full. Values are CSS_JUSTIFY_SELF_*; initial/unset is AUTO. */
+	int32_t justify_self;
 	/* fixes357 (#44): text-decoration extended sub-properties.
 	 *   text_decoration_color_status: CSS_TEXT_DECORATION_COLOR_*
 	 *   text_decoration_color: resolved css_color (valid when
@@ -467,6 +471,18 @@ struct css_computed_style_i {
 	 * memcmp. */
 	int32_t row_gap_status;
 	css_fixed row_gap;
+	/* background-origin is a non-inherited box keyword. Keep it at the
+	 * scalar tail: the packed bits[] array is full and appending avoids
+	 * shifting existing field offsets in stale CW8 objects. */
+	int32_t background_origin;
+	/* background-clip moved from a full 2-bit slot so the CSS `text`
+	 * keyword fits alongside the three box values. */
+	int32_t background_clip;
+	/* background-blend-mode is non-inherited scalar-tail state. */
+	int32_t background_blend_mode;
+	/* SVG fill V1. Append-only, self-aligning storage. */
+	int32_t fill_status;
+	css_color fill_color;
 };
 
 struct css_computed_style {
@@ -578,6 +594,13 @@ struct css_computed_style {
 	 * Appended at struct end per
 	 * project_libcss_struct_mid_insert_crash. */
 	lwc_string *macsurf_calc_expr[MACSURF_CALC_SLOT_COUNT];
+	/* Group 2: optional heap-allocated transition sidecar.
+	 * NULL when all 4 transition longhands have default initial values
+	 * (transition-property: all, duration: 0s, timing: ease, delay: 0s).
+	 * Compared semantically in arena.c, deep-copied in clone, destroyed
+	 * in computed.c css_computed_style_destroy. Appended at struct end
+	 * per project_libcss_struct_mid_insert_crash. */
+	css_computed_transition_data *transition_data;
 };
 
 #endif

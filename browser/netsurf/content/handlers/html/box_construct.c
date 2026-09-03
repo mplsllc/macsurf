@@ -106,7 +106,12 @@ static unsigned long    g_walk_gen     = 0;
 #include "html/form_internal.h"
 
 #include "macsurf_debug.h"
+#include "macsurf_diag.h"	/* MacSurf Trace 1c: layout_pass provenance */
 #include "macos9_deathrow.h"
+#include "frontends/macos9/macos9_transition.h"
+#ifdef __MACOS9__
+#include <Timer.h>
+#endif
 
 /* fixes553 - extend the fixes552 writer-side free guard from the single walked
  * content to its ENTIRE tree.  The box walk dereferences not just the
@@ -204,6 +209,13 @@ struct box_construct_ctx {
 	 * list to choose which pair of opening/closing strings to emit
 	 * for the current nesting level. */
 	int32_t quote_depth;
+
+	/** MacSurf Trace 1c: frozen causal descriptor for the INITIAL layout
+	 * pass. Filled in dom_to_box() (cold load only -- a reconvert's scope is
+	 * owned by macos9_reconvert_cb); each self-rescheduled convert_xml_to_box
+	 * slice re-establishes the ambient scope from this. pass==0 means "not an
+	 * instrumented initial pass". */
+	struct ms_diag_provenance ms_prov;
 };
 
 /**
@@ -212,6 +224,9 @@ struct box_construct_ctx {
 struct box_construct_props {
 	/** Style from which to inherit, or NULL if none */
 	const css_computed_style *parent_style;
+	/* fixes1268c (#167) - inherited custom properties, threaded from
+	 * the parent box exactly like parent_style above. */
+	css_custom_env *parent_custom_env;
 	/** Current link target, or NULL if none */
 	struct nsurl *href;
 	/** Current frame target, or NULL if none */
@@ -255,6 +270,7 @@ static const box_type box_map[] = {
 	BOX_INLINE_FLEX,     /* CSS_DISPLAY_INLINE_FLEX */
 	BOX_GRID,            /* CSS_DISPLAY_GRID -- fixes75 */
 	BOX_INLINE_GRID,     /* CSS_DISPLAY_INLINE_GRID -- fixes75 */
+	BOX_CONTENTS,        /* CSS_DISPLAY_CONTENTS */
 };
 
 
@@ -320,6 +336,8 @@ box_extract_properties(dom_node *n, struct box_construct_props *props)
 
 			if (parent_box != NULL) {
 				props->parent_style = parent_box->style;
+				props->parent_custom_env =
+						parent_box->custom_env;
 				props->href = parent_box->href;
 				props->target = parent_box->target;
 				/* fixes1063 (#114) - travels with href. */
@@ -361,6 +379,7 @@ box_extract_properties(dom_node *n, struct box_construct_props *props)
 			 * use the parent node's styling as the parent
 			 * style, above. */
 			if (b != NULL && b->type != BOX_INLINE &&
+					b->type != BOX_CONTENTS &&
 					b->type != BOX_BR) {
 				props->containing_block = b;
 
@@ -391,11 +410,13 @@ box_extract_properties(dom_node *n, struct box_construct_props *props)
  * \param  n               node in xml tree
  * \return  the new style, or NULL on memory exhaustion
  */
-static css_select_results *
-box_get_style(html_content *c,
+css_select_results *
+box_get_style_with_select_ctx(html_content *c, css_select_ctx *select_ctx,
 	      const css_computed_style *parent_style,
 	      const css_computed_style *root_style,
-	      dom_node *n)
+	      dom_node *n,
+	      css_custom_env *parent_custom_env,
+	      css_custom_env **out_custom_env)
 {
 	dom_string *s = NULL;
 	css_stylesheet *inline_style = NULL;
@@ -426,12 +447,16 @@ box_get_style(html_content *c,
 	}
 
 	/* Populate selection context */
-	ctx.ctx = c->select_ctx;
+	ctx.ctx = select_ctx;
 	ctx.quirks = (c->quirks == DOM_DOCUMENT_QUIRKS_MODE_FULL);
 	ctx.base_url = c->base_url;
 	ctx.universal = c->universal;
 	ctx.root_style = root_style;
 	ctx.parent_style = parent_style;
+	/* fixes1268c (#167) - inherited custom properties in, this
+	 * element's own set out. */
+	ctx.parent_custom_env = parent_custom_env;
+	ctx.produced_custom_env = NULL;
 	/* fixes130 - propagate dynamic pseudo-class state into the
 	 * select context so :hover / :active / :focus match correctly
 	 * during this cascade pass. */
@@ -443,11 +468,39 @@ box_get_style(html_content *c,
 	styles = nscss_get_style(&ctx, n, &c->media, &c->unit_len_ctx,
 			inline_style);
 
+	/* Transfer the element's environment to the caller, which stores it
+	 * on the box so this element's children can inherit it. */
+	if (out_custom_env != NULL) {
+		*out_custom_env = ctx.produced_custom_env;
+	} else if (ctx.produced_custom_env != NULL) {
+		css_custom_env_unref(ctx.produced_custom_env);
+	}
+
 	/* No longer need inline style */
 	if (inline_style != NULL)
 		css_stylesheet_destroy(inline_style);
 
 	return styles;
+}
+
+css_select_results *
+box_get_style(html_content *c, const css_computed_style *parent_style,
+		const css_computed_style *root_style, dom_node *n,
+		css_custom_env *parent_custom_env, css_custom_env **out_custom_env)
+{
+	return box_get_style_with_select_ctx(c, c->select_ctx, parent_style,
+			root_style, n, parent_custom_env, out_custom_env);
+}
+
+css_select_results *html_svg_get_style(const html_content *c, dom_node *node,
+		const css_computed_style *parent_style,
+		css_custom_env *parent_custom_env,
+		css_custom_env **out_custom_env)
+{
+	const css_computed_style *root_style =
+			(c->layout != NULL) ? c->layout->style : parent_style;
+	return box_get_style((html_content *)c, parent_style, root_style, node,
+			parent_custom_env, out_custom_env);
 }
 
 
@@ -1147,6 +1200,9 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 	enum css_display_e css_display;
 	struct box *box = NULL, *old_box;
 	css_select_results *styles = NULL;
+	/* fixes1268c (#167) - this element's custom-property environment,
+	 * moved onto the box below. */
+	css_custom_env *elem_custom_env = NULL;
 	lwc_string *bgimage_uri;
 	dom_exception err;
 	struct box_construct_props props;
@@ -1192,7 +1248,7 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 	}
 
 	styles = box_get_style(ctx->content, props.parent_style, root_style,
-			ctx->n);
+			ctx->n, props.parent_custom_env, &elem_custom_env);
 	if (styles == NULL)
 		return false;
 
@@ -1234,6 +1290,9 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 		dom_string_unref(s);
 	}
 
+	/* fixes1268c (#167) - the element's custom-property environment
+	 * lives on the box, which is what props.parent_custom_env reads for
+	 * each child. box_create zeroes the struct, so this must follow it. */
 	box = box_create(styles, styles->styles[CSS_PSEUDO_ELEMENT_NONE], false,
 			props.href, props.target, props.title, id,
 			ctx->bctx);
@@ -1241,6 +1300,10 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 	 * href. box_special sets it on the anchor's own box below. */
 	if (box != NULL && props.download)
 		box->flags |= LINK_DOWNLOAD;
+	if (box != NULL) {
+		box->custom_env = elem_custom_env;   /* ownership moves */
+		elem_custom_env = NULL;
+	}
 	if (box == NULL) {
 		/* fixes895 - box_create/talloc_zero returned NULL. During a
 		 * reconvert this is the H1 smoking gun: the double-buffer keeps a
@@ -1389,7 +1452,7 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 	counter_apply_increment(ctx, box->style);
 
 	/* Handle the :before pseudo element */
-	if (!(box->flags & IS_REPLACED)) {
+	if (!(box->flags & IS_REPLACED) && box->type != BOX_CONTENTS) {
 		box_construct_generate(ctx, ctx->n, ctx->content, box,
 				box->styles->styles[CSS_PSEUDO_ELEMENT_BEFORE]);
 	}
@@ -1555,9 +1618,9 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 			if (tlen >= 3 && tlen <= 32 &&
 					(tag[0] == 's' || tag[0] == 'S')) {
 				macsurf_debug_log_writef(
-					"svg_box: tag=%s len=%ld match=%d box=%p flags=0x%x",
+					"svg_box: tag=%s len=%ld match=%d box=%p flags=%ld",
 					tag, (long)tlen, matched,
-					(void *)box, (unsigned int)box->flags);
+					(void *)box, (long)(unsigned int)box->flags);
 			}
 			dom_string_unref(svg_name);
 		}
@@ -1566,63 +1629,65 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 	if (*convert_children)
 		box->flags |= CONVERT_CHILDREN;
 
-	if (box->type == BOX_INLINE || box->type == BOX_BR ||
-			box->type == BOX_INLINE_FLEX ||
-			box->type == BOX_INLINE_BLOCK) {
-		/* Inline container must exist, as we'll have
-		 * created it above if it didn't */
-		assert(props.inline_container != NULL);
+	if (box->type != BOX_CONTENTS) {
+		if (box->type == BOX_INLINE || box->type == BOX_BR ||
+				box->type == BOX_INLINE_FLEX ||
+				box->type == BOX_INLINE_BLOCK) {
+			/* Inline container must exist, as we'll have
+			 * created it above if it didn't */
+			assert(props.inline_container != NULL);
 
-		box_add_child(props.inline_container, box);
+			box_add_child(props.inline_container, box);
 
-		/* fixes140g: ::before for inline parents fires AT
-		 * ELEMENT-OPEN TIME, right after the inline is wired
-		 * into its container. The earlier ::before call at line
-		 * ~1200 bailed because box->parent was NULL. Firing here
-		 * gives correct quote-depth nesting: outer ::before runs
-		 * before any child opens, so the inner ::before sees
-		 * depth=1 (set by outer ::before) instead of depth=0. */
-		if (!(box->flags & IS_REPLACED) && box->styles != NULL) {
-			box_construct_generate(ctx, ctx->n, ctx->content, box,
-				box->styles->styles[CSS_PSEUDO_ELEMENT_BEFORE]);
-		}
-	} else {
-		if (ns_computed_display(box->style, props.node_is_root) ==
-				CSS_DISPLAY_LIST_ITEM) {
-			/* List item: compute marker */
-			if (box_construct_marker(box, props.title, ctx,
-					props.containing_block) == false)
-				return false;
-		}
-
-		if (props.node_is_root == false &&
-				box__containing_block_is_flex(&props) == false &&
-				(css_computed_float(box->style) ==
-				CSS_FLOAT_LEFT ||
-				css_computed_float(box->style) ==
-				CSS_FLOAT_RIGHT)) {
-			/* Float: insert a float between the parent and box. */
-			struct box *flt = box_create(NULL, NULL, false,
-					props.href, props.target, props.title,
-					NULL, ctx->bctx);
-			if (flt == NULL)
-				return false;
-			if (props.download)   /* fixes1063 (#114) */
-				flt->flags |= LINK_DOWNLOAD;
-
-			if (css_computed_float(box->style) == CSS_FLOAT_LEFT)
-				flt->type = BOX_FLOAT_LEFT;
-			else
-				flt->type = BOX_FLOAT_RIGHT;
-
-			box_add_child(props.inline_container, flt);
-			box_add_child(flt, box);
+			/* fixes140g: ::before for inline parents fires AT
+			 * ELEMENT-OPEN TIME, right after the inline is wired
+			 * into its container. The earlier ::before call at line
+			 * ~1200 bailed because box->parent was NULL. Firing here
+			 * gives correct quote-depth nesting: outer ::before runs
+			 * before any child opens, so the inner ::before sees
+			 * depth=1 (set by outer ::before) instead of depth=0. */
+			if (!(box->flags & IS_REPLACED) && box->styles != NULL) {
+				box_construct_generate(ctx, ctx->n, ctx->content, box,
+					box->styles->styles[CSS_PSEUDO_ELEMENT_BEFORE]);
+			}
 		} else {
-			/* Non-floated block-level box: add to containing block
-			 * if there is one. If we're the root box, then there
-			 * won't be. */
-			if (props.containing_block != NULL)
-				box_add_child(props.containing_block, box);
+			if (ns_computed_display(box->style, props.node_is_root) ==
+					CSS_DISPLAY_LIST_ITEM) {
+				/* List item: compute marker */
+				if (box_construct_marker(box, props.title, ctx,
+						props.containing_block) == false)
+					return false;
+			}
+
+			if (props.node_is_root == false &&
+					box__containing_block_is_flex(&props) == false &&
+					(css_computed_float(box->style) ==
+					CSS_FLOAT_LEFT ||
+					css_computed_float(box->style) ==
+					CSS_FLOAT_RIGHT)) {
+				/* Float: insert a float between the parent and box. */
+				struct box *flt = box_create(NULL, NULL, false,
+						props.href, props.target, props.title,
+						NULL, ctx->bctx);
+				if (flt == NULL)
+					return false;
+				if (props.download)   /* fixes1063 (#114) */
+					flt->flags |= LINK_DOWNLOAD;
+
+				if (css_computed_float(box->style) == CSS_FLOAT_LEFT)
+					flt->type = BOX_FLOAT_LEFT;
+				else
+					flt->type = BOX_FLOAT_RIGHT;
+
+				box_add_child(props.inline_container, flt);
+				box_add_child(flt, box);
+			} else {
+				/* Non-floated block-level box: add to containing block
+				 * if there is one. If we're the root box, then there
+				 * won't be. */
+				if (props.containing_block != NULL)
+					box_add_child(props.containing_block, box);
+			}
 		}
 	}
 
@@ -2533,6 +2598,14 @@ static void convert_xml_to_box_inner(struct box_construct_ctx *ctx)
 				return;
 			}
 			if (bce_ok == false) {
+				if (macsurf_reconvert_in_progress) {
+					macsurf_debug_log_writef(
+						"WORK reconvert #%ld: box_construct_element failed"
+						" node=%ld tag=%s",
+						(long) macsurf_reconvert_seq,
+						(long) g_reconv_node_ix,
+						reconv_node_tag(ctx->n));
+				}
 				ctx->cb(ctx->content, false);
 				dom_node_unref(ctx->n);
 				free(ctx);
@@ -2676,6 +2749,13 @@ static void convert_xml_to_box_inner(struct box_construct_ctx *ctx)
 static void convert_xml_to_box(struct box_construct_ctx *ctx)
 {
 	struct content *c;
+	/* MacSurf Trace 1c: re-establish the ambient render scope for this
+	 * self-rescheduled slice of the COLD load walk. Copied out of ctx BEFORE
+	 * _inner runs because _inner may free ctx. A reconvert's scope is owned
+	 * by macos9_reconvert_cb, so skip when reconvert is in progress. */
+	struct ms_diag_render_scope ms_rs;
+	struct ms_diag_provenance ms_prov_local;
+	int ms_pushed = 0;
 
 	if (ctx == NULL || ctx->content == NULL) {
 		convert_xml_to_box_inner(ctx);
@@ -2685,7 +2765,17 @@ static void convert_xml_to_box(struct box_construct_ctx *ctx)
 	g_walk_content = c;
 	g_walk_gen = macos9_content_token(c);
 
+	if (!macsurf_reconvert_in_progress && ctx->ms_prov.pass != 0) {
+		ms_prov_local = ctx->ms_prov;
+		ms_diag_render_slice_push(&ms_rs, &ms_prov_local);
+		ms_pushed = 1;
+	}
+
 	convert_xml_to_box_inner(ctx);   /* may free ctx and/or reschedule */
+
+	if (ms_pushed) {
+		ms_diag_render_slice_pop(&ms_rs);
+	}
 
 	g_walk_content = NULL;
 	g_walk_gen = 0;
@@ -2721,6 +2811,11 @@ extern void macsurf_debug_log_write(const char *s);
 struct recascade_frame {
 	struct box *box;
 	const css_computed_style *parent_style;
+	/* fixes1268c (#167) - custom properties inherit, so a recascade
+	 * must re-thread them down the tree exactly as box construction
+	 * does; otherwise every var() below the root resolves against an
+	 * empty environment after the first reconvert. */
+	css_custom_env *parent_custom_env;
 };
 
 nserror
@@ -2755,12 +2850,14 @@ html_recascade_tree(html_content *c)
 	root_style = c->layout->style;
 	stack[stack_top].box = c->layout;
 	stack[stack_top].parent_style = NULL;
+	stack[stack_top].parent_custom_env = NULL;
 	stack_top++;
 
 	while (stack_top > 0 && processed < hard_cap) {
 		struct recascade_frame frame;
 		struct box *box;
 		const css_computed_style *parent_style;
+		css_custom_env *parent_custom_env;
 		const css_computed_style *old_self_style;
 		const css_computed_style *style_for_children;
 		struct box *child;
@@ -2769,6 +2866,7 @@ html_recascade_tree(html_content *c)
 		frame = stack[stack_top];
 		box = frame.box;
 		parent_style = frame.parent_style;
+		parent_custom_env = frame.parent_custom_env;
 
 		processed++;
 		if ((processed % 200) == 0) {
@@ -2785,12 +2883,59 @@ html_recascade_tree(html_content *c)
 				(box == c->layout) ? NULL : root_style;
 			const css_computed_style *use_parent =
 				(box == c->layout) ? NULL : parent_style;
+			css_custom_env *use_parent_env =
+				(box == c->layout) ? NULL : parent_custom_env;
+			css_custom_env *new_env = NULL;
 			css_select_results *new_styles = box_get_style(c,
-					use_parent, use_root, box->node);
+					use_parent, use_root, box->node,
+					use_parent_env, &new_env);
 			if (new_styles != NULL) {
-				box->styles = new_styles;
-				box->style = new_styles->styles[
-						CSS_PSEUDO_ELEMENT_NONE];
+				uint32_t now = 0;
+				/* Start presentation effects before replacing the old
+				 * computed style. This also covers the full-reconstruction
+				 * path, which re-cascades this still-live old box tree just
+				 * before it constructs the replacement. */
+#ifdef __MACOS9__
+				now = (uint32_t)TickCount();
+#endif
+				macsurf_transition_handle_style_change(c, box->node,
+						old_self_style,
+						new_styles->styles[CSS_PSEUDO_ELEMENT_NONE], now);
+				/* fixes1268c - replace, releasing the
+				 * environment from the previous cascade. */
+				if (box->custom_env != NULL && !(box->flags & CLONE))
+					css_custom_env_unref(box->custom_env);
+				
+				if (!(box->flags & CLONE)) {
+					box->custom_env = new_env;
+				} else if (new_env != NULL) {
+					css_custom_env_unref(new_env);
+				}
+				new_env = NULL;
+
+				if (box->styles != NULL && !(box->flags & CLONE)) {
+					css_select_results_destroy(box->styles);
+				}
+
+				if (box->flags & CLONE) {
+					struct box *orig;
+					/* Memory leak fix: do not keep newly allocated styles for a clone.
+					 * Clones share styles with their original box. */
+					css_select_results_destroy(new_styles);
+					new_styles = NULL;
+					orig = box->prev;
+					while (orig != NULL && orig->node != box->node)
+						orig = orig->prev;
+					if (orig != NULL) {
+						new_styles = orig->styles;
+					}
+				}
+
+				if (new_styles != NULL) {
+					box->styles = new_styles;
+					box->style = new_styles->styles[
+							CSS_PSEUDO_ELEMENT_NONE];
+				}
 				recascaded++;
 				if (box == c->layout) {
 					root_style = box->style;
@@ -2830,6 +2975,14 @@ html_recascade_tree(html_content *c)
 			}
 			stack[stack_top].box = child;
 			stack[stack_top].parent_style = style_for_children;
+			/* fixes1268c - a box with no cascade of its own (an
+			 * anonymous or text box) passes the inherited
+			 * environment straight through, mirroring how
+			 * style_for_children falls back to parent_style. */
+			stack[stack_top].parent_custom_env =
+					(box->custom_env != NULL) ?
+						box->custom_env :
+						parent_custom_env;
 			stack_top++;
 		}
 	}
@@ -2898,6 +3051,22 @@ dom_to_box(dom_node *n,
 	ctx->bctx = c->bctx;
 	ctx->counters = NULL;	/* fixes134b: empty counter table */
 	ctx->quote_depth = 0;	/* fixes140a: quote nesting starts at 0 */
+
+	/* MacSurf Trace 1c: open the INITIAL layout pass here (cold load only --
+	 * a reconvert's render scope is owned by macos9_reconvert_cb, which
+	 * calls dom_to_box synchronously at line ~3046 with a scope already
+	 * pushed). ctx is malloc'd, so ms_prov must be zeroed on every path. */
+	memset(&ctx->ms_prov, 0, sizeof(ctx->ms_prov));
+	if (!macsurf_reconvert_in_progress) {
+		extern unsigned long content_get_nav_id(struct content *c);
+		ctx->ms_prov.nav = content_get_nav_id((struct content *) c);
+		ctx->ms_prov.frame = c->frame_id;
+		ctx->ms_prov.doc = c->doc_id;
+		ctx->ms_prov.script = ms_diag_cur_script();
+		ctx->ms_prov.task = ms_diag_cur_task();
+		(void) ms_diag_render_open(&ctx->ms_prov, MS_RENDER_INITIAL);
+		c->last_layout_pass_id = ctx->ms_prov.pass;
+	}
 
 	*box_conversion_context = ctx;
 

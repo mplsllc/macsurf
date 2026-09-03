@@ -25,6 +25,42 @@ void macsurf_qjs_emit_timer_profile(void)
 {
 	macsurf_debug_log_writef(
 		"LIFE JSTIME timers=%ld timer_us=%ld", g_timer_fires, g_timer_us);
+
+	/* fixes1273 (#167) - stage-by-stage timer pipeline audit.
+	 *
+	 * A real facebook.com load logged 83 SECONDS of JS with timers=0 and
+	 * raf=0. Since requestAnimationFrame is implemented as
+	 * setTimeout(fn,16), those are one fact, not two: deferred work is not
+	 * being delivered at all. That matters far beyond Facebook - it is
+	 * every site whose content arrives through a timer, a promise
+	 * continuation scheduled from a timer, or an animation frame.
+	 *
+	 * timers=0 alone only says the LAST stage never happened. These say
+	 * which one did not, by naming the gap:
+	 *   created=0                  setTimeout was never called (or refused)
+	 *   created>0, pumps=0         the event loop never pumped at all
+	 *   pumps>0, frozen~=pumps     the reconvert gate suppressed JS
+	 *   owner_skip>0 with due=0    timers live in a realm nothing pumps
+	 *   due=0 with pending>0       nothing ever reached its deadline
+	 *   due>0 but fires=0          invocation itself is being suppressed
+	 *   evicted>0                  callbacks lost to arena pressure (256)
+	 *
+	 * Counters are cumulative across the session; pending is instantaneous. */
+	{
+		long created = -1, fires = -1, due = -1, evicted = -1;
+		long owner_skip = -1, pumps = -1, frozen = -1, pending = -1;
+		extern void macsurf_qjs_timer_stats(long *, long *, long *,
+				long *, long *, long *, long *, long *);
+		macsurf_qjs_timer_stats(&created, &fires, &due, &evicted,
+				&owner_skip, &pumps, &frozen, &pending);
+		macsurf_debug_log_writef(
+			"LIFE TIMERAUD created=%ld pending=%ld pumps=%ld "
+			"frozen=%ld owner_skip=%ld due=%ld fires=%ld "
+			"evicted=%ld",
+			created, pending, pumps, frozen, owner_skip, due,
+			fires, evicted);
+	}
+
 	g_timer_fires = 0;
 	g_timer_us = 0;
 }
@@ -68,9 +104,212 @@ void macsurf_qjs_perf_totals(long *evals, long *compile_us, long *run_us,
 	if (gc_runs != NULL)    *gc_runs    = g_perf_gc_runs;
 }
 
+/* fixes1259 (#167) - read a zero-arg JS global function's int32 return
+ * value. Same one-shot JS_Eval pattern __msRequireTraceTotal already used
+ * (fixes1247) for exactly this purpose, generalized so the six FBLOADER
+ * counters below don't each need their own copy of this boilerplate.
+ * Returns -1 if ctx is unusable, the function is missing, or it threw. */
+static long
+qjs_read_int_global(JSContext *ctx, const char *fn_name)
+{
+	/* fn_name is interpolated twice into the template below; the longest
+	 * caller ("__msFBLoader_rlTargetCalls", 27 bytes) plus the ~102
+	 * bytes of fixed template text runs to ~156 - sized with headroom,
+	 * not tight, since this is a fixed set of literal names we control,
+	 * not user input, but sprintf here has no bounds check of its own. */
+	char src[320];
+	JSValue r;
+	long result = -1;
+
+	if (ctx == NULL || fn_name == NULL) return -1;
+	if (strlen(fn_name) > 64) return -1;
+
+	sprintf(src,
+		"(function(){try{"
+		"return (typeof globalThis.%s==='function')?"
+		"globalThis.%s():-1;"
+		"}catch(e){return -1;}})()",
+		fn_name, fn_name);
+
+	r = JS_Eval(ctx, src, strlen(src), "<jsfbldr>", JS_EVAL_TYPE_GLOBAL);
+	if (!JS_IsException(r)) {
+		int32_t n = 0;
+		JS_ToInt32(ctx, &n, r);
+		result = (long) n;
+	} else {
+		JS_FreeValue(ctx, JS_GetException(ctx));
+	}
+	JS_FreeValue(ctx, r);
+	return result;
+}
+
 /* ---- JS profile emission ---- */
 /* Emitted once per navigation from the NAV: DONE hook in browser_window.c,
  * beside the existing PERFACC / JSTIME lines. */
+/* fixes1289 (#167) - one Facebook boot report used to be one ~3 KB JSON value.
+ * The durable logger has a deliberate 1024-byte line bound, so hardware only
+ * retained the healthy module-prefix and silently lost the decisive renderer,
+ * SSR and guarded-error suffix.  Keep every answer independently bounded and
+ * name the actual page contracts instead: did ServerJSPayloadListener consume
+ * the data-sjs islands, what state did Facebook's SSR machine reach, and what
+ * did ErrorGuard retain?  These reads do not call a page entry point or change
+ * DOM state. */
+static void
+qjs_emit_fb_value(JSContext *ctx, const char *label, const char *src)
+{
+	JSValue r;
+	const char *s;
+
+	if (ctx == NULL || label == NULL || src == NULL) return;
+	r = JS_Eval(ctx, src, strlen(src), "<jsfbboot>", JS_EVAL_TYPE_GLOBAL);
+	if (JS_IsException(r)) {
+		JS_FreeValue(ctx, JS_GetException(ctx));
+		macsurf_debug_log_writef("LIFE %s eval exception", label);
+		JS_FreeValue(ctx, r);
+		return;
+	}
+	if (JS_IsNull(r)) {
+		JS_FreeValue(ctx, r);
+		return;
+	}
+	s = JS_ToCString(ctx, r);
+	macsurf_debug_log_writef("LIFE %s %s", label,
+			(s != NULL) ? s : "(null)");
+	if (s != NULL) JS_FreeCString(ctx, s);
+	JS_FreeValue(ctx, r);
+}
+
+/* fixes1287 (#167) - emit at the window-load edge as well as the optional
+ * final-profile edge, using the owning context rather than a process-global
+ * realm guess. */
+void macsurf_qjs_emit_fb_boot(struct JSContext *ctx)
+{
+	static const char fbpayload_src[] =
+		"(function(){try{var g=globalThis;"
+		"if(!g.location||String(g.location.hostname||'').indexOf('facebook.com')<0)"
+			"return null;"
+		"var a=document.querySelectorAll('script[data-sjs]'),p=0,d=0,ins=0,"
+			"lm=0,lb=0,first='';"
+		"for(var i=0;i<a.length;i++){var e=a[i],want=e.dataset&&e.dataset.contentLen,"
+			"got=String(e.textContent.length);"
+			"if(e instanceof HTMLScriptElement)ins++;"
+			"if(e.dataset&&e.dataset.processed)d++;else p++;"
+			"if(want==null||want===got)lm++;else{lb++;if(!first)first=want+'/'+got;}}"
+		"return 'total='+a.length+' processed='+d+' pending='+p+"
+			"' scriptInstance='+ins+' lenMatch='+lm+' lenBad='+lb+"
+			"(first?' firstBad='+first:'');"
+		"}catch(e){return 'error='+String((e&&e.message)||e).slice(0,700);}})()";
+	static const char fbroot_src[] =
+		"(function(){try{var g=globalThis;"
+		"if(!g.location||String(g.location.hostname||'').indexOf('facebook.com')<0)"
+			"return null;"
+		"if(typeof g.require!=='function')return 'require=missing';"
+		"var ru=g.require('CometClientRootRendererUtils'),"
+			"si=g.require('CometSSRClientInjector'),sd=si.getSSRData?si.getSSRData():null,"
+			"ps=si.getArrivedPayloads?si.getArrivedPayloads():[],"
+			"eid=sd&&sd.eid,root=eid?document.getElementById(eid):null,env=g.Env||{};"
+		"return 'clientRendered='+(ru.getIsClientSideRendered?"
+			"!!ru.getIsClientSideRendered():'na')+"
+			"' payloads='+ps.length+' ssrData='+(sd?'yes':'no')+"
+			"' enabled='+(sd&&sd.enabled)+' eid='+(eid||'')+"
+			"' root='+(!!root)+' rootKids='+(root&&root.childNodes?root.childNodes.length:-1)+"
+			"' stateManager='+(env.use_ssr_state_manager)+"
+			"' splash='+(!!document.getElementById('splash-screen'))+"
+			"' marker='+(!!document.getElementById('has-finished-comet-page'));"
+		"}catch(e){return 'error='+String((e&&e.message)||e).slice(0,700);}})()";
+	static const char fbstate_src[] =
+		"(function(){try{var g=globalThis;"
+		"if(!g.location||String(g.location.hostname||'').indexOf('facebook.com')<0)"
+			"return null;"
+		"if(typeof g.require!=='function')return 'require=missing';"
+		/* fixes1290 (#167) - the old audit read sm.default.debug(), but the
+		 * current Facebook module does not expose its live state there.  That
+		 * made a perfectly populated LastPayloadReceived state print as three
+		 * blank fields and sent the investigation in the wrong direction.
+		 * This is Facebook's own read-only devtools store, used by its SSR
+		 * diagnostics; report the state names rather than its multi-KB JSON. */
+		"var ds=g.require('CometDevToolsSSRStateManagerDebugStore'),"
+			"j=ds&&ds.getState?ds.getState():{},a=j.arrivedPayloads||[],"
+			"sh=j.stateHistory||[],names=[];"
+		"for(var i=0;i<sh.length;i++)names.push(sh[i]&&sh[i].state||'?');"
+		"var h=names.join('>');if(h.length>500)h=h.slice(h.length-500);"
+		"return 'current='+(j.currentState||'')+' terminal='+(j.isTerminal)+"
+			"' outcome='+(j.ssrOutcome||'')+' arrived='+a.length+"
+			"' request='+(j.clientRequestID||'')+' history='+h;"
+		"}catch(e){return 'error='+String((e&&e.message)||e).slice(0,700);}})()";
+	static const char fberror_src[] =
+		"(function(){try{var g=globalThis;"
+		"if(!g.location||String(g.location.hostname||'').indexOf('facebook.com')<0)"
+			"return null;"
+		"if(typeof g.require!=='function')return 'require=missing';"
+		"var ep=g.require('ErrorPubSub'),h=ep&&ep.history||[],out='count='+h.length;"
+		"for(var i=Math.max(0,h.length-3);i<h.length;i++){var e=h[i]||{},m=String("
+			"e.message||e.messageFormat||'').replace(/[\\r\\n]+/g,' ');"
+			"if(m.length>220)m=m.slice(0,220);out+=' | '+i+':'+(e.project||'')+':'"
+			"+(e.name||e.type||'')+':'+m;}"
+		"return out;"
+		"}catch(e){return 'error='+String((e&&e.message)||e).slice(0,700);}})()";
+	/* Remembered-account diagnostic: identify the actual actionable Continue
+	 * element independently of native hit-testing. Values are structural only;
+	 * no form field values or cookie values are read. */
+	static const char fbcontinue_src[] =
+		"(function(){try{var g=globalThis;"
+		"if(!g.location||String(g.location.hostname||'').indexOf('facebook.com')<0)"
+			"return null;"
+		"var a=document.querySelectorAll('a,button,input,[role=button]'),out=[],n=0;"
+		"function q(v){return String(v||'').replace(/[\\r\\n\\t ]+/g,' ').slice(0,120)}"
+		"for(var i=0;i<a.length&&n<4;i++){var e=a[i],"
+			"t=q(e.value||e.textContent);if(t.toLowerCase().indexOf('continue')<0)continue;"
+			"var f=e.form||null,p=e.parentNode;"
+			"out.push('tag='+e.tagName+' text='+t+' type='+q(e.type)+"
+			"' role='+q(e.getAttribute&&e.getAttribute('role'))+"
+			"' href='+q(e.href)+' onclick='+(typeof e.onclick)+"
+			"' parent='+(p&&p.tagName||'')+' form='+(!!f)+"
+			"' method='+(f&&q(f.method)||'')+' action='+(f&&q(f.action)||''));n++;}"
+		"return 'matches='+n+(out.length?' | '+out.join(' | '):'');"
+		"}catch(e){return 'error='+String((e&&e.message)||e).slice(0,700);}})()";
+	/* fixes1310 (#167, A3) - the real loader's Me() chooses its execution
+	 * wrapper at every __d()/requireLazy call:
+	 *
+	 *   t.TimeSlice && t.TimeSlice.guard ? t.TimeSlice.guard : Ne
+	 *
+	 * Test 81 proved the synchronous Ne path against the real recovered
+	 * loader bundle, but it deliberately never required the TimeSlice module.
+	 * That leaves the real-page scheduling branch untested, which matters for
+	 * the still-open repeat-navigation regression.  Report the state that
+	 * selects that branch at both existing FB boot audit edges (window load
+	 * and NAV:DONE), without requiring TimeSlice or calling TimeSlice.guard()
+	 * or ScheduleJSWork: this is an observation, not another source of page
+	 * behaviour.  __debug.getModules() is Facebook's own existing diagnostic
+	 * view and lets the hardware read distinguish "global missing" from
+	 * "module absent/not yet ready". */
+	static const char fbtasks_src[] =
+		"(function(){try{var g=globalThis;"
+		"if(!g.location||String(g.location.hostname||'').indexOf('facebook.com')<0)"
+			"return null;"
+		"var ts=g.TimeSlice,sj=g.ScheduleJSWork,mods=null,m=null,d=null,w='na';"
+		"try{if(typeof g.require==='function'){"
+			"d=g.require('__debug');"
+			"mods=d&&d.getModules?d.getModules():null;"
+			"m=mods&&mods.TimeSlice;"
+			"if(d&&d.debugUnresolvedDependencies)"
+				"w=String(d.debugUnresolvedDependencies(['TimeSlice']));}}catch(e){}"
+		"return 'global='+typeof ts+' guard='+typeof(ts&&ts.guard)+"
+			"' schedule='+typeof sj+' module='+(m?'yes':'no')+"
+			"' ready='+(m?!!m.factoryFinished:'na')+"
+			"' deps='+(m&&m.dependencies?m.dependencies.length:'na')+"
+			"' wait='+w.replace(/[\\r\\n]+/g,' ').slice(0,360);"
+		"}catch(e){return 'error='+String((e&&e.message)||e).slice(0,700);}})()";
+
+	if (ctx == NULL) return;
+	qjs_emit_fb_value(ctx, "FBPAYLOAD", fbpayload_src);
+	qjs_emit_fb_value(ctx, "FBROOT", fbroot_src);
+	qjs_emit_fb_value(ctx, "FBSTATE", fbstate_src);
+	qjs_emit_fb_value(ctx, "FBERROR", fberror_src);
+	qjs_emit_fb_value(ctx, "FBCONTINUE", fbcontinue_src);
+	qjs_emit_fb_value(ctx, "FBTASK", fbtasks_src);
+}
+
 void macsurf_qjs_emit_js_profile(void);
 void macsurf_qjs_emit_js_profile(void)
 {
@@ -192,6 +431,392 @@ void macsurf_qjs_emit_js_profile(void)
 			html_reconvert_phase_reset();
 		}
 	}
+
+	/* fixes1236 (#167)  -  is the event loop actually DELIVERING deferred
+	 * work on this page, not just executing synchronously during parse.
+	 *
+	 *   cap_hits  macsurf_qjs_pump_all's microtask drain hit
+	 *             QJS_MAX_JOBS_PER_PUMP and deferred the rest -- a page
+	 *             whose Promise chains are simply DEEP looks different from
+	 *             one where they never advance at all (that would show
+	 *             JSTIME timers=0 AND cap_hits=0 AND raf=0: nothing queued,
+	 *             not something queued and starved).
+	 *   raf       requestAnimationFrame callbacks actually invoked.
+	 *   rafOwn    1 if window.requestAnimationFrame is still OUR function,
+	 *             0 if some page script overwrote it with its own scheduler
+	 *             (a real Comet/lazy-load pattern) -- in that case `raf`
+	 *             undercounts by construction and should not be read as
+	 *             "rAF is dead" on its own. -1 means the identity marker
+	 *             itself was missing (register_browser_globals did not run
+	 *             for this ctx, or ran before this counter existed). */
+	{
+		JSContext *ctx = macsurf_qjs_current_ctx();
+		int raf_own = -1;
+		if (ctx != NULL) {
+			static const char raf_own_src[] =
+				"(function(){try{"
+				"return (typeof requestAnimationFrame==='function'"
+				"&&requestAnimationFrame===globalThis.__msRafOrig)"
+				"?1:0;"
+				"}catch(e){return -1;}})()";
+			JSValue r = JS_Eval(ctx, raf_own_src, strlen(raf_own_src),
+					"<jsraf>", JS_EVAL_TYPE_GLOBAL);
+			if (!JS_IsException(r)) {
+				int32_t n = 0;
+				JS_ToInt32(ctx, &n, r);
+				raf_own = (int)n;
+			} else {
+				JS_FreeValue(ctx, JS_GetException(ctx));
+			}
+			JS_FreeValue(ctx, r);
+		}
+		macsurf_debug_log_writef(
+			"LIFE JSPUMP cap_hits=%ld raf=%ld rafOwn=%d",
+			g_job_pump_cap_hits, g_raf_fires, raf_own);
+		g_job_pump_cap_hits = 0;
+		g_raf_fires = 0;
+	}
+
+	/* fixes1247 (#167) - total count from the __onBeforeModuleFactory
+	 * require-trace (macsurf_qjs.c, register_browser_globals). Read
+	 * SEPARATELY from the individual "LIFE js require: <name>" lines the
+	 * hook itself emits (via __msLife, only for a small watched-module
+	 * list) specifically to distinguish two very different failure
+	 * shapes: total=0 means the page's own module loader never called
+	 * OUR hook at all (either it does not use this require mechanism, or
+	 * the hook install itself did not take -- worth knowing on its own);
+	 * total>0 with none of the watched names ever appearing means
+	 * requiring is happening normally but never reaches any module on
+	 * this specific list. */
+	{
+		JSContext *ctx = macsurf_qjs_current_ctx();
+		long req_total = -1;
+		if (ctx != NULL) {
+			static const char req_total_src[] =
+				"(function(){try{"
+				"return (typeof globalThis.__msRequireTraceTotal"
+				"==='function')?globalThis.__msRequireTraceTotal():-1;"
+				"}catch(e){return -1;}})()";
+			JSValue r = JS_Eval(ctx, req_total_src, strlen(req_total_src),
+					"<jsreq>", JS_EVAL_TYPE_GLOBAL);
+			if (!JS_IsException(r)) {
+				int32_t n = 0;
+				JS_ToInt32(ctx, &n, r);
+				req_total = (long)n;
+			} else {
+				JS_FreeValue(ctx, JS_GetException(ctx));
+			}
+			JS_FreeValue(ctx, r);
+		}
+		macsurf_debug_log_writef("LIFE JSREQUIRE total=%ld", req_total);
+	}
+
+	/* fixes1259 (#167) - Facebook loader observability. Six counters
+	 * from the __d/requireLazy wrapper installed in macsurf_qjs.c's
+	 * register_browser_globals. Read the same way as __msRequireTraceTotal
+	 * above (a zero-arg JS function, called once per counter to keep each
+	 * read isolated - if one throws or is missing, the others still
+	 * report). See the decision table in the fixes1259 commit message:
+	 * d_target=0 means ServerJSPayloadListener never gets __d()-defined;
+	 * rl_target_calls>0 with rl_target_fires=0 means the lazy waiter
+	 * registered but never released - Facebook's own dependency-release
+	 * mechanism is the target from there. */
+	{
+		JSContext *ctx = macsurf_qjs_current_ctx();
+		long d_total = -1, d_target = -1;
+		long rl_calls = -1, rl_target_calls = -1;
+		long rl_fires = -1, rl_target_fires = -1;
+		if (ctx != NULL) {
+			d_total = qjs_read_int_global(ctx, "__msFBLoader_dTotal");
+			d_target = qjs_read_int_global(ctx, "__msFBLoader_dTarget");
+			rl_calls = qjs_read_int_global(ctx, "__msFBLoader_rlCalls");
+			rl_target_calls = qjs_read_int_global(ctx,
+				"__msFBLoader_rlTargetCalls");
+			rl_fires = qjs_read_int_global(ctx, "__msFBLoader_rlFires");
+			rl_target_fires = qjs_read_int_global(ctx,
+				"__msFBLoader_rlTargetFires");
+		}
+		macsurf_debug_log_writef(
+			"LIFE FBLOADER d_total=%ld d_target=%ld rl_calls=%ld "
+			"rl_target_calls=%ld rl_fires=%ld rl_target_fires=%ld",
+			d_total, d_target, rl_calls, rl_target_calls,
+			rl_fires, rl_target_fires);
+	}
+
+	/* fixes1272 (#167) - the waiter-release transition, and whether
+	 * Facebook's registry even received the define.
+	 *
+	 * fixes1271 proved the target's whole 32-module closure is
+	 * registered and rl_target_fires is still 0, and the FBRL trace
+	 * showed the split precisely: requireLazy fires SYNCHRONOUSLY when
+	 * the dependency is already defined (__debug, Env - both CALL and
+	 * FIRE in the same millisecond) and never fires when the dependency
+	 * arrives later (target: 157 calls at GSEQ 0, defined at GSEQ 227,
+	 * zero fires). So the fast path works and the deferred path is dead.
+	 *
+	 * Read the fields as:
+	 *   rl_real_null > 0        - STOP: our own wrapper dropped
+	 *                              registrations while realRL was null,
+	 *                              so rl_target_fires=0 is instrumentation,
+	 *                              not a finding. Expected 0.
+	 *   released_on_define=1    - defining the target DID release waiters;
+	 *                              the failure is later than suspected.
+	 *   released_on_define=0
+	 *     with probe_sync_fire=1 - the registry HAS the module (a fresh
+	 *                              requireLazy resolves it synchronously);
+	 *                              only the deferred release step is
+	 *                              broken. Fix belongs in whatever the
+	 *                              real define does to walk pending
+	 *                              waiters.
+	 *   released_on_define=0
+	 *     with probe_sync_fire=0 - the registry never received the define
+	 *                              at all despite __d being called; the
+	 *                              __d delegation path itself is the
+	 *                              suspect.
+	 *
+	 * probe_sync_fire runs the target's factory once (see __msFBWait);
+	 * bounded, guarded, and after all other reporting. */
+	{
+		JSContext *ctx = macsurf_qjs_current_ctx();
+		if (ctx != NULL) {
+			static const char fbwait_src[] =
+				"(function(){try{"
+				"if(typeof globalThis.__msFBWait!=='function')"
+					"return '{\"error\":\"probe not "
+						"installed\"}';"
+				"return globalThis.__msFBWait();"
+				"}catch(e){"
+					"return JSON.stringify({error:"
+						"((e&&e.message)||String(e))});"
+				"}"
+				"})()";
+			JSValue r = JS_Eval(ctx, fbwait_src,
+					strlen(fbwait_src), "<jsfbwait>",
+					JS_EVAL_TYPE_GLOBAL);
+			if (!JS_IsException(r)) {
+				const char *s = JS_ToCString(ctx, r);
+				macsurf_debug_log_writef("LIFE FBWAIT %s",
+					(s != NULL) ? s : "(null)");
+				if (s != NULL) JS_FreeCString(ctx, s);
+			} else {
+				JS_FreeValue(ctx, JS_GetException(ctx));
+				macsurf_debug_log_writef(
+					"LIFE FBWAIT eval exception");
+			}
+			JS_FreeValue(ctx, r);
+		}
+	}
+
+	/* fixes1271 (#167) - which literal module name is the dead waiter
+	 * actually attached to?
+	 *
+	 * fixes1270's hardware round returned FBGRAPH defined:false while
+	 * FBLOADER on the SAME navigation reported rl_target_calls=166. Not
+	 * a contradiction: rlTargetCalls tests the joined dependency string
+	 * with indexOf() (substring), while the graph target was compared by
+	 * string EQUALITY. So the waiters are attached to a name CONTAINING
+	 * "ServerJSPayloadListener" that is not equal to it - and fixes1247's
+	 * watchlist already knows one such variant, ServerJSPayloadListener_NEW.
+	 *
+	 * This line reports every variant observed on each side, with counts
+	 * and first-sighting sequence numbers, so the four cases are readable
+	 * directly rather than inferred:
+	 *   same variant in defined[] and lazy[]  - graph it (FBGRAPH below
+	 *                                            now picks it automatically)
+	 *   variant in lazy[] but not defined[]   - real missing module, and
+	 *                                            FBGRAPH's defined:false
+	 *                                            now means it about the
+	 *                                            name actually waited on
+	 *   different variants on each side       - naming/alias/conditional
+	 *                                            loader problem
+	 *   several variants                      - counts and seq order say
+	 *                                            which to chase first */
+	{
+		JSContext *ctx = macsurf_qjs_current_ctx();
+		if (ctx != NULL) {
+			static const char fbtargets_src[] =
+				"(function(){try{"
+				"if(typeof globalThis.__msFBLoader_targetLike!=="
+					"'function')"
+					"return '{\"error\":\"probe not "
+						"installed\"}';"
+				"return globalThis.__msFBLoader_targetLike();"
+				"}catch(e){"
+					"return JSON.stringify({error:"
+						"((e&&e.message)||String(e))});"
+				"}"
+				"})()";
+			JSValue r = JS_Eval(ctx, fbtargets_src,
+					strlen(fbtargets_src), "<jsfbtargets>",
+					JS_EVAL_TYPE_GLOBAL);
+			if (!JS_IsException(r)) {
+				const char *s = JS_ToCString(ctx, r);
+				macsurf_debug_log_writef("LIFE FBTARGETS %s",
+					(s != NULL) ? s : "(null)");
+				if (s != NULL) JS_FreeCString(ctx, s);
+			} else {
+				JS_FreeValue(ctx, JS_GetException(ctx));
+				macsurf_debug_log_writef(
+					"LIFE FBTARGETS eval exception");
+			}
+			JS_FreeValue(ctx, r);
+		}
+	}
+
+	/* fixes1270 (#167) - independent module-graph reconstruction, as a
+	 * check against fixes1260's __debug probe rather than a replacement
+	 * for it. debugUnresolvedDependencies() is Facebook's OWN loader
+	 * self-reporting on whether ServerJSPayloadListener's deps are
+	 * ready - but that loader's readiness bookkeeping is exactly what's
+	 * suspected of being broken here, which makes asking it a slightly
+	 * circular first diagnostic. This instead walks a dependency graph
+	 * built ENTIRELY from __d() call data (macsurf_qjs.c's
+	 * __msFBGraph_walk, installed alongside the existing __d/requireLazy
+	 * wrapper), executing zero module factories and trusting zero
+	 * Facebook bookkeeping.
+	 *
+	 * Decision table for the result:
+	 *   defined=false                       - contradicts fixes1259's
+	 *                                          d_target=1; instrumentation
+	 *                                          itself would be suspect.
+	 *   direct_missing>0                    - a dependency literally
+	 *                                          named in the target's own
+	 *                                          __d() call never got
+	 *                                          defined; leaf names it.
+	 *   transitive_missing>0                - same, but deeper in the
+	 *                                          graph; leaf names the
+	 *                                          first one found.
+	 *   direct_missing=0 transitive_missing=0
+	 *     with rl_target_fires=0 (FBLOADER, above) -
+	 *          the ENTIRE observed closure was __d()-registered and the
+	 *          lazy waiter STILL never released - not a missing module
+	 *          at all, but Facebook's internal waiter/readiness
+	 *          bookkeeping failing on this engine. That reframes where
+	 *          fixes1271+ needs to look: the define/resolve transition
+	 *          itself (waiter-count decrement, dependency Map/Set
+	 *          membership, property-key equality), not fetch/exec or
+	 *          module discovery, both already proven healthy.
+	 *
+	 * `special` carries any dependency token this code found but chose
+	 * NOT to walk or classify - Facebook's loader uses forms other than
+	 * plain module-name strings (seen in the real bundle: "cr:NNNNNNN"),
+	 * and guessing at what those resolve to would be exactly the kind
+	 * of unproven claim this probe exists to avoid making. Logged
+	 * verbatim so a human can judge them instead. */
+	{
+		JSContext *ctx = macsurf_qjs_current_ctx();
+		if (ctx != NULL) {
+			static const char fbgraph_src[] =
+				"(function(){try{"
+				"if(typeof globalThis.__msFBGraph_walk!=="
+					"'function')"
+					"return '{\"error\":\"probe not "
+						"installed\"}';"
+				/* fixes1271 - no argument: the probe picks the
+				 * variant actually observed this navigation (see
+				 * __msFBGraph_pick). Passing the literal is what
+				 * produced last round's uninformative
+				 * defined:false. */
+				"return globalThis.__msFBGraph_walk(null);"
+				"}catch(e){"
+					"return JSON.stringify({error:"
+						"((e&&e.message)||String(e))});"
+				"}"
+				"})()";
+			JSValue r = JS_Eval(ctx, fbgraph_src,
+					strlen(fbgraph_src), "<jsfbgraph>",
+					JS_EVAL_TYPE_GLOBAL);
+			if (!JS_IsException(r)) {
+				const char *s = JS_ToCString(ctx, r);
+				macsurf_debug_log_writef("LIFE FBGRAPH %s",
+					(s != NULL) ? s : "(null)");
+				if (s != NULL) JS_FreeCString(ctx, s);
+			} else {
+				JS_FreeValue(ctx, JS_GetException(ctx));
+				macsurf_debug_log_writef(
+					"LIFE FBGRAPH eval exception");
+			}
+			JS_FreeValue(ctx, r);
+		}
+	}
+
+	/* fixes1287 - normally emitted at window load; repeat at a true DONE
+	 * edge when one exists so a later guarded failure is still visible. */
+	macsurf_qjs_emit_fb_boot(macsurf_qjs_current_ctx());
+
+	/* fixes1261 (#167) - CSS custom-property scoping: causal confirmation
+	 * only, not more proof of the engine bug itself. A local harness
+	 * test (--layout mode, two sibling divs each setting the SAME
+	 * custom property name to a different value under a different
+	 * class) already proved libcss's custom-property table is
+	 * per-stylesheet/last-writer-wins, not per-selector-scoped: both
+	 * divs came back with the LAST-declared value regardless of which
+	 * class actually matched. What's still unconfirmed is whether THAT
+	 * specific engine limitation is what makes Facebook's text
+	 * invisible, or something else is. Facebook defines
+	 * --fds-primary-text under both `.__fb-light-mode` (#1C1E21, a dark
+	 * near-black colour meant for a light background) and
+	 * `.__fb-dark-mode` (white) in the SAME inline <style> block - the
+	 * exact shape the harness test reproduces. This reads the REAL
+	 * computed (post-cascade, post-var()) color/backgroundColor via the
+	 * same getComputedStyle path real rendering uses (fixes1011,
+	 * qjs_get_computed_style -> css_computed_color /
+	 * css_computed_background_color), not a synthetic re-derivation, so
+	 * it reflects whatever the actual cascade decided for the real
+	 * page. Near-black text against a dark background here, with
+	 * __fb-dark-mode present in the class list, closes the case; if
+	 * body_color already reads white/light, the invisible text is
+	 * happening somewhere more specific than html/body and needs a
+	 * follow-up, not a broader claim from this line alone. */
+	{
+		JSContext *ctx = macsurf_qjs_current_ctx();
+		if (ctx != NULL) {
+			static const char fbcss_src[] =
+				"(function(){try{"
+				"var h=document.documentElement;"
+				"var b=document.body;"
+				"var cls=(h&&h.getAttribute)?"
+					"(h.getAttribute('class')||''):'';"
+				"var hcs=(typeof getComputedStyle==='function'&&h)?"
+					"getComputedStyle(h):null;"
+				"var bcs=(typeof getComputedStyle==='function'&&b)?"
+					"getComputedStyle(b):null;"
+				"var hbg=hcs?String(hcs.backgroundColor||''):'';"
+				"var bbg=bcs?String(bcs.backgroundColor||''):'';"
+				"var bcol=bcs?String(bcs.color||''):'';"
+				"return 'html_class=['+cls+'] html_bg='+hbg+"
+					"' body_bg='+bbg+' body_color='+bcol;"
+				"}catch(e){"
+					"return 'FBCSS eval threw: '+"
+						"((e&&e.message)||e);"
+				"}"
+				"})()";
+			JSValue r = JS_Eval(ctx, fbcss_src, strlen(fbcss_src),
+					"<jsfbcss>", JS_EVAL_TYPE_GLOBAL);
+			if (!JS_IsException(r)) {
+				const char *s = JS_ToCString(ctx, r);
+				macsurf_debug_log_writef("LIFE FBCSS %s",
+					(s != NULL) ? s : "(null)");
+				if (s != NULL) JS_FreeCString(ctx, s);
+			} else {
+				JS_FreeValue(ctx, JS_GetException(ctx));
+				macsurf_debug_log_writef(
+					"LIFE FBCSS eval exception");
+			}
+			JS_FreeValue(ctx, r);
+		}
+	}
+
+	/* fixes1239 (#167) - <script> tags the PARSER found (script.c,
+	 * html_process_script), split inline/external, independent of
+	 * whether js_exec ever ran one. Same local-extern pattern as
+	 * html_reconvert_phase_report above -- script.c is content/html/,
+	 * not this TU's own subsystem. */
+	{
+		extern void html_script_tag_census_report(void);
+		html_script_tag_census_report();
+	}
+
 	g_qjs_interrupts  = 0;
 	macsurf_qjs_ncalls = 0;
 	g_wrap_installs   = 0;
@@ -298,6 +923,13 @@ void macsurf_qjs_audit_reset(void)
 	 * rather than the hundreds the full audit emits. This is the
 	 * implement-next list, written by real sites instead of by me. */
 	g_mslife_audit = 60;
+	/* fixes1246 (#167) - console.error/console.warn just went LIFE-visible
+	 * (previously "[js:error]"/"[js:warn]", invisible in release). Same
+	 * always-on, independent-of-MACSURF_JS_AUDIT posture as g_mslife_audit
+	 * above: this is a page's OWN primary error-reporting channel, not a
+	 * debug-only audit feature, and React specifically uses it to report
+	 * recoverable render/hydration failures instead of an uncaught throw. */
+	g_console_err_audit = 200;
 	/* fixes1030  -  the three ways script can DELETE page content:
 	 * removeChild, textContent= and innerHTML=. All three now log their
 	 * target's identity on this shared budget, independent of
@@ -362,12 +994,22 @@ void macsurf_qjs_page_js_summary(void)
 		 * the thing that actually distinguishes "scripts ran" from
 		 * "scripts ran and the page is now interactive". */
 		{
+			/* fixes1236 (#167) - a count alone can't distinguish "one
+			 * bootstrap listener that never fires" from "one listener
+			 * that IS the whole app" -- name the event types too, on the
+			 * __msLife budget, only when there's something to name (a
+			 * page with zero listeners costs nothing extra). */
 			static const char *cnt_src =
 				"(function(){var d=0,w=0;try{"
-				"var L=document._listeners||{};for(var k in L)"
-				"d+=(L[k]&&L[k].length)||0;"
-				"var W=this._winListeners||{};for(var j in W)"
-				"w+=(W[j]&&W[j].length)||0;"
+				"var L=document._listeners||{},dk=[];for(var k in L){"
+				"var n=(L[k]&&L[k].length)||0;d+=n;"
+				"if(n)dk.push(k+':'+n);}"
+				"var W=this._winListeners||{},wk=[];for(var j in W){"
+				"var m=(W[j]&&W[j].length)||0;w+=m;"
+				"if(m)wk.push(j+':'+m);}"
+				"if((dk.length||wk.length)&&typeof __msLife==='function')"
+				"__msLife('LISTENERS doc=['+dk.join(',')+"
+				"'] win=['+wk.join(',')+']');"
 				"}catch(e){}return d*10000+w;})()";
 			JSValue r = JS_Eval(ctx, cnt_src, strlen(cnt_src),
 					"<jssum>", JS_EVAL_TYPE_GLOBAL);
