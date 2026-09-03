@@ -29,11 +29,10 @@ s, n = re.subn(r'\n\tif \(macsurf_reconvert_in_progress\) \{\n\t\t/\* fixes895 -
                '\n\tguit->misc->schedule', s, count=1, flags=re.S)
 assert n == 1, 'batch-yield diagnostic not found'
 
-# Wrapper's pre-drain durable disk checkpoint is also crash-hunt-only. The
-# actual deferred drain and writer-side pin remain exactly as before.
-s, n = re.subn(r'\n\t/\* fixes901 - durable checkpoint BEFORE.*?\n\tif \(macsurf_reconvert_in_progress\) \{.*?\n\t}\n\tmacos9_content_drain_deferred\(\);',
-               '\n\tmacos9_content_drain_deferred();', s, count=1, flags=re.S)
-assert n == 1, 'wrapper-pre-drain diagnostic not found'
+# The wrapper pre-drain checkpoint may already have been removed by concurrent
+# cleanup. If present, retire only the diagnostic block; the actual drain stays.
+s = re.sub(r'\n\t/\* fixes901 - durable checkpoint BEFORE.*?\n\tif \(macsurf_reconvert_in_progress\) \{.*?\n\t}\n\tmacos9_content_drain_deferred\(\);',
+           '\n\tmacos9_content_drain_deferred();', s, count=1, flags=re.S)
 
 assert 'macos9_box_text_created' not in s
 p.write_text(s)
