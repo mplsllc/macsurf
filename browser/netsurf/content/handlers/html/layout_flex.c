@@ -239,6 +239,7 @@ struct flex_ctx {
 		size_t count;
 		size_t alloc;
 		struct flex_line_data *data;
+		struct flex_line_data first;
 	} line;
 };
 
@@ -251,7 +252,8 @@ static void layout_flex_ctx__destroy(struct flex_ctx *ctx)
 {
 	if (ctx != NULL) {
 		free(ctx->item.data);
-		free(ctx->line.data);
+		if (ctx->line.data != &ctx->line.first)
+			free(ctx->line.data);
 		free(ctx);
 	}
 }
@@ -283,11 +285,7 @@ static struct flex_ctx *layout_flex_ctx__create(
 	}
 
 	ctx->line.alloc = 1;
-	ctx->line.data = calloc(ctx->line.alloc, sizeof(*ctx->line.data));
-	if (ctx->line.data == NULL) {
-		layout_flex_ctx__destroy(ctx);
-		return NULL;
-	}
+	ctx->line.data = &ctx->line.first;
 
 	ctx->flex = flex;
 	ctx->content = content;
@@ -854,7 +852,14 @@ static bool layout_flex_ctx__ensure_line(struct flex_ctx *ctx)
 		return true;
 	}
 
-	temp = realloc(ctx->line.data, sizeof(*ctx->line.data) * line_alloc);
+	if (ctx->line.data == &ctx->line.first) {
+		temp = malloc(sizeof(*ctx->line.data) * line_alloc);
+		if (temp != NULL)
+			temp[0] = ctx->line.first;
+	} else {
+		temp = realloc(ctx->line.data,
+			sizeof(*ctx->line.data) * line_alloc);
+	}
 	if (temp == NULL) {
 		return false;
 	}
@@ -2278,36 +2283,6 @@ static bool layout_flex_inner(struct box *flex, int available_width,
 				content);
 	}
 
-	{
-		extern long macsurf_layout_seq;
-		static long macsurf_flexphase2_seq = -1;
-		static long macsurf_flexphase2_calls = 0;
-		if (macsurf_flexphase2_seq != macsurf_layout_seq) {
-			macsurf_flexphase2_calls = 0;
-			macsurf_flexphase2_seq = macsurf_layout_seq;
-		}
-		macsurf_flexphase2_calls++;
-		if (macsurf_flexphase2_calls <= 200) {
-			macsurf_debug_log_writef(
-				"FLEXPHASE box=%p post-populate items=%d",
-				(void *)flex, (int)ctx->item.count);
-		}
-	}
-
-	/* fixes41 -- re-order items by computed `order` before they go
-	 * onto lines. Stable so equal-order items keep DOM order. */
-	layout_flex__order_items(ctx);
-
-	/* Place items onto lines. */
-	success = layout_flex__collect_items_into_lines(ctx);
-	if (!success) {
-		layout_flex_ctx__destroy(ctx);
-		macsurf_debug_log_writef(
-			"FLEXSAFE collect failed flex=%p -> block fallback",
-			(void *)flex);
-		return layout_flex_fallback_block(flex, available_width,
-				content);
-	}
 
 	/* fixes167b - runaway line count guard. The collector is bounded
 	 * by item count, but a degenerate wrap pattern can still produce
