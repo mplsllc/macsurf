@@ -30,4 +30,5 @@ jobs:
           git rm .github/workflows/perf-textarea-reflow-once.yml tools/apply_perf_textarea_reflow_once.py
           git add browser/netsurf/desktop/textarea.c
           git commit -m "perf(textarea): make multiline reflow paragraph-linear" -m "Cache the next newline across soft wraps instead of rescanning the remaining paragraph for every visual line, binary-search the edited line, and remove the retired Microseconds/logging probe from every multiline reflow."
+          git pull --rebase origin performance
           git push origin HEAD:performance
