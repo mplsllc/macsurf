@@ -721,18 +721,36 @@ static int gz_run(struct macos9_gunzip *z)
 			break;
 
 		case G_COPY:
-			/* Needs no input, so it always runs to completion.
-			 * Reading win[src] before gz_out() writes win[wpos] is
-			 * what makes distance == 32768 (src == wpos) correct:
-			 * the byte read is the one about to be overwritten,
-			 * i.e. exactly 32768 bytes back. */
+			/* Needs no input, so it always runs to completion. Keep this
+			 * loop local instead of calling gz_out() for every match byte:
+			 * a single DEFLATE match can emit 258 bytes, and the call/return
+			 * boundary was pure overhead in the hottest decompression path
+			 * on a G3. The ordering below is deliberately identical to
+			 * gz_out(): read the source before overwriting the destination,
+			 * then write, CRC, account, enforce the cap and flush on wrap.
+			 * Reading before writing is what makes distance == 32768
+			 * (src == wpos) correct. */
 			while (z->copy_len > 0) {
 				unsigned long src;
+				unsigned char b;
 
 				src = (z->wpos - z->copy_dist) &
 					(unsigned long)GZ_WMASK;
-				if (!gz_out(z, z->win[src])) {
+				b = z->win[src];
+				z->win[z->wpos] = b;
+				z->wpos++;
+				z->crc = gz_crc_table[
+					(z->crc ^ (unsigned long)b) & 0xFFUL]
+					^ (z->crc >> 8);
+				z->total_out++;
+				if (z->total_out > MACOS9_GUNZIP_MAX_OUT) {
+					gz_fail(z, "gzip output cap");
 					return MACOS9_GUNZIP_ERROR;
+				}
+				if (z->wpos == (unsigned long)GZ_WSIZE) {
+					gz_flush(z);
+					z->wpos = 0;
+					z->wflush = 0;
 				}
 				z->copy_len--;
 			}
