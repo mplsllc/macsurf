@@ -2495,6 +2495,27 @@ static bool layout_multicol_layout_child(
 	return false;
 }
 
+union layout_multicol_work_align {
+	void *p;
+	double d;
+	long l;
+};
+
+static size_t
+layout_multicol_work_round(size_t n)
+{
+	size_t a = sizeof(union layout_multicol_work_align);
+	size_t r = n % a;
+
+	if (r != 0) {
+		size_t add = a - r;
+		if (n > (size_t)-1 - add)
+			return 0;
+		n += add;
+	}
+	return n;
+}
+
 static bool layout_multicol_context(
 		struct box *block,
 		int viewport_height,
@@ -2507,6 +2528,15 @@ static bool layout_multicol_context(
 	int *segment_starts;
 	int *segment_ends;
 	int *segment_targets;
+	unsigned char *work;
+	unsigned char *work_p;
+	size_t items_bytes;
+	size_t outer_bytes;
+	size_t flags_bytes;
+	size_t starts_bytes;
+	size_t ends_bytes;
+	size_t targets_bytes;
+	size_t work_size;
 	int child_count;
 	int item_index;
 	int segment_index;
@@ -2569,23 +2599,53 @@ static bool layout_multicol_context(
 		return false;
 	}
 
-	items = malloc(sizeof(struct box *) * child_count);
-	outer_heights = malloc(sizeof(int) * child_count);
-	span_all_flags = calloc((size_t)child_count, sizeof(unsigned char));
-	segment_starts = malloc(sizeof(int) * child_count);
-	segment_ends = malloc(sizeof(int) * child_count);
-	segment_targets = malloc(sizeof(int) * child_count);
-	if (items == NULL || outer_heights == NULL || span_all_flags == NULL ||
-			segment_starts == NULL || segment_ends == NULL ||
-			segment_targets == NULL) {
-		free(items);
-		free(outer_heights);
-		free(span_all_flags);
-		free(segment_starts);
-		free(segment_ends);
-		free(segment_targets);
+	/* Six short-lived arrays used together for one multicol pass share one
+	 * aligned workspace, avoiding six allocator/free round-trips. */
+	if ((size_t)child_count > (size_t)-1 / sizeof(struct box *) ||
+			(size_t)child_count > (size_t)-1 / sizeof(int))
 		return false;
-	}
+	items_bytes = layout_multicol_work_round(
+			(size_t)child_count * sizeof(struct box *));
+	outer_bytes = layout_multicol_work_round(
+			(size_t)child_count * sizeof(int));
+	flags_bytes = layout_multicol_work_round((size_t)child_count);
+	starts_bytes = layout_multicol_work_round(
+			(size_t)child_count * sizeof(int));
+	ends_bytes = layout_multicol_work_round(
+			(size_t)child_count * sizeof(int));
+	targets_bytes = layout_multicol_work_round(
+			(size_t)child_count * sizeof(int));
+	if (items_bytes == 0 || outer_bytes == 0 || flags_bytes == 0 ||
+			starts_bytes == 0 || ends_bytes == 0 || targets_bytes == 0)
+		return false;
+	work_size = items_bytes;
+	if (work_size > (size_t)-1 - outer_bytes) return false;
+	work_size += outer_bytes;
+	if (work_size > (size_t)-1 - flags_bytes) return false;
+	work_size += flags_bytes;
+	if (work_size > (size_t)-1 - starts_bytes) return false;
+	work_size += starts_bytes;
+	if (work_size > (size_t)-1 - ends_bytes) return false;
+	work_size += ends_bytes;
+	if (work_size > (size_t)-1 - targets_bytes) return false;
+	work_size += targets_bytes;
+
+	work = malloc(work_size);
+	if (work == NULL)
+		return false;
+	work_p = work;
+	items = (struct box **)work_p;
+	work_p += items_bytes;
+	outer_heights = (int *)work_p;
+	work_p += outer_bytes;
+	span_all_flags = work_p;
+	memset(span_all_flags, 0, (size_t)child_count);
+	work_p += flags_bytes;
+	segment_starts = (int *)work_p;
+	work_p += starts_bytes;
+	segment_ends = (int *)work_p;
+	work_p += ends_bytes;
+	segment_targets = (int *)work_p;
 
 	item_index = 0;
 
@@ -2602,12 +2662,7 @@ static bool layout_multicol_context(
 
 		if (!layout_multicol_layout_child(child, column_width,
 				viewport_height, block, content)) {
-			free(items);
-			free(outer_heights);
-			free(span_all_flags);
-			free(segment_starts);
-			free(segment_ends);
-			free(segment_targets);
+			free(work);
 			return false;
 		}
 
@@ -2673,12 +2728,7 @@ static bool layout_multicol_context(
 	flow_y = 0;
 	if (segment_count > 0 &&
 			layout_multicol_store_data(block, segment_count) == NULL) {
-		free(items);
-		free(outer_heights);
-		free(span_all_flags);
-		free(segment_starts);
-		free(segment_ends);
-		free(segment_targets);
+		free(work);
 		return false;
 	}
 	item_index = 0;
@@ -2719,12 +2769,7 @@ static bool layout_multicol_context(
 
 		if (segment_index >= segment_count ||
 				segment_starts[segment_index] != item_index) {
-			free(items);
-			free(outer_heights);
-			free(span_all_flags);
-			free(segment_starts);
-			free(segment_ends);
-			free(segment_targets);
+			free(work);
 			return false;
 		}
 
@@ -2783,12 +2828,7 @@ static bool layout_multicol_context(
 	if (block->height < 0)
 		block->height = 0;
 
-	free(items);
-	free(outer_heights);
-	free(span_all_flags);
-	free(segment_starts);
-	free(segment_ends);
-	free(segment_targets);
+	free(work);
 	return true;
 }
 
