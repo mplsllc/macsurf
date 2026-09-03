@@ -13,6 +13,7 @@
 
 #define MACSURF_TRANSITION_MAX_ACTIVE 64
 #define MACSURF_TRANSITION_TICK_MS 16
+#define MACSURF_TRANSITION_NOW_AUTO 0xffffffffUL
 
 enum macsurf_transition_state {
     MACSURF_TRANSITION_DELAY = 0,

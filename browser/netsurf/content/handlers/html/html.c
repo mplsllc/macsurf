@@ -3702,14 +3702,11 @@ int html_reconvert_fast_style(struct content *base_c, void *vnode)
 	if (new_styles == NULL) return -1;
 
 	if (css_computed_style_is_paint_only_diff(box->style, new_styles->styles[CSS_PSEUDO_ELEMENT_NONE])) {
-		/* 2B-2 opacity: A->B transition check before style replacement */
-		{
-			uint32_t now = 0;
-#ifdef __MACOS9__
-			now = (uint32_t)TickCount();
-#endif
-			macsurf_transition_handle_style_change(c, node, box->style, new_styles->styles[CSS_PSEUDO_ELEMENT_NONE], now);
-		}
+		/* 2B-2 opacity: A->B transition check before style replacement.
+		 * The handler resolves TickCount lazily only if an effect is created. */
+		macsurf_transition_handle_style_change(c, node, box->style,
+				new_styles->styles[CSS_PSEUDO_ELEMENT_NONE],
+				MACSURF_TRANSITION_NOW_AUTO);
 		if (box->custom_env != NULL && !(box->flags & CLONE))
 			css_custom_env_unref(box->custom_env);
 		if (!(box->flags & CLONE)) box->custom_env = new_env;

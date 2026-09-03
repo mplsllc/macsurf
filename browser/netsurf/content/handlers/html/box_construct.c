@@ -3032,11 +3032,6 @@ html_recascade_tree(html_content *c)
 		parent_custom_env = frame.parent_custom_env;
 
 		processed++;
-		if ((processed % 200) == 0) {
-			macsurf_debug_log_writef(
-				"recascade: processed=%d recascaded=%d top=%d",
-				processed, recascaded, stack_top);
-		}
 
 		if (box == NULL) continue;
 		old_self_style = box->style;
@@ -3053,17 +3048,13 @@ html_recascade_tree(html_content *c)
 					use_parent, use_root, box->node,
 					use_parent_env, &new_env);
 			if (new_styles != NULL) {
-				uint32_t now = 0;
-				/* Start presentation effects before replacing the old
-				 * computed style. This also covers the full-reconstruction
-				 * path, which re-cascades this still-live old box tree just
-				 * before it constructs the replacement. */
-#ifdef __MACOS9__
-				now = (uint32_t)TickCount();
-#endif
+				/* Start presentation effects before replacing the old computed
+				 * style. The transition handler only reads TickCount if this
+				 * change actually creates an effect. */
 				macsurf_transition_handle_style_change(c, box->node,
 						old_self_style,
-						new_styles->styles[CSS_PSEUDO_ELEMENT_NONE], now);
+						new_styles->styles[CSS_PSEUDO_ELEMENT_NONE],
+						MACSURF_TRANSITION_NOW_AUTO);
 				/* fixes1268c - replace, releasing the
 				 * environment from the previous cascade. */
 				if (box->custom_env != NULL && !(box->flags & CLONE))

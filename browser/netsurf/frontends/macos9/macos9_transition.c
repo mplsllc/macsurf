@@ -539,6 +539,13 @@ bool macsurf_transition_handle_style_change(struct html_content *c, dom_node *no
     duration = desc.duration;
     timing = desc.timing;
     if (duration == 0) return false;
+#ifdef __MACOS9__
+    /* Most style changes do not create transitions. Defer the toolbox clock
+     * read until opacity changed, a matching descriptor exists, and duration
+     * is non-zero. */
+    if (now == MACSURF_TRANSITION_NOW_AUTO)
+        now = (uint32_t)TickCount();
+#endif
     /* create/replace via generic engine */
     {
         int created = macsurf_transition_create(node, CSS_PROP_OPACITY,
