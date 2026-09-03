@@ -1,0 +1,211 @@
+diff --git a/browser/netsurf/frontends/macos9/macos9_font.c b/browser/netsurf/frontends/macos9/macos9_font.c
+--- a/browser/netsurf/frontends/macos9/macos9_font.c
++++ b/browser/netsurf/frontends/macos9/macos9_font.c
+@@
+ long macos9_font_measure_calls = 0;
+ long macos9_font_measure_chars = 0;
++/* Position profiling is separate from width measurement.  Before the linear
++ * path, one position call invoked macos9_font_measure once per UTF-8
++ * character.  The optimized path does one UTF-8->MacRoman conversion and one
++ * QuickDraw MeasureText call for the whole run instead. */
++long macos9_font_position_calls = 0;
++long macos9_font_position_chars = 0;
+@@
+ static nserror
+ macos9_font_position(const struct plot_font_style *fstyle,
+                      const char *string,
+                      size_t length,
+                      int x,
+                      size_t *char_offset,
+                      int *actual_x)
+ {
+         int last_x = 0;
+         size_t i = 0;
+@@
+ #ifdef __MACOS9__
+-        while (i < length) {
+-                size_t next_i = utf8_next(string, length, i);
+-                int w;
+-                if (next_i == i) break;
+-
+-                w = macos9_font_measure(fstyle, string, next_i);
+-                if (w > x) {
+-                        /* This char made it too wide. Return last good one. */
+-                        if (i == 0) {
+-                                /* Even the first char doesn't fit, but we must return >= 1 
+-                                 * per NetSurf specs if we are in 'split'. For 'position' 
+-                                 * we can return 0. */
+-                                *char_offset = 0;
+-                                *actual_x = 0;
+-                        } else {
+-                                *char_offset = i;
+-                                *actual_x = last_x;
+-                        }
+-                        return NSERROR_OK;
+-                }
+-                last_x = w;
+-                i = next_i;
+-        }
+-        *char_offset = i;
+-        *actual_x = last_x;
++        {
++                short font_id;
++                short size;
++                short face;
++                GrafPtr old_port;
++                Boolean changed_port = false;
++                char mac_str[4096];
++                size_t mac_len;
++                short *char_locs = NULL;
++                int eff_ls;
++                int eff_ws;
++                int extent = 0;
++                size_t mac_i = 0;
++                int wf;
++
++                macos9_font_position_calls++;
++                macos9_font_position_chars += (long)length;
++
++                font_id = macos9_font_id_from_style(fstyle);
++                face = macos9_face_from_style(fstyle);
++                size = (short)(fstyle->size >> PLOT_STYLE_RADIX);
++                if (size <= 0) size = 12;
++
++                /* Preserve fixes630 exactly.  macos9_wf_icon_advance only
++                 * depends on the first PUA codepoint/family, so every prefix
++                 * in the old loop returned this same width once it resolved. */
++                wf = macos9_wf_icon_advance(fstyle, string, length, (int)size);
++                if (wf >= 0) {
++                        if (wf > x) {
++                                *char_offset = 0;
++                                *actual_x = 0;
++                                return NSERROR_OK;
++                        }
++                        while (i < length) {
++                                size_t next_i = utf8_next(string, length, i);
++                                if (next_i == i) break;
++                                i = next_i;
++                        }
++                        *char_offset = i;
++                        *actual_x = wf;
++                        return NSERROR_OK;
++                }
++
++                /* Convert once.  MeasureText is QuickDraw's array form of
++                 * TextWidth: char_locs[n] is the exact TextWidth of the first
++                 * n MacRoman bytes.  This is the key removal of the old
++                 * prefix-rescan loop. */
++                mac_len = macos9_utf8_to_macroman(string, length,
++                                                  mac_str, sizeof(mac_str));
++                if (mac_len != 0) {
++                        char_locs = malloc((mac_len + 1) * sizeof(*char_locs));
++                        if (char_locs == NULL)
++                                return NSERROR_NOMEM;
++                }
++
++                GetPort(&old_port);
++                if (old_port == NULL) {
++                        if (initial_win != NULL && initial_win->window != NULL) {
++                                SetPortWindowPort(initial_win->window);
++                                changed_port = true;
++                        } else if (FrontWindow() != NULL) {
++                                SetPortWindowPort(FrontWindow());
++                                changed_port = true;
++                        }
++                }
++
++                TextFont(font_id);
++                TextSize(size);
++                TextFace(face);
++
++                if (mac_len != 0) {
++                        MeasureText((short)mac_len, (Ptr)mac_str,
++                                    (Ptr)char_locs);
++                }
++
++                /* For any prefix of two or more emitted bytes the synthetic
++                 * bold/sub-12 spacing is constant.  A one-byte prefix still
++                 * takes the bulk TextWidth branch, exactly as before. */
++                macos9_run_spacing(fstyle, font_id, face, size, 2,
++                                   &eff_ls, &eff_ws);
++
++                while (i < length) {
++                        size_t next_i = utf8_next(string, length, i);
++                        size_t emitted = 0;
++                        size_t j;
++                        char one[4];
++                        int is_mid_soft_hyphen = 0;
++                        int w;
++
++                        if (next_i == i)
++                                break;
++
++                        if (next_i - i == 2 &&
++                            (unsigned char)string[i] == 0xC2 &&
++                            (unsigned char)string[i + 1] == 0xAD &&
++                            next_i < length) {
++                                /* The existing converter makes U+00AD visible
++                                 * only when it is the LAST codepoint of the
++                                 * measured prefix.  In the full-run conversion
++                                 * this mid-run SHY emits nothing, so account
++                                 * for its transient '-' width without adding it
++                                 * to mac_i; the next prefix must lose it again. */
++                                is_mid_soft_hyphen = 1;
++                        } else {
++                                emitted = macos9_utf8_to_macroman(
++                                                string + i, next_i - i,
++                                                one, sizeof(one));
++                        }
++
++                        for (j = 0; j < emitted && mac_i < mac_len; j++) {
++                                if (mac_i != 0) {
++                                        extent += eff_ls;
++                                        if (mac_str[mac_i - 1] == ' ')
++                                                extent += eff_ws;
++                                }
++                                extent += (int)CharWidth(mac_str[mac_i]);
++                                mac_i++;
++                        }
++
++                        if (is_mid_soft_hyphen) {
++                                int shy_w = (int)CharWidth('-');
++                                if (mac_i == 0) {
++                                        w = shy_w;
++                                } else if (eff_ls == 0 && eff_ws == 0) {
++                                        w = (int)char_locs[mac_i] + shy_w;
++                                } else {
++                                        w = extent + eff_ls +
++                                            ((mac_str[mac_i - 1] == ' ') ?
++                                             eff_ws : 0) + shy_w;
++                                }
++                        } else if (mac_i == 0) {
++                                w = 0;
++                        } else if (mac_i <= 1 ||
++                                   (eff_ls == 0 && eff_ws == 0)) {
++                                w = (int)char_locs[mac_i];
++                        } else {
++                                w = extent;
++                        }
++
++                        if (w > x) {
++                                *char_offset = i;
++                                *actual_x = last_x;
++                                if (changed_port)
++                                        SetPort(old_port);
++                                free(char_locs);
++                                return NSERROR_OK;
++                        }
++
++                        last_x = w;
++                        i = next_i;
++                }
++
++                if (changed_port)
++                        SetPort(old_port);
++                free(char_locs);
++                *char_offset = i;
++                *actual_x = last_x;
++        }
+ #else
+         {
+                 int cw = mac_char_width_heuristic(fstyle);
