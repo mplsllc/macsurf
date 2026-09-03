@@ -484,83 +484,87 @@ static inline bool box_is_root(dom_node *n)
 static void
 box_extract_properties(dom_node *n, struct box_construct_props *props)
 {
+	dom_node *current_node;
+	dom_node *parent_node;
+	struct box *b;
+	dom_exception err;
+	int first_parent;
+	int have_parent_box;
+
 	memset(props, 0, sizeof(*props));
 
-	props->node_is_root = box_is_root(n);
+	/* One ancestor walk supplies both logically distinct answers:
+	 *  - the nearest boxed ancestor supplies inherited style/link state;
+	 *  - the nearest non-inline/non-contents/non-BR box is the containing
+	 *    block.  The old code walked the same DOM chain twice to get them. */
+	current_node = n;
+	parent_node = NULL;
+	first_parent = 1;
+	have_parent_box = 0;
 
-	/* Extract properties from containing DOM node */
-	if (props->node_is_root == false) {
-		dom_node *current_node = n;
-		dom_node *parent_node = NULL;
-		struct box *parent_box;
-		dom_exception err;
+	while (true) {
+		dom_node_type parent_type;
 
-		/* Find ancestor node containing parent box */
-		while (true) {
-			err = dom_node_get_parent_node(current_node,
-					&parent_node);
-			if (err != DOM_NO_ERR || parent_node == NULL)
-				break;
-
-			parent_box = box_for_node(parent_node);
-
-			if (parent_box != NULL) {
-				props->parent_style = parent_box->style;
-				props->parent_custom_env =
-						parent_box->custom_env;
-				props->href = parent_box->href;
-				props->target = parent_box->target;
-				/* fixes1063 (#114) - travels with href. */
-				props->download = (parent_box->flags &
-						LINK_DOWNLOAD) != 0;
-				props->title = parent_box->title;
-
-				dom_node_unref(parent_node);
-				break;
-			} else {
-				if (current_node != n)
-					dom_node_unref(current_node);
-				current_node = parent_node;
-				parent_node = NULL;
-			}
+		err = dom_node_get_parent_node(current_node, &parent_node);
+		if (err != DOM_NO_ERR || parent_node == NULL) {
+			/* A node with no parent is a root for construction purposes,
+			 * matching box_is_root's historical behaviour. */
+			if (first_parent)
+				props->node_is_root = true;
+			break;
 		}
 
-		/* Find containing block (may be parent) */
-		while (true) {
-			struct box *b;
-
-			err = dom_node_get_parent_node(current_node,
-					&parent_node);
-			if (err != DOM_NO_ERR || parent_node == NULL) {
-				if (current_node != n)
-					dom_node_unref(current_node);
+		if (first_parent) {
+			parent_type = 0;
+			err = dom_node_get_node_type(parent_node, &parent_type);
+			if (err != DOM_NO_ERR) {
+				dom_node_unref(parent_node);
+				parent_node = NULL;
 				break;
 			}
+			if (parent_type == DOM_DOCUMENT_NODE) {
+				props->node_is_root = true;
+				dom_node_unref(parent_node);
+				parent_node = NULL;
+				break;
+			}
+			first_parent = 0;
+		}
 
-			if (current_node != n)
-				dom_node_unref(current_node);
+		b = box_for_node(parent_node);
+		if (b != NULL) {
+			if (!have_parent_box) {
+				props->parent_style = b->style;
+				props->parent_custom_env = b->custom_env;
+				props->href = b->href;
+				props->target = b->target;
+				props->download = (b->flags & LINK_DOWNLOAD) != 0;
+				props->title = b->title;
+				have_parent_box = 1;
+			}
 
-			b = box_for_node(parent_node);
-
-			/* Children of nodes that created an inline box
-			 * will generate boxes which are attached as
-			 * _siblings_ of the box generated for their
-			 * parent node. Note, however, that we'll still
-			 * use the parent node's styling as the parent
-			 * style, above. */
-			if (b != NULL && b->type != BOX_INLINE &&
+			if (props->containing_block == NULL &&
+					b->type != BOX_INLINE &&
 					b->type != BOX_CONTENTS &&
 					b->type != BOX_BR) {
 				props->containing_block = b;
+			}
 
+			if (have_parent_box && props->containing_block != NULL) {
 				dom_node_unref(parent_node);
-				break;
-			} else {
-				current_node = parent_node;
 				parent_node = NULL;
+				break;
 			}
 		}
+
+		if (current_node != n)
+			dom_node_unref(current_node);
+		current_node = parent_node;
+		parent_node = NULL;
 	}
+
+	if (current_node != n)
+		dom_node_unref(current_node);
 
 	/* Compute current inline container, if any */
 	if (props->containing_block != NULL &&
