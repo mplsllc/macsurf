@@ -251,9 +251,9 @@ struct flex_ctx {
 static void layout_flex_ctx__destroy(struct flex_ctx *ctx)
 {
 	if (ctx != NULL) {
-		free(ctx->item.data);
 		if (ctx->line.data != &ctx->line.first)
 			free(ctx->line.data);
+		/* item.data is the tail of the ctx allocation. */
 		free(ctx);
 	}
 }
@@ -270,20 +270,23 @@ static struct flex_ctx *layout_flex_ctx__create(
 		const struct box *flex)
 {
 	struct flex_ctx *ctx;
+	size_t item_count;
+	size_t alloc_size;
 
-	ctx = calloc(1, sizeof(*ctx));
+	item_count = box_count_children(flex);
+	if (item_count > (((size_t)-1 - sizeof(*ctx)) /
+			sizeof(struct flex_item_data))) {
+		return NULL;
+	}
+	alloc_size = sizeof(*ctx) +
+		item_count * sizeof(struct flex_item_data);
+	ctx = calloc(1, alloc_size);
 	if (ctx == NULL) {
 		return NULL;
 	}
-	ctx->line.alloc = 1;
 
-	ctx->item.count = box_count_children(flex);
-	ctx->item.data = calloc(ctx->item.count, sizeof(*ctx->item.data));
-	if (ctx->item.data == NULL) {
-		layout_flex_ctx__destroy(ctx);
-		return NULL;
-	}
-
+	ctx->item.count = item_count;
+	ctx->item.data = (struct flex_item_data *)(ctx + 1);
 	ctx->line.alloc = 1;
 	ctx->line.data = &ctx->line.first;
 
