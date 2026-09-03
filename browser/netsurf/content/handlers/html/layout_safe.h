@@ -165,7 +165,7 @@ static int layout_dim_clamp(int v)
  * is given; an artificial budget just converts "loads slowly"
  * into "doesn't load". The wrapper machinery stays so the
  * breadcrumb still fires on layout_document entry for crash
- * forensics, but layout_watchdog_enter is a pure pass-through.
+ * forensics, but the recursive enter/exit gates compile away.
  *
  * If the platform's thread stack genuinely overflows, that's
  * a real crash worth fixing at the recursion site, not papering
@@ -184,29 +184,18 @@ extern int macsurf_flex_layout_cache_enabled;
 
 /* macsurf_layout_watchdog_reset() and macsurf_layout_breadcrumb()
  * are real functions (defined in layout.c) so they can do I/O and
- * carry mutable state. The inline-static enter/exit helpers below
- * are tiny enough to live in the header. */
+ * carry mutable state at document scope. */
 extern void macsurf_layout_watchdog_reset(void);
 extern void macsurf_layout_breadcrumb(const char *phase, const void *box);
 
 /**
- * Watchdog gate at the entry of every recursive layout function.
- *
- * The watchdog currently has no active depth or iteration limit, so this is a
- * true pass-through. The old call counter was diagnostic-only and wrote a
- * global long on every recursive layout entry; heavy pages can execute this
- * path millions of times per reformat, so keeping that write in release builds
- * was measurable work with no effect on layout decisions.
+ * Disabled recursive watchdog gates.  These used to be tiny static functions,
+ * but C89 gives CW8 no inline guarantee; on deeply nested pages that left a
+ * call/return pair at every recursive layout entry and exit despite the bodies
+ * being pure no-ops.  Keep the call sites/source shape for easy restoration,
+ * but compile them to constants in the no-budget configuration.
  */
-static int layout_watchdog_enter(const void *box)
-{
-	(void)box;
-	return 0;
-}
-
-static void layout_watchdog_exit(void)
-{
-	/* No active depth cap: nothing to unwind. */
-}
+#define layout_watchdog_enter(box) ((void)(box), 0)
+#define layout_watchdog_exit() ((void)0)
 
 #endif /* NETSURF_HTML_LAYOUT_SAFE_H */
