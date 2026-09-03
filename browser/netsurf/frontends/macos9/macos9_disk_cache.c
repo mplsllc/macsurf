@@ -252,6 +252,17 @@ static void cache_filename_for_url(const char *url, unsigned char *fname)
 }
 
 #ifdef __MACOS9__
+/* Process-lifetime directory memoization. HFS directory IDs are stable for
+ * the life of the app, and resolving MacSurfData/Cache used to repeat
+ * GetProcessInformation + FSMakeFSSpec + PBGetCatInfoSync for every cache
+ * hit/store. Keep the resolved IDs after the first successful lookup. */
+static int g_data_dir_cached = 0;
+static short g_data_dir_vref = 0;
+static long g_data_dir_id = 0;
+static int g_cache_dir_cached = 0;
+static short g_cache_dir_vref = 0;
+static long g_cache_dir_id = 0;
+
 /* fixes641 (#197): resolve the RUNNING APPLICATION's own directory (the folder
  * MacSurf.app lives in), so the cache + log go next to the app rather than the
  * boot volume's Desktop. Uses the app's own FSSpec from GetProcessInformation.
@@ -339,29 +350,49 @@ static OSErr macsurfdata_dir_get(const char *subfolder,
 	short data_vref;
 	long data_dir;
 
-	err = macos9_app_dir_get(&base_vref, &base_dir);
-	if (err != noErr) {
-		/* fixes680 (#207): DIAG. app-dir resolution failed -> Desktop. */
-		macsurf_debug_log_writef("DIAG appdir FAIL err=%d (Desktop fallback)",
-			(int)err);
-		/* Fallback: boot-volume Desktop. */
-		err = FindFolder(kOnSystemDisk, kDesktopFolderType,
-				kDontCreateFolder, &desk_vref, &desk_dir);
+	if (subfolder == NULL && g_data_dir_cached) {
+		*vRef = g_data_dir_vref;
+		*dirID = g_data_dir_id;
+		return noErr;
+	}
+	if (subfolder != NULL && strcmp(subfolder, "Cache") == 0 &&
+	    g_cache_dir_cached) {
+		*vRef = g_cache_dir_vref;
+		*dirID = g_cache_dir_id;
+		return noErr;
+	}
+
+	if (g_data_dir_cached) {
+		data_vref = g_data_dir_vref;
+		data_dir = g_data_dir_id;
+	} else {
+		err = macos9_app_dir_get(&base_vref, &base_dir);
 		if (err != noErr) {
-			macsurf_debug_log_writef("DIAG Desktop-fallback FAIL err=%d",
+			/* fixes680 (#207): DIAG. app-dir resolution failed -> Desktop. */
+			macsurf_debug_log_writef("DIAG appdir FAIL err=%d (Desktop fallback)",
 				(int)err);
+			/* Fallback: boot-volume Desktop. */
+			err = FindFolder(kOnSystemDisk, kDesktopFolderType,
+					kDontCreateFolder, &desk_vref, &desk_dir);
+			if (err != noErr) {
+				macsurf_debug_log_writef("DIAG Desktop-fallback FAIL err=%d",
+					(int)err);
+				return err;
+			}
+			base_vref = desk_vref;
+			base_dir = desk_dir;
+		}
+		err = ensure_subdir(base_vref, base_dir, "MacSurfData",
+				&data_vref, &data_dir);
+		if (err != noErr) {
+			/* fixes680 (#207): DIAG. MacSurfData folder create/resolve failed
+			 * - this would also break the log if it lives here, and cascade. */
+			macsurf_debug_log_writef("DIAG MacSurfData FAIL err=%d", (int)err);
 			return err;
 		}
-		base_vref = desk_vref;
-		base_dir = desk_dir;
-	}
-	err = ensure_subdir(base_vref, base_dir, "MacSurfData",
-			&data_vref, &data_dir);
-	if (err != noErr) {
-		/* fixes680 (#207): DIAG. MacSurfData folder create/resolve failed
-		 * - this would also break the log if it lives here, and cascade. */
-		macsurf_debug_log_writef("DIAG MacSurfData FAIL err=%d", (int)err);
-		return err;
+		g_data_dir_vref = data_vref;
+		g_data_dir_id = data_dir;
+		g_data_dir_cached = 1;
 	}
 	if (subfolder == NULL) {
 		*vRef = data_vref;
@@ -371,9 +402,14 @@ static OSErr macsurfdata_dir_get(const char *subfolder,
 	{
 		OSErr serr = ensure_subdir(data_vref, data_dir, subfolder,
 				vRef, dirID);
-		if (serr != noErr)
+		if (serr != noErr) {
 			macsurf_debug_log_writef("DIAG subdir '%s' FAIL err=%d",
 				subfolder, (int)serr);
+		} else if (strcmp(subfolder, "Cache") == 0) {
+			g_cache_dir_vref = *vRef;
+			g_cache_dir_id = *dirID;
+			g_cache_dir_cached = 1;
+		}
 		return serr;
 	}
 }
@@ -444,32 +480,111 @@ int macos9_cache_mime_eligible(int status, const char *mime)
 	return 0;
 }
 
-/* fixes985 - total-size budget + LRU eviction, restored from fixes665 with
- * one change that matters on this hardware.
+/* Persistent total + LRU budget. The old path performed a full directory
+ * sweep on the first store after every launch. On a large HFS cache that is
+ * seconds of synchronous PBGetCatInfo work in the middle of a page load.
  *
- * fixes665 swept once per 2 MB stored. A sweep is a full PBGetCatInfo walk of
- * the cache directory, which with a few thousand entries is seconds on a G3 --
- * and with images cacheable, 2 MB accumulates every dozen or so images, so
- * that cadence would put a directory scan in the middle of page loads.
- *
- * Instead the total is REMEMBERED. One scan on the first store (which also
- * trims a cache left over-budget by a previous session), then each store adds
- * its own size to a running figure and a scan happens only when that figure
- * crosses the budget. Overwriting an existing entry double-counts, so the
- * running figure drifts HIGH -- deliberately the safe direction: it triggers a
- * scan slightly early and the scan replaces the estimate with the truth.
- *
- * The LRU key is the modification date, which is what HFS gives us for free.
- * That is approximate: a file read on every page but never rewritten ages like
- * a cold one. Writing on every read to fix it would cost a catalog update per
- * cache hit, which is a worse trade -- and an evicted entry costs one refetch,
- * not correctness. Documented rather than hidden. */
-#define CACHE_TOTAL_BUDGET   (64L * 1024L * 1024L)   /* 64 MB on-disk cap */
-#define CACHE_EVICT_BATCH    64   /* oldest files trimmed per sweep */
+ * The current total is persisted in a tiny state file at the MacSurfData root
+ * and updated from exact old/new file sizes. Existing installs have no state
+ * file; migration starts untrusted at zero and counts new writes without
+ * subtracting overwritten legacy files. Once that conservative counter
+ * reaches the 64 MB budget, one real sweep establishes the exact total and
+ * marks the state trusted. Thus an old <=64 MB cache can temporarily grow to
+ * roughly <=128 MB during migration, but the first-page launch stall is gone
+ * and subsequent launches start with an O(1) state read rather than a scan. */
+#define CACHE_TOTAL_BUDGET   (64L * 1024L * 1024L)
+#define CACHE_EVICT_BATCH    64
+#define CACHE_TOTAL_STATE_SAVE_EVERY 16
 
-static long g_cache_total = -1;   /* -1 = unknown, forces the first scan */
-static long g_store_ticks = 0;    /* fixes986 - cumulative time IN the store */
+static long g_cache_total = -1;
+static int g_cache_total_loaded = 0;
+static int g_cache_total_trusted = 0;
+static int g_cache_total_dirty = 0;
+static long g_store_ticks = 0;
 static long g_store_n = 0;
+
+#ifdef __MACOS9__
+static void cache_total_state_load(void)
+{
+	short vRef;
+	long dirID;
+	FSSpec spec;
+	unsigned char fname[32];
+	const char *name = "MacSurf CacheState";
+	size_t nlen;
+	short ref = 0;
+	unsigned char buf[12];
+	long count;
+	unsigned long total_v;
+	unsigned long flags_v;
+
+	if (g_cache_total_loaded) return;
+	g_cache_total_loaded = 1;
+	g_cache_total = 0;
+	g_cache_total_trusted = 0;
+	g_cache_total_dirty = 0;
+
+	if (macsurfdata_dir_get(NULL, &vRef, &dirID) != noErr) return;
+	nlen = strlen(name);
+	if (nlen > 31) nlen = 31;
+	fname[0] = (unsigned char)nlen;
+	memcpy(fname + 1, name, nlen);
+	if (FSMakeFSSpec(vRef, dirID, fname, &spec) != noErr) return;
+	if (FSpOpenDF(&spec, fsRdPerm, &ref) != noErr) return;
+	count = (long)sizeof(buf);
+	if (FSRead(ref, &count, buf) != noErr || count != (long)sizeof(buf)) {
+		FSClose(ref);
+		return;
+	}
+	FSClose(ref);
+	if (buf[0] != 'M' || buf[1] != 'C' || buf[2] != 'T' || buf[3] != '1')
+		return;
+	total_v = cache_read_be32(buf + 4);
+	flags_v = cache_read_be32(buf + 8);
+	if (total_v > 0x7fffffffUL) return;
+	g_cache_total = (long)total_v;
+	g_cache_total_trusted = (flags_v & 1UL) ? 1 : 0;
+}
+
+static void cache_total_state_save(void)
+{
+	short vRef;
+	long dirID;
+	FSSpec spec;
+	unsigned char fname[32];
+	const char *name = "MacSurf CacheState";
+	size_t nlen;
+	short ref = 0;
+	unsigned char buf[12];
+	long count;
+	OSErr err;
+
+	if (!g_cache_total_loaded || g_cache_total < 0) return;
+	if (macsurfdata_dir_get(NULL, &vRef, &dirID) != noErr) return;
+	nlen = strlen(name);
+	if (nlen > 31) nlen = 31;
+	fname[0] = (unsigned char)nlen;
+	memcpy(fname + 1, name, nlen);
+	err = FSMakeFSSpec(vRef, dirID, fname, &spec);
+	if (err == fnfErr) {
+		err = FSpCreate(&spec, 'MPLS', 'DATA', smSystemScript);
+		if (err != noErr) return;
+		err = FSMakeFSSpec(vRef, dirID, fname, &spec);
+	}
+	if (err != noErr) return;
+	if (FSpOpenDF(&spec, fsRdWrPerm, &ref) != noErr) return;
+	buf[0] = 'M'; buf[1] = 'C'; buf[2] = 'T'; buf[3] = '1';
+	cache_write_be32(buf + 4, (unsigned long)g_cache_total);
+	cache_write_be32(buf + 8, g_cache_total_trusted ? 1UL : 0UL);
+	(void)SetFPos(ref, fsFromStart, 0);
+	count = (long)sizeof(buf);
+	if (FSWrite(ref, &count, buf) == noErr && count == (long)sizeof(buf)) {
+		(void)SetEOF(ref, (long)sizeof(buf));
+		g_cache_total_dirty = 0;
+	}
+	FSClose(ref);
+}
+#endif
 
 static long macos9_cache_sweep(void)
 {
@@ -539,6 +654,48 @@ static long macos9_cache_sweep(void)
 #endif
 }
 
+#ifdef __MACOS9__
+static void cache_total_replace(long old_size, long new_size)
+{
+	long delta;
+
+	if (old_size < 0) old_size = 0;
+	if (new_size < 0) new_size = 0;
+	cache_total_state_load();
+	if (g_cache_total_trusted) {
+		delta = new_size - old_size;
+	} else {
+		/* Migration from pre-state builds: old files are not represented in
+		 * the persisted total, so never subtract them until a sweep has made
+		 * the total authoritative. */
+		delta = new_size;
+	}
+	if (delta < 0 && -delta > g_cache_total) {
+		g_cache_total = 0;
+	} else {
+		g_cache_total += delta;
+	}
+	if (g_cache_total > CACHE_TOTAL_BUDGET) {
+		g_cache_total = macos9_cache_sweep();
+		g_cache_total_trusted = 1;
+		g_cache_total_dirty = 0;
+		cache_total_state_save();
+		return;
+	}
+	g_cache_total_dirty++;
+	if (g_cache_total_dirty >= CACHE_TOTAL_STATE_SAVE_EVERY)
+		cache_total_state_save();
+}
+
+static void cache_total_reset(void)
+{
+	g_cache_total_loaded = 1;
+	g_cache_total = 0;
+	g_cache_total_trusted = 1;
+	g_cache_total_dirty = 0;
+	cache_total_state_save();
+}
+#endif
 
 /* fixes981 - the freshness/validator headers a disk hit must carry.
  *
@@ -599,22 +756,32 @@ struct cache_stream {
 	short  ref;
 	FSSpec spec;
 	long   len;
+	long   old_size;
+	long   prefix_len;
 };
 static struct cache_stream g_streams[MACSURF_CACHE_STREAMS];
 
 /* Close and forget a slot. Deletes the file unless it was committed. */
 static void cache_stream_drop(struct cache_stream *st, int commit)
 {
+	long old_size;
+	int deleted = 0;
+
 	if (!st->used) return;
+	old_size = st->old_size;
 	if (st->ref != 0) {
 		FSClose(st->ref);
 		st->ref = 0;
 	}
 	if (!commit) {
-		(void)FSpDelete(&st->spec);
+		if (FSpDelete(&st->spec) == noErr) deleted = 1;
 	}
 	st->used = 0;
 	st->len = 0;
+	st->old_size = 0;
+	st->prefix_len = 0;
+	if (deleted && old_size > 0)
+		cache_total_replace(old_size, 0);
 }
 #endif
 
@@ -629,6 +796,7 @@ int macos9_cache_stream_begin(const char *url, int status, const char *mime,
 	short ref = 0;
 	unsigned char hdr[24];
 	long count;
+	long old_size = 0;
 	size_t mime_len;
 	size_t hdrs_len;
 	int i;
@@ -640,7 +808,12 @@ int macos9_cache_stream_begin(const char *url, int status, const char *mime,
 	for (i = 0; i < MACSURF_CACHE_STREAMS; i++) {
 		if (!g_streams[i].used) { st = &g_streams[i]; break; }
 	}
-	if (st == NULL) return 0;   /* all slots busy: skip caching, no harm */
+	if (st == NULL) return 0;
+
+	mime_len = strlen(mime);
+	if (mime_len > 127) mime_len = 127;
+	hdrs_len = (hdrs != NULL) ? strlen(hdrs) : 0;
+	if (hdrs_len > MACSURF_CACHE_HDRS_MAX - 1) hdrs_len = 0;
 
 	if (cache_dir_get(&vRef, &dirID) != noErr) return 0;
 	cache_filename_for_url(url, fname);
@@ -652,12 +825,14 @@ int macos9_cache_stream_begin(const char *url, int status, const char *mime,
 	}
 	if (err != noErr) return 0;
 	if (FSpOpenDF(&st->spec, fsRdWrPerm, &ref) != noErr) return 0;
+	if (GetEOF(ref, &old_size) != noErr) old_size = 0;
 	SetFPos(ref, fsFromStart, 0);
 
-	mime_len = strlen(mime);
-	if (mime_len > 127) mime_len = 127;
-	hdrs_len = (hdrs != NULL) ? strlen(hdrs) : 0;
-	if (hdrs_len > MACSURF_CACHE_HDRS_MAX - 1) hdrs_len = 0;
+	st->used = 1;
+	st->ref = ref;
+	st->len = 0;
+	st->old_size = old_size;
+	st->prefix_len = (long)sizeof(hdr) + (long)mime_len + (long)hdrs_len;
 
 	hdr[0] = MACSURF_CACHE_MAGIC0; hdr[1] = MACSURF_CACHE_MAGIC1;
 	hdr[2] = MACSURF_CACHE_MAGIC2; hdr[3] = MACSURF_CACHE_MAGIC3;
@@ -665,25 +840,26 @@ int macos9_cache_stream_begin(const char *url, int status, const char *mime,
 	hdr[6] = MACSURF_CACHE_MAGIC6; hdr[7] = MACSURF_CACHE_MAGIC7;
 	cache_write_be32(hdr + 8,  (unsigned long)status);
 	cache_write_be32(hdr + 12, (unsigned long)mime_len);
-	/* body length is 0 until the commit patches it -- that is the
-	 * integrity guard, not an oversight. */
 	cache_write_be32(hdr + 16, 0UL);
 	cache_write_be32(hdr + 20, (unsigned long)hdrs_len);
 
 	count = sizeof(hdr);
-	if (FSWrite(ref, &count, hdr) != noErr) { FSClose(ref); return 0; }
+	if (FSWrite(ref, &count, hdr) != noErr) {
+		cache_stream_drop(st, 0); return 0;
+	}
 	if (mime_len > 0) {
 		count = (long)mime_len;
-		if (FSWrite(ref, &count, mime) != noErr) { FSClose(ref); return 0; }
+		if (FSWrite(ref, &count, mime) != noErr) {
+			cache_stream_drop(st, 0); return 0;
+		}
 	}
 	if (hdrs_len > 0) {
 		count = (long)hdrs_len;
-		if (FSWrite(ref, &count, hdrs) != noErr) { FSClose(ref); return 0; }
+		if (FSWrite(ref, &count, hdrs) != noErr) {
+			cache_stream_drop(st, 0); return 0;
+		}
 	}
 
-	st->used = 1;
-	st->ref = ref;
-	st->len = 0;
 	return (int)(st - g_streams) + 1;
 #else
 	(void)url; (void)status; (void)mime; (void)hdrs;
@@ -703,8 +879,6 @@ int macos9_cache_stream_data(int h, const char *buf, long len)
 	if (buf == NULL || len <= 0) return 1;
 
 	if (st->len + len > MACSURF_CACHE_MAX_BYTES) {
-		/* over the per-file cap: give up on this one entirely rather
-		 * than keep a partial body around. */
 		cache_stream_drop(st, 0);
 		return 0;
 	}
@@ -727,6 +901,8 @@ void macos9_cache_stream_end(int h, int commit)
 	struct cache_stream *st;
 	unsigned char lenbuf[4];
 	long count;
+	long old_size;
+	long final_size;
 
 	if (h <= 0 || h > MACSURF_CACHE_STREAMS) return;
 	st = &g_streams[h - 1];
@@ -737,8 +913,8 @@ void macos9_cache_stream_end(int h, int commit)
 		return;
 	}
 
-	/* Patch the real body length in, LAST, then trim. Until this write
-	 * lands the file reads as body_len == 0 and lookup rejects it. */
+	old_size = st->old_size;
+	final_size = st->prefix_len + st->len;
 	cache_write_be32(lenbuf, (unsigned long)st->len);
 	if (SetFPos(st->ref, fsFromStart, 16) != noErr) {
 		cache_stream_drop(st, 0);
@@ -749,31 +925,20 @@ void macos9_cache_stream_end(int h, int commit)
 		cache_stream_drop(st, 0);
 		return;
 	}
-	SetFPos(st->ref, fsFromLEOF, 0);
-	{
-		long eof = 0;
-		GetEOF(st->ref, &eof);
-		(void)eof;
+	/* The old streaming path never truncated an overwritten cache file.
+	 * Replacing a 900 KB object with a 200 KB one therefore left a 900 KB
+	 * HFS file with a 200 KB logical body. Trim to the exact new record. */
+	if (SetEOF(st->ref, final_size) != noErr) {
+		cache_stream_drop(st, 0);
+		return;
 	}
 	g_store_n++;
 	macsurf_debug_log_writef(
 		"LIFE CACHE stream url=(slot %d) len=%ld n=%ld",
 		h, st->len, g_store_n);
-	{
-		long body = st->len;
-		cache_stream_drop(st, 1);
-		macsurf_http_skip_next_cache = 0;
-		/* same remembered-total budget accounting as the buffered
-		 * store; see macos9_cache_sweep. */
-		if (g_cache_total < 0) {
-			g_cache_total = macos9_cache_sweep();
-		} else {
-			g_cache_total += 24 + body;
-			if (g_cache_total > CACHE_TOTAL_BUDGET) {
-				g_cache_total = macos9_cache_sweep();
-			}
-		}
-	}
+	cache_stream_drop(st, 1);
+	macsurf_http_skip_next_cache = 0;
+	cache_total_replace(old_size, final_size);
 #else
 	(void)h; (void)commit;
 #endif
@@ -797,15 +962,17 @@ void macos9_cache_store_hdrs(const char *url, int status, const char *mime,
 	short ref = 0;
 	unsigned char hdr[24];
 	long count;
+	long old_size = 0;
+	long new_size;
 	size_t mime_len;
 	size_t hdrs_len;
-	long   t0;
+	long t0;
 
 	if (url == NULL || body_ptr == NULL) return;
 	if (body_len <= 0 || body_len > MACSURF_CACHE_MAX_BYTES) return;
 	if (!macos9_cache_mime_eligible(status, mime)) return;
 
-	t0 = (long)TickCount();   /* fixes986 */
+	t0 = (long)TickCount();
 
 	err = cache_dir_get(&vRef, &dirID);
 	if (err != noErr) return;
@@ -820,12 +987,15 @@ void macos9_cache_store_hdrs(const char *url, int status, const char *mime,
 	if (err != noErr) return;
 
 	if (FSpOpenDF(&spec, fsRdWrPerm, &ref) != noErr) return;
+	if (GetEOF(ref, &old_size) != noErr) old_size = 0;
 	SetFPos(ref, fsFromStart, 0);
 
 	mime_len = strlen(mime);
 	if (mime_len > 127) mime_len = 127;
 	hdrs_len = (hdrs != NULL) ? strlen(hdrs) : 0;
 	if (hdrs_len > MACSURF_CACHE_HDRS_MAX - 1) hdrs_len = 0;
+	new_size = (long)sizeof(hdr) + (long)mime_len +
+		(long)hdrs_len + body_len;
 
 	hdr[0] = MACSURF_CACHE_MAGIC0;
 	hdr[1] = MACSURF_CACHE_MAGIC1;
@@ -838,8 +1008,6 @@ void macos9_cache_store_hdrs(const char *url, int status, const char *mime,
 	cache_write_be32(hdr + 8,  (unsigned long)status);
 	cache_write_be32(hdr + 12, (unsigned long)mime_len);
 	cache_write_be32(hdr + 16, (unsigned long)body_len);
-	/* fixes981 - was always written as 0; now the header-block length, so
-	 * a file written by an older build reads back as "no headers". */
 	cache_write_be32(hdr + 20, (unsigned long)hdrs_len);
 
 	count = sizeof(hdr);
@@ -854,33 +1022,9 @@ void macos9_cache_store_hdrs(const char *url, int status, const char *mime,
 	}
 	count = body_len;
 	FSWrite(ref, &count, body_ptr);
-	SetEOF(ref, (long)sizeof(hdr) + (long)mime_len + (long)hdrs_len +
-			body_len);
+	SetEOF(ref, new_size);
 	FSClose(ref);
-	/* fixes248 - FlushVol REMOVED. Same rationale as fixes96 on the
-	 * log writer: synchronous volume flush costs 10-50 ms per call on
-	 * real hardware, and with ~20 cache stores per cold mactrove load
-	 * that was 200-1000 ms of pure disk-sync wait between sub-resource
-	 * deliveries. HFS's normal write cache flushes on its own cadence,
-	 * and the macsurf_debug_log's session-close FlushVol catches any
-	 * remaining buffered writes at app quit. Worst case if the app
-	 * crashes: a few cache files may be partially written and fail the
-	 * magic check at next lookup - which is exactly the "miss" path
-	 * (refetch from network). No data corruption risk. */
 
-	/* fixes984 - "LIFE " prefix. The perf filter drops bare CACHE lines by
-	 * default (macsurf_debug_log.c), so this and the hit line below have
-	 * been invisible on every default build -- which is why fixes981 could
-	 * not be checked from a log and had to be verified by reading the cache
-	 * files off the machine. Same trap as the 304 lines in fixes979b. */
-	/* fixes986 - how long does a store actually TAKE? The cold-load
-	 * regression could not be attributed from the log, because the gaps
-	 * between log lines measure where the poll loop was, not what cost time:
-	 * a gap after a CACHE line is mostly the wait for the NEXT fetch. So
-	 * measure the store directly. TickCount is 60 Hz and a single store may
-	 * well read 0, which is why the CUMULATIVE figure is the one to read --
-	 * across a page's worth of stores it answers "are these seconds or
-	 * milliseconds?" without any inference. */
 	{
 		long dt = (long)TickCount() - t0;
 		g_store_ticks += dt;
@@ -892,16 +1036,7 @@ void macos9_cache_store_hdrs(const char *url, int status, const char *mime,
 			dt, g_store_ticks, g_store_n);
 	}
 	macsurf_http_skip_next_cache = 0;
-	/* fixes985 - remembered-total budget enforcement; see macos9_cache_sweep. */
-	if (g_cache_total < 0) {
-		g_cache_total = macos9_cache_sweep();
-	} else {
-		g_cache_total += (long)sizeof(hdr) + (long)mime_len +
-				(long)hdrs_len + body_len;
-		if (g_cache_total > CACHE_TOTAL_BUDGET) {
-			g_cache_total = macos9_cache_sweep();
-		}
-	}
+	cache_total_replace(old_size, new_size);
 #else
 	(void)url; (void)status; (void)mime; (void)hdrs;
 	(void)body_ptr; (void)body_len;
@@ -945,10 +1080,6 @@ int macos9_cache_lookup_hdrs(const char *url, char **body_out,
 
 	if (url == NULL) return 0;
 	if (macsurf_http_skip_next_cache) return 0;
-	/* fixes1159 (#240) - per-host POST window: a recent POST to this
-	 * origin means the disk copy may predate the edit; go to network.
-	 * Belt-and-braces behind the fetchers' own gate checks, so any
-	 * other lookup caller (webfont, SVG sprites) is covered too. */
 	if (macos9_cache_post_bypass_active(url)) return 0;
 
 	err = cache_dir_get(&vRef, &dirID);
@@ -979,7 +1110,6 @@ int macos9_cache_lookup_hdrs(const char *url, char **body_out,
 	status_v = cache_read_be32(hdr + 8);
 	mime_len = cache_read_be32(hdr + 12);
 	body_len = cache_read_be32(hdr + 16);
-	/* fixes981 - 0 in a file written before the header block existed. */
 	hdrs_len = cache_read_be32(hdr + 20);
 	if (mime_len > 127 || body_len == 0 ||
 			body_len > MACSURF_CACHE_MAX_BYTES ||
@@ -1040,10 +1170,6 @@ int macos9_cache_lookup_hdrs(const char *url, char **body_out,
 		memcpy(hdrs_out, hdrs_buf, n);
 		hdrs_out[n] = '\0';
 	}
-	/* fixes984 - "LIFE " prefix; see the store line. hdrs=N on a HIT is the
-	 * half that was never observable: it is the proof that the persisted
-	 * freshness headers are actually being replayed to llcache, not merely
-	 * written to disk. */
 	macsurf_debug_log_writef(
 		"LIFE CACHE hit url=%s mime=%s len=%ld status=%d hdrs=%ld",
 		url, mime_buf, (long)body_len, (int)status_v, (long)hdrs_len);
@@ -1210,9 +1336,8 @@ long macos9_cache_clear_bodies(void)
 		pb.hFileInfo.ioDirID = dirID;
 		pb.hFileInfo.ioFDirIndex = idx;
 		err = PBGetCatInfoSync(&pb);
-		if (err != noErr) break;   /* no more entries */
+		if (err != noErr) break;
 
-		/* skip subdirectories and anything not a cache body ("h_...") */
 		if ((pb.hFileInfo.ioFlAttrib & 0x10) != 0 ||
 		    nm[0] < 2 || nm[1] != 'h' || nm[2] != '_') {
 			idx++;
@@ -1220,12 +1345,13 @@ long macos9_cache_clear_bodies(void)
 		}
 		if (FSMakeFSSpec(vRef, dirID, nm, &spec) == noErr &&
 		    FSpDelete(&spec) == noErr) {
-			deleted++;             /* keep idx: list compacted */
+			deleted++;
 		} else {
-			idx++;                 /* couldn't delete - skip past it */
+			idx++;
 		}
 	}
 	(void)FlushVol(NULL, vRef);
+	cache_total_reset();
 	macsurf_debug_log_writef("cache CLEAR-BODIES deleted=%ld files", deleted);
 	return deleted;
 #else
@@ -1247,11 +1373,6 @@ long macos9_cache_clear(void)
 
 	if (cache_dir_get(&vRef, &dirID) != noErr) return 0;
 
-	/* Enumerate by directory index. On a successful delete the directory
-	 * compacts, so the next entry slides into the same index - keep idx.
-	 * On a subdirectory or an undeletable entry, advance idx to skip it.
-	 * PBGetCatInfoSync returning an error means "no entry at this index" =
-	 * done. A safety cap bounds a pathological loop. */
 	idx = 1;
 	while (idx > 0 && deleted < 100000L) {
 		CInfoPBRec pb;
@@ -1266,20 +1387,21 @@ long macos9_cache_clear(void)
 		pb.hFileInfo.ioDirID = dirID;
 		pb.hFileInfo.ioFDirIndex = idx;
 		err = PBGetCatInfoSync(&pb);
-		if (err != noErr) break;   /* no more entries */
+		if (err != noErr) break;
 
 		if ((pb.hFileInfo.ioFlAttrib & 0x10) != 0) {
-			idx++;                 /* a subdirectory - skip it */
+			idx++;
 			continue;
 		}
 		if (FSMakeFSSpec(vRef, dirID, nm, &spec) == noErr &&
 		    FSpDelete(&spec) == noErr) {
-			deleted++;             /* keep idx: list compacted */
+			deleted++;
 		} else {
-			idx++;                 /* couldn't delete - skip past it */
+			idx++;
 		}
 	}
 	(void)FlushVol(NULL, vRef);
+	cache_total_reset();
 	macsurf_debug_log_writef("cache CLEAR deleted=%ld files", deleted);
 	return deleted;
 #else
@@ -1313,8 +1435,6 @@ long macos9_bookmarks_load(char *out_buf, long buf_cap)
 	if (out_buf == NULL || buf_cap <= 0) return 0;
 	out_buf[0] = '\0';
 
-	/* fixes647: bookmarks live at the MacSurfData ROOT, NOT under Cache/,
-	 * so clearing the cache never deletes them. */
 	err = macsurfdata_dir_get(NULL, &vRef, &dirID);
 	if (err != noErr) return 0;
 
@@ -1359,7 +1479,6 @@ void macos9_bookmarks_save(const char *buf, long len)
 
 	if (buf == NULL || len < 0) return;
 
-	/* fixes647: bookmarks live at the MacSurfData ROOT (see load). */
 	err = macsurfdata_dir_get(NULL, &vRef, &dirID);
 	if (err != noErr) return;
 
@@ -1535,12 +1654,6 @@ OSErr macos9_downloads_dir_get(short *vRef, long *dirID)
 extern int urldb_load_cookies(const char *filename);
 extern int urldb_save_cookies(const char *filename);
 
-/* fixes649: keep cookies inside MacSurfData too. urldb only takes a path and
- * uses MSL fopen, which resolves a bare leaf against the app dir (where the
- * cookie file used to land, next to the app). A LEADING-COLON path is HFS
- * "relative to that same default dir", so ":MacSurfData:MacSurf Cookies" drops
- * it into the MacSurfData folder instead - provided the folder exists, which
- * macos9_cookies_ensure_dir guarantees first. */
 #define MACSURF_COOKIE_FILE ":MacSurfData:MacSurf Cookies"
 #define MACSURF_COOKIE_LEAF  "MacSurf Cookies"
 
@@ -1554,15 +1667,8 @@ static void macos9_cookies_ensure_dir(void)
 }
 
 #ifdef __MACOS9__
-/* fixes838 (#167) - the full HFS path builder from window.c (proven to give
- * MSL fopen a path it honours; the file-upload multipart builder fopen()s
- * exactly such a path). */
 extern int macos9_fsspec_to_path(const FSSpec *spec, char *out, long cap);
 
-/* Build "Volume:...:MacSurfData:MacSurf Cookies" into out. 0 on success. The
- * ':MacSurfData:MacSurf Cookies' colon-relative path did NOT round-trip
- * through MSL fopen (jar was memory-only -> a fresh datr every launch -> FB
- * saw a new device every login). A full absolute path fixes it. */
 static int macos9_cookie_fullpath(char *out, long cap)
 {
 	short vRef;
@@ -1577,15 +1683,10 @@ static int macos9_cookie_fullpath(char *out, long cap)
 	fname[0] = (unsigned char)nlen;
 	memcpy(fname + 1, MACSURF_COOKIE_LEAF, nlen);
 	err = FSMakeFSSpec(vRef, dirID, fname, &spec);
-	/* fnfErr = file not created yet, but spec is valid for fopen("w"). */
 	if (err != noErr && err != fnfErr) return -1;
 	return macos9_fsspec_to_path(&spec, out, cap);
 }
 
-/* DIAGNOSTIC (fixes838): byte size of the on-disk cookie file via FSSpec -
- * independent of MSL fopen, so it reports the truth even if fopen is broken.
- * -1 = file absent / unopenable. This is how we SEE whether save wrote and
- * load had something to read. */
 static long macos9_cookie_file_bytes(void)
 {
 	short vRef;
