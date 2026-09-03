@@ -1,0 +1,39 @@
+name: Apply box tag classification optimization
+
+on:
+  push:
+    branches: [performance]
+    paths:
+      - '.github/workflows/perf-box-tag-classify-once.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: performance
+          fetch-depth: 0
+      - name: Apply source patch
+        shell: bash
+        run: |
+          python3 tools/apply_perf_box_tag_classify_once.py
+          git diff --check
+          bash tools/retro68_check.sh browser/netsurf/content/handlers/html/box_construct.c || test $? -eq 2
+      - name: Commit optimization
+        shell: bash
+        run: |
+          git config user.name "OpenAI Codex"
+          git config user.email "codex@openai.com"
+          git rm .github/workflows/perf-box-tag-classify-once.yml tools/apply_perf_box_tag_classify_once.py
+          git add browser/netsurf/content/handlers/html/box_construct.c
+          git commit -m "perf(box): classify element tags once" -m "Fetch each element tag name once for metadata/SVG classification, dispatch metadata candidates by length and first byte, and carry the SVG result forward instead of fetching/comparing the tag again later."
+          for n in 1 2 3; do
+            git fetch origin performance
+            git rebase origin/performance || { git rebase --abort; exit 1; }
+            if git push origin HEAD:performance; then exit 0; fi
+          done
+          exit 1
