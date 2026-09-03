@@ -130,6 +130,71 @@ static const struct macos9_ua_rule macos9_ua_rules[] = {
 	 */
 };
 
+/* Release-performance host policy cache. Both fetchers ask the same two
+ * questions for every resource: which UA applies, and is this host blocked?
+ * Heavy pages issue tens or hundreds of requests to a small set of origins;
+ * rescanning the UA table plus ~60 tracker suffixes for every one is wasted
+ * string work on a G3. A tiny direct-mapped process cache preserves the exact
+ * suffix-match semantics while reducing repeated-host lookups to one hash and
+ * one case-insensitive equality check. Oversize host strings bypass the cache
+ * and retain the old scan path. */
+#define MACOS9_HOST_POLICY_CACHE_SLOTS 16
+struct macos9_host_policy_cache_entry {
+	unsigned long hash;
+	size_t host_len;
+	char host[256];
+	const char *ua;
+	int ua_valid;
+	int tracker;
+	int tracker_valid;
+};
+static struct macos9_host_policy_cache_entry
+	macos9_host_policy_cache[MACOS9_HOST_POLICY_CACHE_SLOTS];
+
+static unsigned long
+macos9_host_hash_ci(const char *host, size_t len)
+{
+	unsigned long h;
+	size_t i;
+	unsigned char c;
+
+	h = 0x811c9dc5UL;
+	for (i = 0; i < len; i++) {
+		c = (unsigned char)host[i];
+		if (c >= (unsigned char)'A' && c <= (unsigned char)'Z')
+			c = (unsigned char)(c - (unsigned char)'A' + (unsigned char)'a');
+		h ^= (unsigned long)c;
+		h *= 0x01000193UL;
+	}
+	return h;
+}
+
+static struct macos9_host_policy_cache_entry *
+macos9_host_policy_get(const char *host, size_t len)
+{
+	struct macos9_host_policy_cache_entry *e;
+	unsigned long h;
+	unsigned long slot;
+
+	if (host == NULL || len >= sizeof(macos9_host_policy_cache[0].host))
+		return NULL;
+	h = macos9_host_hash_ci(host, len);
+	slot = h & (MACOS9_HOST_POLICY_CACHE_SLOTS - 1UL);
+	e = &macos9_host_policy_cache[slot];
+	if (e->hash != h || e->host_len != len ||
+	    strncasecmp(e->host, host, len) != 0 || e->host[len] != '\0') {
+		memcpy(e->host, host, len);
+		e->host[len] = '\0';
+		e->hash = h;
+		e->host_len = len;
+		e->ua = NULL;
+		e->ua_valid = 0;
+		e->tracker = 0;
+		e->tracker_valid = 0;
+	}
+	return e;
+}
+
 const char *macos9_user_agent_default(void)
 {
 	return MACOS9_UA_DEFAULT;
@@ -140,19 +205,32 @@ const char *macos9_user_agent_for_host(const char *host)
 	size_t hl;
 	size_t n;
 	size_t i;
+	struct macos9_host_policy_cache_entry *e;
+	const char *result;
+
 	if (host == NULL) return MACOS9_UA_DEFAULT;
 	hl = strlen(host);
+	e = macos9_host_policy_get(host, hl);
+	if (e != NULL && e->ua_valid) return e->ua;
+
+	result = MACOS9_UA_DEFAULT;
 	n = sizeof(macos9_ua_rules) / sizeof(macos9_ua_rules[0]);
 	for (i = 0; i < n; i++) {
-		size_t sl = strlen(macos9_ua_rules[i].suffix);
+		size_t sl;
+		sl = strlen(macos9_ua_rules[i].suffix);
 		if (hl >= sl &&
 		    strncasecmp(host + hl - sl,
 				macos9_ua_rules[i].suffix, sl) == 0 &&
 		    (hl == sl || host[hl - sl - 1] == '.')) {
-			return macos9_ua_rules[i].ua;
+			result = macos9_ua_rules[i].ua;
+			break;
 		}
 	}
-	return MACOS9_UA_DEFAULT;
+	if (e != NULL) {
+		e->ua = result;
+		e->ua_valid = 1;
+	}
+	return result;
 }
 
 /* fixes856 (#285)  -  tracker / ad-network / consent-platform host blocklist.
@@ -240,11 +318,19 @@ int macos9_host_is_tracker(const char *host)
 	size_t hl;
 	size_t n;
 	size_t i;
+	struct macos9_host_policy_cache_entry *e;
+	int result;
+
 	if (host == NULL) return 0;
 	hl = strlen(host);
+	e = macos9_host_policy_get(host, hl);
+	if (e != NULL && e->tracker_valid) return e->tracker;
+
+	result = 0;
 	n = sizeof(macos9_tracker_hosts) / sizeof(macos9_tracker_hosts[0]);
 	for (i = 0; i < n; i++) {
-		size_t sl = strlen(macos9_tracker_hosts[i]);
+		size_t sl;
+		sl = strlen(macos9_tracker_hosts[i]);
 		/* Dot-boundary suffix match, same spoof-guard as the UA table:
 		 * "doubleclick.net" matches ad.doubleclick.net but never
 		 * evildoubleclick.net. */
@@ -252,10 +338,15 @@ int macos9_host_is_tracker(const char *host)
 		    strncasecmp(host + hl - sl,
 				macos9_tracker_hosts[i], sl) == 0 &&
 		    (hl == sl || host[hl - sl - 1] == '.')) {
-			return 1;
+			result = 1;
+			break;
 		}
 	}
-	return 0;
+	if (e != NULL) {
+		e->tracker = result;
+		e->tracker_valid = 1;
+	}
+	return result;
 }
 
 /* fixes1328 (#167)  -  request-kind Accept selection.
@@ -283,26 +374,49 @@ int macos9_host_is_tracker(const char *host)
  * early and drops the remaining prose into the token stream. */
 static int macos9_path_is_image(const char *path)
 {
-	static const char *exts[] = {
-		".webp", ".png", ".jpg", ".jpeg", ".gif", ".bmp",
-		".ico", ".svg", ".tif", ".tiff"
-	};
 	size_t n;
-	size_t i;
 	size_t cut;
+	unsigned char a;
+	unsigned char b;
+	unsigned char c;
+	unsigned char d;
+
 	if (path == NULL) return 0;
-	/* Measure the path only, never the query or fragment: Facebook CDN
-	 * URLs carry .jpg/.webp before a long ?stp=... tail. */
+	/* Measure the path only, never the query or fragment. */
 	n = strlen(path);
 	for (cut = 0; cut < n; cut++) {
 		if (path[cut] == '?' || path[cut] == '#') break;
 	}
-	for (i = 0; i < sizeof exts / sizeof exts[0]; i++) {
-		size_t el = strlen(exts[i]);
-		if (cut >= el &&
-		    strncasecmp(path + cut - el, exts[i], el) == 0) {
-			return 1;
-		}
+
+	/* All supported image suffixes are three or four ASCII letters. Avoid
+	 * ten strlen + strncasecmp calls for every network request. */
+	if (cut >= 4 && path[cut - 4] == '.') {
+		a = (unsigned char)path[cut - 3];
+		b = (unsigned char)path[cut - 2];
+		c = (unsigned char)path[cut - 1];
+		if (a >= 'A' && a <= 'Z') a = (unsigned char)(a - 'A' + 'a');
+		if (b >= 'A' && b <= 'Z') b = (unsigned char)(b - 'A' + 'a');
+		if (c >= 'A' && c <= 'Z') c = (unsigned char)(c - 'A' + 'a');
+		if (a == 'p' && b == 'n' && c == 'g') return 1;
+		if (a == 'j' && b == 'p' && c == 'g') return 1;
+		if (a == 'g' && b == 'i' && c == 'f') return 1;
+		if (a == 'b' && b == 'm' && c == 'p') return 1;
+		if (a == 'i' && b == 'c' && c == 'o') return 1;
+		if (a == 's' && b == 'v' && c == 'g') return 1;
+		if (a == 't' && b == 'i' && c == 'f') return 1;
+	}
+	if (cut >= 5 && path[cut - 5] == '.') {
+		a = (unsigned char)path[cut - 4];
+		b = (unsigned char)path[cut - 3];
+		c = (unsigned char)path[cut - 2];
+		d = (unsigned char)path[cut - 1];
+		if (a >= 'A' && a <= 'Z') a = (unsigned char)(a - 'A' + 'a');
+		if (b >= 'A' && b <= 'Z') b = (unsigned char)(b - 'A' + 'a');
+		if (c >= 'A' && c <= 'Z') c = (unsigned char)(c - 'A' + 'a');
+		if (d >= 'A' && d <= 'Z') d = (unsigned char)(d - 'A' + 'a');
+		if (a == 'w' && b == 'e' && c == 'b' && d == 'p') return 1;
+		if (a == 'j' && b == 'p' && c == 'e' && d == 'g') return 1;
+		if (a == 't' && b == 'i' && c == 'f' && d == 'f') return 1;
 	}
 	return 0;
 }
@@ -323,12 +437,22 @@ int macos9_hdr_has_ci(const char *hay, const char *needle)
 	size_t nl;
 	size_t hl;
 	size_t i;
+	unsigned char first;
+	unsigned char hc;
+
 	if (hay == NULL || needle == NULL) return 0;
 	nl = strlen(needle);
 	if (nl == 0) return 0;
 	hl = strlen(hay);
 	if (hl < nl) return 0;
+	first = (unsigned char)needle[0];
+	if (first >= 'A' && first <= 'Z')
+		first = (unsigned char)(first - 'A' + 'a');
 	for (i = 0; i + nl <= hl; i++) {
+		hc = (unsigned char)hay[i];
+		if (hc >= 'A' && hc <= 'Z')
+			hc = (unsigned char)(hc - 'A' + 'a');
+		if (hc != first) continue;
 		if (strncasecmp(hay + i, needle, nl) == 0) return 1;
 	}
 	return 0;
@@ -355,35 +479,54 @@ int macos9_hdr_has_ci(const char *hay, const char *needle)
  * header that would overflow is skipped whole, never truncated. */
 void macos9_capture_extra_headers(const char **h, char *dst, size_t cap)
 {
-	static const char *const drop[] = {
-		"host:", "cookie:", "connection:", "keep-alive:",
-		"proxy-connection:", "transfer-encoding:", "te:",
-		"trailer:", "upgrade:", "content-length:", "content-type:",
-		"accept-encoding:", "user-agent:", "accept:",
-		"accept-language:"
+	struct macos9_drop_header {
+		const char *name;
+		size_t len;
 	};
-	size_t nd = sizeof(drop) / sizeof(drop[0]);
-	size_t used = 0;
+	static const struct macos9_drop_header drop[] = {
+		{ "host:", sizeof("host:") - 1 },
+		{ "cookie:", sizeof("cookie:") - 1 },
+		{ "connection:", sizeof("connection:") - 1 },
+		{ "keep-alive:", sizeof("keep-alive:") - 1 },
+		{ "proxy-connection:", sizeof("proxy-connection:") - 1 },
+		{ "transfer-encoding:", sizeof("transfer-encoding:") - 1 },
+		{ "te:", sizeof("te:") - 1 },
+		{ "trailer:", sizeof("trailer:") - 1 },
+		{ "upgrade:", sizeof("upgrade:") - 1 },
+		{ "content-length:", sizeof("content-length:") - 1 },
+		{ "content-type:", sizeof("content-type:") - 1 },
+		{ "accept-encoding:", sizeof("accept-encoding:") - 1 },
+		{ "user-agent:", sizeof("user-agent:") - 1 },
+		{ "accept:", sizeof("accept:") - 1 },
+		{ "accept-language:", sizeof("accept-language:") - 1 }
+	};
+	size_t nd;
+	size_t used;
 	int i;
+
+	nd = sizeof(drop) / sizeof(drop[0]);
+	used = 0;
 	if (dst == NULL || cap == 0) return;
 	dst[0] = '\0';
 	if (h == NULL) return;
 	for (i = 0; h[i] != NULL; i++) {
-		const char *line = h[i];
+		const char *line;
 		size_t ll;
 		size_t j;
-		int drop_it = 0;
+		int drop_it;
+
+		line = h[i];
+		drop_it = 0;
 		if (line[0] == '\0') continue;
 		for (j = 0; j < nd; j++) {
-			size_t dl = strlen(drop[j]);
-			if (strncasecmp(line, drop[j], dl) == 0) {
+			if (strncasecmp(line, drop[j].name, drop[j].len) == 0) {
 				drop_it = 1;
 				break;
 			}
 		}
 		if (drop_it) continue;
 		ll = strlen(line);
-		if (used + ll + 3 > cap) continue;   /* +CRLF +NUL; skip whole */
+		if (used + ll + 3 > cap) continue;
 		memcpy(dst + used, line, ll);
 		used += ll;
 		dst[used++] = '\r';
@@ -448,7 +591,8 @@ macos9_strip_html(const char *src, long src_len,
 	tag_name[0] = '\0';
 
 	while (si < src_len && di < dst_cap - 1) {
-		char c = src[si];
+		char c;
+		c = src[si];
 
 		if (in_tag) {
 			if (c == '>') {
@@ -608,11 +752,7 @@ macos9_word_wrap(const char *text, long text_len,
 
 		if (width >= max_chars_per_line) {
 			long break_at;
-			if (last_space > line_start) {
-				break_at = last_space;
-			} else {
-				break_at = i;
-			}
+			break_at = (last_space > line_start) ? last_space : i;
 			line_offsets[count] = line_start;
 			line_lengths[count] = (short)(break_at - line_start);
 			count++;
@@ -645,18 +785,22 @@ macos9_word_wrap(const char *text, long text_len,
 void macos9_build_cookie_header(char *cookie_hdr, size_t cap,
 		const char *cookie_str)
 {
+	size_t cl;
+
+	if (cookie_hdr == NULL || cap == 0) return;
 	cookie_hdr[0] = '\0';
-	if (cookie_str != NULL) {
-		size_t cl = strlen(cookie_str);
-		if (cl > 0 && cl + 11 <= cap) {
-			strcpy(cookie_hdr, "Cookie: ");
-			strcat(cookie_hdr, cookie_str);
-			strcat(cookie_hdr, "\r\n");
-		} else if (cl > 0) {
-			macsurf_debug_log_writef(
-				"cookie hdr too big cl=%ld cap=%ld",
-				(long)cl, (long)cap);
-		}
+	if (cookie_str == NULL) return;
+	cl = strlen(cookie_str);
+	if (cl > 0 && cl + 11 <= cap) {
+		memcpy(cookie_hdr, "Cookie: ", 8);
+		memcpy(cookie_hdr + 8, cookie_str, cl);
+		cookie_hdr[8 + cl] = '\r';
+		cookie_hdr[9 + cl] = '\n';
+		cookie_hdr[10 + cl] = '\0';
+	} else if (cl > 0) {
+		macsurf_debug_log_writef(
+			"cookie hdr too big cl=%ld cap=%ld",
+			(long)cl, (long)cap);
 	}
 }
 
@@ -664,36 +808,57 @@ void macos9_build_sec_fetch(char *synth, size_t cap,
 		int verifiable, int is_post,
 		const char *scheme, const char *host)
 {
-	synth[0] = '\0';
+	const char *base;
+	size_t bl;
+	size_t used;
+	size_t scheme_len;
+	size_t host_len;
+	char *p;
+
+	if (synth == NULL || cap == 0) return;
 	if (verifiable && is_post) {
-		snprintf(synth, cap,
+		base =
 			"Sec-Fetch-Dest: document\r\n"
 			"Sec-Fetch-Mode: navigate\r\n"
 			"Sec-Fetch-Site: same-origin\r\n"
 			"Sec-Fetch-User: ?1\r\n"
-			"Upgrade-Insecure-Requests: 1\r\n");
+			"Upgrade-Insecure-Requests: 1\r\n";
 	} else if (verifiable) {
-		snprintf(synth, cap,
+		base =
 			"Sec-Fetch-Dest: document\r\n"
 			"Sec-Fetch-Mode: navigate\r\n"
 			"Sec-Fetch-Site: none\r\n"
 			"Sec-Fetch-User: ?1\r\n"
-			"Upgrade-Insecure-Requests: 1\r\n");
+			"Upgrade-Insecure-Requests: 1\r\n";
 	} else {
-		snprintf(synth, cap,
+		base =
 			"Sec-Fetch-Dest: empty\r\n"
 			"Sec-Fetch-Mode: no-cors\r\n"
-			"Sec-Fetch-Site: same-origin\r\n");
+			"Sec-Fetch-Site: same-origin\r\n";
 	}
-	/* Append Origin: if needed and there's room */
+	bl = strlen(base);
+	if (bl >= cap) {
+		memcpy(synth, base, cap - 1);
+		synth[cap - 1] = '\0';
+		return;
+	}
+	memcpy(synth, base, bl + 1);
+
+	/* Append Origin without invoking printf formatting on every POST. */
 	if (is_post && host != NULL && scheme != NULL) {
-		char   org[320];
-		size_t sl;
-		size_t ol;
-		snprintf(org, sizeof org, "Origin: %s://%s\r\n", scheme, host);
-		sl = strlen(synth);
-		ol = strlen(org);
-		if (sl + ol < cap) strcat(synth, org);
+		used = bl;
+		scheme_len = strlen(scheme);
+		host_len = strlen(host);
+		if (used + 8 + scheme_len + 3 + host_len + 2 < cap) {
+			p = synth + used;
+			memcpy(p, "Origin: ", 8); p += 8;
+			memcpy(p, scheme, scheme_len); p += scheme_len;
+			memcpy(p, "://", 3); p += 3;
+			memcpy(p, host, host_len); p += host_len;
+			*p++ = '\r';
+			*p++ = '\n';
+			*p = '\0';
+		}
 	}
 }
 
@@ -723,16 +888,21 @@ struct gui_fetch_table macos9_fetch_table = {
 static int macos9_mp_append(char **buf, long *len, long *cap,
 		const char *src, long add)
 {
+	long ncap;
+	char *nb;
+
 	if (add <= 0) return 0;
-	if (*len + add > *cap) {
-		long ncap = (*cap == 0) ? 8192L : *cap;
-		char *nb;
-		while (ncap < *len + add) ncap *= 2L;
-		nb = (char *)realloc(*buf, (size_t)ncap);
-		if (nb == NULL) return -1;
-		*buf = nb;
-		*cap = ncap;
+	if (*len + add <= *cap) {
+		memcpy(*buf + *len, src, (size_t)add);
+		*len += add;
+		return 0;
 	}
+	ncap = (*cap == 0) ? 8192L : *cap;
+	while (ncap < *len + add) ncap *= 2L;
+	nb = (char *)realloc(*buf, (size_t)ncap);
+	if (nb == NULL) return -1;
+	*buf = nb;
+	*cap = ncap;
 	memcpy(*buf + *len, src, (size_t)add);
 	*len += add;
 	return 0;
@@ -742,13 +912,17 @@ char *macos9_build_multipart(const struct fetch_multipart_data *pm,
 		char *boundary_out, long *out_len)
 {
 	static unsigned long mp_ctr = 0UL;
-	char *body = NULL;
-	long  len = 0L, cap = 0L;
-	char  hdr[4096];
-	char  boundary[64];
+	char *body;
+	long len;
+	long cap;
+	char hdr[4096];
+	char boundary[64];
 	const struct fetch_multipart_data *n;
-	int   hl;
+	int hl;
 
+	body = NULL;
+	len = 0L;
+	cap = 0L;
 	*out_len = 0L;
 	mp_ctr++;
 	sprintf(boundary, "----------MacSurfFormBoundary4D53%lu", mp_ctr);
@@ -772,7 +946,8 @@ char *macos9_build_multipart(const struct fetch_multipart_data *pm,
 			goto fail;
 
 		if (n->file) {
-			FILE *f = fopen((n->rawfile != NULL) ? n->rawfile : "", "rb");
+			FILE *f;
+			f = fopen((n->rawfile != NULL) ? n->rawfile : "", "rb");
 			if (f != NULL) {
 				char rb[4096];
 				size_t got;
@@ -814,9 +989,12 @@ fail:
  * Returns pointer to the start of the line, or NULL if no complete line. */
 char *macos9_find_line(char **buf, long *len)
 {
-	char *p = *buf;
-	long  n = *len;
-	long  i;
+	char *p;
+	long n;
+	long i;
+
+	p = *buf;
+	n = *len;
 	for (i = 0; i + 1 < n; i++) {
 		if (p[i] == '\r' && p[i+1] == '\n') {
 			p[i] = 0;
