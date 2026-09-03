@@ -133,9 +133,25 @@ macos9_utf8_to_macroman(const char *utf8, size_t len, char *mac_out, size_t max_
         size_t i = 0;
 
         while (i < len && out_len < max_out) {
-                size_t char_len = utf8_char_byte_length(utf8 + i);
+                size_t char_len;
                 uint32_t ucs4;
 
+                /* ASCII dominates normal web text. Copy a whole ASCII run
+                 * directly instead of calling the UTF-8 length/decoder helpers
+                 * once per byte. Semantics are identical for all 0x00..0x7f. */
+                if ((unsigned char)utf8[i] < 0x80) {
+                        size_t start = i;
+                        size_t room = max_out - out_len;
+                        while (i < len && i - start < room &&
+                               (unsigned char)utf8[i] < 0x80) {
+                                i++;
+                        }
+                        memcpy(mac_out + out_len, utf8 + start, i - start);
+                        out_len += i - start;
+                        continue;
+                }
+
+                char_len = utf8_char_byte_length(utf8 + i);
                 if (char_len == 0 || i + char_len > len) {
                         mac_out[out_len++] = '?';
                         i++;
@@ -571,6 +587,7 @@ macos9_font_position(const struct plot_font_style *fstyle,
                 size_t mac_i = 0;
                 int char_sum = 0;
                 int spaces = 0;
+                int need_char_sum;
                 static short char_locs[4097];
                 int wf;
 
@@ -623,6 +640,12 @@ macos9_font_position(const struct plot_font_style *fstyle,
                 if (mac_len > 0)
                         MeasureText((short)mac_len, mac_str, char_locs);
 
+                need_char_sum = ((face & 1) != 0 ||
+                        (size < 12 && font_id != kFontIDMonaco) ||
+                        (fstyle != NULL &&
+                         (fstyle->letter_spacing != 0 ||
+                          fstyle->word_spacing != 0)));
+
                 while (i < length) {
                         size_t next_i = utf8_next(string, length, i);
                         size_t delta = 0;
@@ -645,24 +668,34 @@ macos9_font_position(const struct plot_font_style *fstyle,
                                  * rare boundaries; complexity is O(n + shy). */
                                 w = macos9_font_measure(fstyle, string, next_i);
                         } else {
-                                char one_mac[4];
-                                delta = macos9_utf8_to_macroman(string + i,
-                                                               next_i - i,
-                                                               one_mac,
-                                                               sizeof(one_mac));
+                                if ((unsigned char)string[i] < 0x80) {
+                                        delta = 1;
+                                } else {
+                                        char one_mac[4];
+                                        delta = macos9_utf8_to_macroman(
+                                                string + i, next_i - i,
+                                                one_mac, sizeof(one_mac));
+                                }
                                 target_mac_i = mac_i + delta;
                                 if (target_mac_i > mac_len)
                                         target_mac_i = mac_len;
 
-                                while (mac_i < target_mac_i) {
-                                        char_sum += (int)CharWidth(mac_str[mac_i]);
-                                        if (mac_str[mac_i] == ' ')
-                                                spaces++;
-                                        mac_i++;
+                                if (!need_char_sum) {
+                                        mac_i = target_mac_i;
+                                } else {
+                                        while (mac_i < target_mac_i) {
+                                                char_sum += (int)CharWidth(
+                                                        mac_str[mac_i]);
+                                                if (mac_str[mac_i] == ' ')
+                                                        spaces++;
+                                                mac_i++;
+                                        }
                                 }
 
                                 if (mac_i == 0) {
                                         w = 0;
+                                } else if (!need_char_sum) {
+                                        w = (int)char_locs[mac_i];
                                 } else {
                                         int eff_ls;
                                         int eff_ws;
