@@ -22,7 +22,7 @@ jobs:
         run: |
           python3 tools/apply_perf_font_position_once.py
           git diff --check
-          tools/retro68_check.sh browser/netsurf/frontends/macos9/macos9_font.c || test $? -eq 2
+          bash tools/retro68_check.sh browser/netsurf/frontends/macos9/macos9_font.c || test $? -eq 2
       - name: Commit optimization
         shell: bash
         run: |
