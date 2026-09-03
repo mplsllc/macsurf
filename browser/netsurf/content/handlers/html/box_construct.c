@@ -860,8 +860,9 @@ box_construct_generate(struct box_construct_ctx *ctx,
 		return;
 	}
 
-	/* create box for this element */
-	computed_display = ns_computed_display(style, box_is_root(n));
+	/* The owning box already identifies the document root. Avoid a DOM
+	 * parent/type probe for generated content and compute display once. */
+	computed_display = ns_computed_display(style, ctx->root_box == box);
 	if (computed_display == CSS_DISPLAY_BLOCK ||
 			computed_display == CSS_DISPLAY_TABLE) {
 		/* currently only support block level boxes */
@@ -873,9 +874,8 @@ box_construct_generate(struct box_construct_ctx *ctx,
 			return;
 		}
 
-		/* set box type from computed display */
-		gen->type = box_map[ns_computed_display(
-				style, box_is_root(n))];
+		/* set box type from the display value already resolved above */
+		gen->type = box_map[computed_display];
 
 		box_add_child(box, gen);
 
