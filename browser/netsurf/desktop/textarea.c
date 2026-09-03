@@ -54,6 +54,7 @@ struct line_info {
 	unsigned int b_start;		/**< Byte offset of line start */
 	unsigned int b_length;		/**< Byte length of line */
 	int width;			/**< Width in pixels of line */
+	int prefix_max_width;		/**< Max width through this line */
 };
 struct textarea_drag {
 	textarea_drag_type type;
@@ -1003,18 +1004,13 @@ static bool textarea_reflow_multiline(struct textarea *ta,
 		text = ta->text.data;
 
 		if (line != 0) {
-			/* Not starting at the beginning of the textarea, so
-			 * jump forward, and make sure the horizontal extents
-			 * accommodate the width of the skipped lines. */
-			unsigned int i;
+			/* Not starting at the beginning of the textarea. The prefix
+			 * maximum is maintained as lines are written, so recovering the
+			 * unchanged prefix extent is O(1), not a scan from line zero. */
 			len -= ta->lines[line].b_start;
 			text += ta->lines[line].b_start;
-
-			for (i = 0; i < line; i++) {
-				if (ta->lines[i].width > h_extent) {
-					h_extent = ta->lines[i].width;
-				}
-			}
+			if (ta->lines[line - 1].prefix_max_width > h_extent)
+				h_extent = ta->lines[line - 1].prefix_max_width;
 		}
 
 		if (ta->text.len == 1) {
@@ -1022,7 +1018,10 @@ static bool textarea_reflow_multiline(struct textarea *ta,
 			assert(ta->text.data[0] == '\0');
 			ta->lines[line].b_start = 0;
 			ta->lines[line].b_length = 0;
-			ta->lines[line++].width = 0;
+			ta->lines[line].width = 0;
+			ta->lines[line].prefix_max_width =
+				(line == 0) ? 0 : ta->lines[line - 1].prefix_max_width;
+			line++;
 			ta->line_count = 1;
 		}
 
@@ -1090,7 +1089,11 @@ static bool textarea_reflow_multiline(struct textarea *ta,
 				 * have a newline char */
 				ta->lines[line].b_start = text - ta->text.data;
 				ta->lines[line].b_length = para_end - text;
-				ta->lines[line++].width = x;
+				ta->lines[line].width = x;
+				ta->lines[line].prefix_max_width =
+					(line == 0 || x > ta->lines[line - 1].prefix_max_width) ?
+					x : ta->lines[line - 1].prefix_max_width;
+				line++;
 
 				/* Jump newline */
 				b_off++;
@@ -1101,7 +1104,11 @@ static bool textarea_reflow_multiline(struct textarea *ta,
 					ta->lines[line].b_start = text +
 							b_off - ta->text.data;
 					ta->lines[line].b_length = 0;
-					ta->lines[line++].width = x;
+					ta->lines[line].width = x;
+					ta->lines[line].prefix_max_width =
+						(line == 0 || x > ta->lines[line - 1].prefix_max_width) ?
+						x : ta->lines[line - 1].prefix_max_width;
+					line++;
 				}
 
 				if (line > scroll_lines && ta->bar_y == NULL)
@@ -1123,7 +1130,11 @@ static bool textarea_reflow_multiline(struct textarea *ta,
 
 			ta->lines[line].b_start = text - ta->text.data;
 			ta->lines[line].b_length = b_off;
-			ta->lines[line++].width = x;
+			ta->lines[line].width = x;
+			ta->lines[line].prefix_max_width =
+				(line == 0 || x > ta->lines[line - 1].prefix_max_width) ?
+				x : ta->lines[line - 1].prefix_max_width;
+			line++;
 
 			if (line > scroll_lines && ta->bar_y == NULL)
 				break;
