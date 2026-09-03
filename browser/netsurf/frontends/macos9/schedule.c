@@ -112,43 +112,18 @@ sched_entry_free(struct sched_entry *e)
 }
 
 /*
- * fixes584  -  scheduler freeze-proofing.
+ * fixes584 - scheduler freeze-proofing.
  *
- * The sched_queue is a plain singly-linked list. If memory corruption (the
- * open UAF family) ever writes a ->next that points back into the list, EVERY
- * walk of the queue (sched_remove, the time-sorted insert in macos9_schedule,
- * the drain in macos9_schedule_run) spins forever and the whole cooperative
- * event loop hard-freezes with no crash  -  exactly the tinkerdifferent symptom
- * (frozen, blank, 'evloop: hb' stops while 'qjs: interrupt hb' never fires;
- * the last log line is inside macos9_schedule_unpause -> macos9_schedule).
- *
- * A scheduler must never be able to infinite-loop, regardless of what
- * corrupted it. sched_queue_is_cyclic() walks at most a hard bound (well above
- * any legitimate queue length: the pool caps concurrent entries at
- * MACOS9_SCHED_POOL_SIZE) and reports a cycle. sched_hard_reset() abandons the
- * corrupted queue and rebuilds the free-list to pristine  -  the current caller
- * then proceeds on a clean queue, so the in-flight callback (e.g. the deferred
- * parser unpause) is still scheduled and the page load can continue past the
- * corruption instead of wedging the machine.
+ * The queue is a plain singly-linked list. A corrupted ->next must never turn
+ * a defensive walk into an infinite loop. MACOS9_SCHED_WALK_MAX bounds every
+ * full queue walk; the hot scheduler paths do cycle detection while doing the
+ * useful search/removal/insertion rather than making a separate O(n) guard
+ * pass first. This keeps the corruption recovery guarantee without paying an
+ * extra list traversal on every schedule call and every event-loop tick.
  */
 #define MACOS9_SCHED_WALK_MAX (MACOS9_SCHED_POOL_SIZE + 64)
-/* Per-tick callback dispatch ceiling  -  far above any legitimate burst. */
+/* Per-tick callback dispatch ceiling - far above any legitimate burst. */
 #define MACOS9_SCHED_DRAIN_MAX 8192
-
-static int
-sched_queue_is_cyclic(void)
-{
-	struct sched_entry *e = sched_queue;
-	int n = 0;
-
-	while (e != NULL) {
-		if (++n > MACOS9_SCHED_WALK_MAX) {
-			return 1;
-		}
-		e = e->next;
-	}
-	return 0;
-}
 
 static void
 sched_hard_reset(void)
@@ -171,20 +146,11 @@ sched_hard_reset(void)
 		"sched: QUEUE CORRUPT (cycle) - hard reset, pending callbacks dropped");
 }
 
-/* Detect-and-recover guard, called before any sched_queue walk. */
-static void
-sched_guard(void)
-{
-	if (sched_queue_is_cyclic()) {
-		sched_hard_reset();
-	}
-}
-
 /**
  * Get current tick count.
  *
  * On Mac OS 9, TickCount() returns the number of ticks (1/60s) since
- * system boot  -  a monotonic timer suitable for scheduling.
+ * system boot - a monotonic timer suitable for scheduling.
  */
 static unsigned long
 macos9_get_ticks(void)
@@ -194,29 +160,6 @@ macos9_get_ticks(void)
 #else
 	return stub_ticks;
 #endif
-}
-
-/**
- * Remove any queued entry matching callback+p.
- *
- * There can only be one entry per callback+param pair, since
- * macos9_schedule() removes duplicates before inserting.
- */
-static void
-sched_remove(void (*callback)(void *p), void *p)
-{
-	struct sched_entry **prev = &sched_queue;
-	struct sched_entry *entry;
-
-	while (*prev != NULL) {
-		entry = *prev;
-		if (entry->callback == callback && entry->p == p) {
-			*prev = entry->next;
-			sched_entry_free(entry);
-			return;
-		}
-		prev = &entry->next;
-	}
 }
 
 /**
@@ -240,11 +183,11 @@ sched_update_state(void)
  * guit->misc->schedule(delay, fn, ctx) entry whose ctx was freed before
  * fn fired (box conversion, deferred parser unpause, object refresh, ...).
  * Cancelling one callback at a time (schedule(-1, fn, ctx)) requires the
- * teardown code to know every fn that might be queued for that object  - 
+ * teardown code to know every fn that might be queued for that object -
  * and it never does, which is why the crashes keep reappearing at new
- * sites.  This removes EVERY queued entry whose ->p matches, regardless of
- * callback.  Call it once from the object's destroy path and no scheduled
- * callback can ever fire against the freed object again  -  including
+ * sites. This removes EVERY queued entry whose ->p matches, regardless of
+ * callback. Call it once from the object's destroy path and no scheduled
+ * callback can ever fire against the freed object again - including
  * callbacks added by future code, as long as they pass the object as p.
  *
  * Safe to call from inside a running callback: macos9_schedule_run() has
@@ -257,18 +200,18 @@ macos9_schedule_cancel_owner(void *p)
 	struct sched_entry **prev = &sched_queue;
 	struct sched_entry *entry;
 	int removed = 0;
-
-	/* fixes584  -  never walk a cyclic queue (freeze-proof). */
-	sched_guard();
+	int walked = 0;
 
 	while (*prev != NULL) {
+		if (++walked > MACOS9_SCHED_WALK_MAX) {
+			sched_hard_reset();
+			return;
+		}
 		entry = *prev;
 		if (entry->p == p) {
 			*prev = entry->next;
-			/* fixes584  -  MUST use sched_entry_free (pool-aware); a
-			 * plain free() on a pool slot (static array address)
-			 * corrupts the Memory Manager arena and is itself a
-			 * prime suspect for the very cycle this guards against. */
+			/* MUST use sched_entry_free (pool-aware); a plain free() on a
+			 * pool slot corrupts the Memory Manager arena. */
 			sched_entry_free(entry);
 			removed++;
 		} else {
@@ -289,26 +232,67 @@ nserror
 macos9_schedule(int t, void (*callback)(void *p), void *p)
 {
 	struct sched_entry *entry;
+	struct sched_entry *cur;
 	struct sched_entry **queue;
+	struct sched_entry **insert_at;
 	unsigned long now;
 	unsigned long due;
+	int walked;
 
-	/* fixes584  -  never walk a cyclic queue (freeze-proof). */
-	sched_guard();
-
-	/* Always remove any existing entry for this callback+param */
-	sched_remove(callback, p);
-
-	/* Negative t means cancel only */
+	/* Cancellation is one bounded pass. The old path first performed a full
+	 * corruption-guard walk and then a second removal walk. */
 	if (t < 0) {
+		queue = &sched_queue;
+		walked = 0;
+		while (*queue != NULL) {
+			if (++walked > MACOS9_SCHED_WALK_MAX) {
+				sched_hard_reset();
+				return NSERROR_OK;
+			}
+			cur = *queue;
+			if (cur->callback == callback && cur->p == p) {
+				*queue = cur->next;
+				sched_entry_free(cur);
+				break;
+			}
+			queue = &cur->next;
+		}
 		sched_update_state();
 		return NSERROR_OK;
 	}
 
 	now = macos9_get_ticks();
 
-	/* Convert ms to ticks: 1 tick = 1/60s ≈ 16.67ms */
+	/* Convert ms to ticks: 1 tick = 1/60s ~= 16.67ms */
 	due = now + ((unsigned long)t * 60 / 1000);
+
+	/* One bounded queue pass does all three jobs that previously needed
+	 * separate traversals: corruption detection, duplicate removal and
+	 * locating the sorted insertion point. */
+	queue = &sched_queue;
+	insert_at = NULL;
+	walked = 0;
+	while (*queue != NULL) {
+		if (++walked > MACOS9_SCHED_WALK_MAX) {
+			sched_hard_reset();
+			queue = &sched_queue;
+			insert_at = queue;
+			break;
+		}
+		cur = *queue;
+		if (insert_at == NULL && cur->time > due) {
+			insert_at = queue;
+		}
+		if (cur->callback == callback && cur->p == p) {
+			*queue = cur->next;
+			sched_entry_free(cur);
+			continue;
+		}
+		queue = &cur->next;
+	}
+	if (insert_at == NULL) {
+		insert_at = queue;
+	}
 
 	entry = sched_entry_alloc();
 	if (entry == NULL) {
@@ -319,29 +303,27 @@ macos9_schedule(int t, void (*callback)(void *p), void *p)
 	entry->time = due;
 	entry->callback = callback;
 	entry->p = p;
-
-	/* Insert in time-sorted order */
-	queue = &sched_queue;
-	while (*queue != NULL && (*queue)->time <= due) {
-		queue = &(*queue)->next;
-	}
-	entry->next = *queue;
-	*queue = entry;
+	entry->next = *insert_at;
+	*insert_at = entry;
 
 	sched_update_state();
 
 	return NSERROR_OK;
 }
 
-/* fixes1148  -  check whether a (callback, p) pair is already queued,
+/* fixes1148 - check whether a (callback, p) pair is already queued,
  * without modifying the queue. Used by the reconvert path to avoid
- * rescheduling on every DOM mutation when the callback is already
- * pending. */
+ * rescheduling on every DOM mutation when the callback is already pending. */
 int macos9_sched_is_queued(void (*callback)(void *p), void *p)
 {
 	struct sched_entry *entry;
+	int walked = 0;
 
 	for (entry = sched_queue; entry != NULL; entry = entry->next) {
+		if (++walked > MACOS9_SCHED_WALK_MAX) {
+			sched_hard_reset();
+			return 0;
+		}
 		if (entry->callback == callback && entry->p == p)
 			return 1;
 	}
@@ -362,15 +344,15 @@ macos9_schedule_run(void)
 	 * any more callbacks after macos9_quitting is set. */
 	if (macos9_quitting) return false;
 
-	/* fixes584  -  never drain a cyclic queue (freeze-proof). */
-	sched_guard();
-
+	/* Do not pre-walk the whole queue here. schedule_run is called every
+	 * event-loop turn; the head check below is O(1), and if a corrupt cycle
+	 * ever becomes runnable the existing dispatch ceiling hard-resets it.
+	 * Bounded full walks in schedule/cancel/is_queued catch corruption while
+	 * doing useful work instead of charging every idle loop pass. */
 	now = macos9_get_ticks();
 
-	/* fixes584  -  belt-and-suspenders: a callback could corrupt the queue
-	 * into a cycle mid-drain (after the entry guard ran). Cap the number of
-	 * callbacks dispatched per tick far above any legitimate burst; if the
-	 * cap is hit, reset and bail rather than spin the machine. */
+	/* Belt-and-suspenders: a callback could corrupt the queue into a cycle
+	 * mid-drain. Cap dispatch per tick far above any legitimate burst. */
 	drained = 0;
 	while (sched_queue != NULL && sched_queue->time <= now) {
 		if (++drained > MACOS9_SCHED_DRAIN_MAX) {
@@ -382,19 +364,12 @@ macos9_schedule_run(void)
 		p = entry->p;
 		sched_queue = entry->next;
 		/* fixes446d: entry is already removed from the queue above,
-		 * so re-scheduling the same callback inside callback() calls
-		 * sched_remove() as a no-op - delayed free is safe.
-		 * MUST free AFTER callback: struct sched_entry (16 bytes,
-		 * callback at offset 4) is the same size and layout as
-		 * dom_string_internal. free-before-callback let malloc return
-		 * entry's memory for a new dom_string_internal, aliasing
-		 * entry->callback with data.cdata.ptr.  dom_string_intern then
-		 * called lwc_intern_string(draw_url_bar, gui_window_ptr) which
-		 * scanned megabytes of code into unmapped memory and crashed. */
-		/* Stage 1: a scheduled callback (convert_xml_to_box,
-		 * hlcache_clean, reformat, JS timers...) is engine work; mark
-		 * the operation depth non-zero so the death-row drain cannot
-		 * free anything while this callback is on the stack. */
+		 * so re-scheduling the same callback inside callback() cannot alias
+		 * this entry. MUST free AFTER callback: sched_entry is the same size
+		 * and layout as dom_string_internal, and free-before-callback let a
+		 * new dom_string reuse the block while callback/p were still live. */
+		/* Stage 1: a scheduled callback is engine work; mark operation depth
+		 * non-zero so the death-row drain cannot free while it is on stack. */
 		macos9_op_depth++;
 		callback(p);
 		macos9_op_depth--;
@@ -438,8 +413,13 @@ macos9_sched_any(bool (*pred)(void (*cb)(void *), void *p, void *arg),
 		void *arg)
 {
 	struct sched_entry *e;
+	int walked = 0;
 
 	for (e = sched_queue; e != NULL; e = e->next) {
+		if (++walked > MACOS9_SCHED_WALK_MAX) {
+			sched_hard_reset();
+			return false;
+		}
 		if (pred(e->callback, e->p, arg)) {
 			return true;
 		}
