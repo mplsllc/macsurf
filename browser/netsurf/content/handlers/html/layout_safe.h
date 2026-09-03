@@ -192,14 +192,15 @@ extern void macsurf_layout_breadcrumb(const char *phase, const void *box);
 /**
  * Watchdog gate at the entry of every recursive layout function.
  *
- * The watchdog currently has no active depth or iteration limit, so callers
- * always proceed. Keep the call counter because end-of-pass profiling uses it;
- * depth itself is not read by any layout decision while the cap is disabled.
+ * The watchdog currently has no active depth or iteration limit, so this is a
+ * true pass-through. The old call counter was diagnostic-only and wrote a
+ * global long on every recursive layout entry; heavy pages can execute this
+ * path millions of times per reformat, so keeping that write in release builds
+ * was measurable work with no effect on layout decisions.
  */
 static int layout_watchdog_enter(const void *box)
 {
 	(void)box;
-	macsurf_layout_calls++;
 	return 0;
 }
 
