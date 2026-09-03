@@ -1967,23 +1967,23 @@ next_node(struct box_construct_ctx *ctx, dom_node *n,
 		html_content *content, bool convert_children)
 {
 	dom_node *next = NULL;
-	bool has_children;
 	dom_exception err;
 
-	err = dom_node_has_child_nodes(n, &has_children);
-	if (err != DOM_NO_ERR) {
-		dom_node_unref(n);
-		return NULL;
-	}
-
-	if (convert_children && has_children) {
+	/* get_first_child already returns NULL when there is no child. Avoid a
+	 * separate dom_node_has_child_nodes dispatch on every traversal step. */
+	if (convert_children) {
 		err = dom_node_get_first_child(n, &next);
 		if (err != DOM_NO_ERR) {
 			dom_node_unref(n);
 			return NULL;
 		}
-		dom_node_unref(n);
-	} else {
+		if (next != NULL) {
+			dom_node_unref(n);
+			return next;
+		}
+	}
+
+	{
 		err = dom_node_get_next_sibling(n, &next);
 		if (err != DOM_NO_ERR) {
 			dom_node_unref(n);
