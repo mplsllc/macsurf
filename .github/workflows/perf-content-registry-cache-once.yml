@@ -1,0 +1,35 @@
+name: Apply content registry lookup cache
+
+on:
+  push:
+    branches: [performance]
+    paths:
+      - '.github/workflows/perf-content-registry-cache-once.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: performance
+          fetch-depth: 0
+      - name: Apply source patch
+        shell: bash
+        run: |
+          python3 tools/apply_perf_content_registry_cache_once.py
+          git diff --check
+          bash tools/retro68_check.sh browser/netsurf/frontends/macos9/macos9_content_registry.c || test $? -eq 2
+      - name: Commit optimization
+        shell: bash
+        run: |
+          git config user.name "OpenAI Codex"
+          git config user.email "codex@openai.com"
+          git rm .github/workflows/perf-content-registry-cache-once.yml tools/apply_perf_content_registry_cache_once.py
+          git add browser/netsurf/frontends/macos9/macos9_content_registry.c
+          git commit -m "perf(content): cache live-registry lookups" -m "Use an epoch-tagged 8-slot direct cache inside macos9_content_find. Repeated liveness/token checks for the same content become O(1) while every register/unregister epoch change invalidates cached answers automatically."
+          git pull --rebase origin performance
+          git push origin HEAD:performance
