@@ -4,7 +4,6 @@ p = Path('browser/netsurf/content/handlers/html/box_construct.c')
 s = p.read_text()
 start = s.index('static void\nbox_extract_properties(dom_node *n, struct box_construct_props *props)\n{')
 end = s.index('\n\n\n/**\n * Get the style for an element.', start)
-old = s[start:end]
 new = r'''static void
 box_extract_properties(dom_node *n, struct box_construct_props *props)
 {
@@ -13,6 +12,7 @@ box_extract_properties(dom_node *n, struct box_construct_props *props)
 	struct box *b;
 	dom_exception err;
 	int first_parent;
+	int have_parent_box;
 
 	memset(props, 0, sizeof(*props));
 
@@ -23,6 +23,7 @@ box_extract_properties(dom_node *n, struct box_construct_props *props)
 	current_node = n;
 	parent_node = NULL;
 	first_parent = 1;
+	have_parent_box = 0;
 
 	while (true) {
 		dom_node_type parent_type;
@@ -55,13 +56,14 @@ box_extract_properties(dom_node *n, struct box_construct_props *props)
 
 		b = box_for_node(parent_node);
 		if (b != NULL) {
-			if (props->parent_style == NULL) {
+			if (!have_parent_box) {
 				props->parent_style = b->style;
 				props->parent_custom_env = b->custom_env;
 				props->href = b->href;
 				props->target = b->target;
 				props->download = (b->flags & LINK_DOWNLOAD) != 0;
 				props->title = b->title;
+				have_parent_box = 1;
 			}
 
 			if (props->containing_block == NULL &&
@@ -71,8 +73,7 @@ box_extract_properties(dom_node *n, struct box_construct_props *props)
 				props->containing_block = b;
 			}
 
-			if (props->parent_style != NULL &&
-					props->containing_block != NULL) {
+			if (have_parent_box && props->containing_block != NULL) {
 				dom_node_unref(parent_node);
 				parent_node = NULL;
 				break;
