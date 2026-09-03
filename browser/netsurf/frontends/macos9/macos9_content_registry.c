@@ -6,10 +6,10 @@
  * Licensed under GPL v2.
  *
  * See macos9_content_registry.h for the rationale.  Fixed-capacity array of
- * (content pointer, generation) slots.  No malloc; all operations are O(N)
- * linear scans over a small table, which is cheap because the live-content
- * count on OS 9 is tiny (a page plus its sub-resources - tens, not
- * thousands).  C89 / CW8-clean: all declarations at the top of their block,
+ * (content pointer, generation) slots.  No malloc. The authoritative table
+ * remains a linear array, with an epoch-tagged pointer cache for repeated
+ * lookups on hot paths such as box construction and JS geometry.
+ * C89 / CW8-clean: all declarations at the top of their block,
  * no // comments, no C99 features.
  */
 
@@ -58,22 +58,50 @@ static int macos9_content_live_count = 0;
 unsigned long macos9_content_registry_epoch = 0;
 
 
+/* Small epoch-tagged lookup cache.  The live table can change only when
+ * macos9_content_registry_epoch changes, so a cached slot/absence from the
+ * current epoch is exact.  Box construction asks about the same html_content
+ * before and after every element; this turns those 256-slot scans into one
+ * pointer/hash check after the first lookup in a build. */
+#define MACOS9_CONTENT_FIND_CACHE 8
+struct macos9_content_find_cache_entry {
+	struct content *c;
+	unsigned long epoch;
+	int idx;
+};
+static struct macos9_content_find_cache_entry
+	macos9_content_find_cache[MACOS9_CONTENT_FIND_CACHE];
+
 /**
  * Find the slot index holding c, or -1 if absent.
  */
 static int
 macos9_content_find(struct content *c)
 {
+	unsigned long h;
+	struct macos9_content_find_cache_entry *ce;
 	int i;
 
 	if (c == NULL)
 		return -1;
 
+	h = (((unsigned long)c) >> 4) & (MACOS9_CONTENT_FIND_CACHE - 1);
+	ce = &macos9_content_find_cache[h];
+	if (ce->c == c && ce->epoch == macos9_content_registry_epoch)
+		return ce->idx;
+
 	for (i = 0; i < MACOS9_CONTENT_REGISTRY_CAP; i++) {
-		if (macos9_content_table[i].c == c)
+		if (macos9_content_table[i].c == c) {
+			ce->c = c;
+			ce->epoch = macos9_content_registry_epoch;
+			ce->idx = i;
 			return i;
+		}
 	}
 
+	ce->c = c;
+	ce->epoch = macos9_content_registry_epoch;
+	ce->idx = -1;
 	return -1;
 }
 
