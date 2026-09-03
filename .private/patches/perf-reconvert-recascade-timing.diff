@@ -1,0 +1,35 @@
+diff --git a/browser/netsurf/content/handlers/html/html.c b/browser/netsurf/content/handlers/html/html.c
+--- a/browser/netsurf/content/handlers/html/html.c
++++ b/browser/netsurf/content/handlers/html/html.c
+@@
+ #define RECONV_PH_H1        0
+ #define RECONV_PH_H3        1	/* forms + imagemap + selection      */
+ #define RECONV_PH_CSS       2	/* release pass-1 libcss node data   */
+-#define RECONV_PH_PIN       3	/* pin live text-node dom_strings    */
+-#define RECONV_PH_BUILD     4
+-#define RECONV_PH_RELINK    5
+-#define RECONV_PH_FREEOLD   6
+-#define RECONV_PH_REFORMAT  7
+-#define RECONV_PH_N         8
++#define RECONV_PH_RECASCADE 3	/* old-tree transition Style A->B    */
++#define RECONV_PH_PIN       4	/* pin live text-node dom_strings    */
++#define RECONV_PH_BUILD     5
++#define RECONV_PH_RELINK    6
++#define RECONV_PH_FREEOLD   7
++#define RECONV_PH_REFORMAT  8
++#define RECONV_PH_N         9
+@@
+ static const char *g_reconv_ph_name[RECONV_PH_N] = {
+-	"h1", "h3", "css", "pin", "build", "relink", "freeold", "reformat"
++	"h1", "h3", "css", "recascade", "pin", "build", "relink",
++	"freeold", "reformat"
+ };
+@@
+-	(void)html_recascade_tree(c);
++	/* The old tree is recascaded only to give transitions Style A -> Style B;
++	 * replacement construction below selects Style B again.  Keep the proven
++	 * lifetime/transition behavior unchanged, but account for this O(tree)
++	 * work separately so BUILD means dom_to_box rather than hiding this cost. */
++	t0 = html_reconv_now();
++	(void)html_recascade_tree(c);
++	html_reconv_phase_add(RECONV_PH_RECASCADE, t0);
