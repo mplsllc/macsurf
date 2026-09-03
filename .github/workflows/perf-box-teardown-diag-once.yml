@@ -1,0 +1,34 @@
+name: Remove box teardown diagnostic overhead
+
+on:
+  push:
+    branches: [performance]
+    paths:
+      - '.github/workflows/perf-box-teardown-diag-once.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: performance
+          fetch-depth: 0
+      - name: Apply source patch
+        shell: bash
+        run: |
+          python3 tools/apply_perf_box_teardown_diag_once.py
+          git diff --check
+          bash tools/retro68_check.sh browser/netsurf/content/handlers/html/box_manipulate.c || test $? -eq 2
+      - name: Commit optimization
+        shell: bash
+        run: |
+          git config user.name "OpenAI Codex"
+          git config user.email "codex@openai.com"
+          git rm .github/workflows/perf-box-teardown-diag-once.yml tools/apply_perf_box_teardown_diag_once.py
+          git add browser/netsurf/content/handlers/html/box_manipulate.c
+          git commit -m "perf(box): retire teardown diagnostic ring" -m "Remove the resolved double-free hunt's per-box recently-freed ring writes and its 4096-entry static storage, while retaining no-op exported diagnostic hooks for talloc fatal paths. Also stop incrementing the diagnostic backlink-cleared counter on every box destructor; actual backlink clearing and UAF protection are unchanged."
+          git push origin HEAD:performance
