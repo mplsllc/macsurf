@@ -30,7 +30,7 @@ jobs:
           git config user.email "codex@openai.com"
           git rm .github/workflows/perf-reconv-trace-once.yml tools/apply_perf_reconv_trace_once.py
           git add browser/netsurf/content/handlers/html/box_construct.c
-          git commit -m "perf(reconvert): retire per-node crash tracing" -m "Remove resolved reconvert crash-hunt breadcrumbs from the DOM-to-box hot path: first-150 element/text log+FlushVol checkpoints, node-index bookkeeping, tag/freemem diagnostics, and an unused text-box counter. All content liveness, generation, deferred-free, backlink, and atomic-build safety guards remain unchanged."
+          git commit -m "perf(reconvert): retire durable success-path tracing" -m "Remove unconditional crash-hunt FlushVol checkpoints from successful atomic reconverts and the unused per-text-box counter. Optional MACSURF_VERBOSE_RECONVERT node tracing remains available; all liveness, generation, deferred-free and atomic-build safety guards are unchanged."
           for n in 1 2 3; do
             git fetch origin performance
             git rebase origin/performance || { git rebase --abort; exit 1; }
