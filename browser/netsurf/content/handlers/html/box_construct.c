@@ -1382,6 +1382,7 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 	struct box_construct_props props;
 	const css_computed_style *root_style = NULL;
 	bool is_svg = false;
+	bool is_table_cell_tag = false;
 
 	assert(ctx->n != NULL);
 
@@ -1402,7 +1403,12 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 			if (c0 >= 'A' && c0 <= 'Z')
 				c0 = (unsigned char)(c0 + ('a' - 'A'));
 
-			if (tlen == 3 && c0 == 's') {
+			if (tlen == 2 && c0 == 't') {
+				unsigned char c1 = (unsigned char)tag[1];
+				if (c1 >= 'A' && c1 <= 'Z')
+					c1 = (unsigned char)(c1 + ('a' - 'A'));
+				is_table_cell_tag = (c1 == 'd' || c1 == 'h');
+			} else if (tlen == 3 && c0 == 's') {
 				is_svg = dom_string_caseless_lwc_isequal(
 					tag_name, corestring_lwc_svg);
 			} else if (tlen == 4) {
@@ -1541,33 +1547,38 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 	if (props.node_is_root)
 		ctx->root_box = box;
 
-	/* Deal with colspan/rowspan */
-	err = dom_element_get_attribute(ctx->n, corestring_dom_colspan, &s);
-	if (err != DOM_NO_ERR)
-		return false;
+	/* colspan/rowspan are table-cell attributes.  The old path queried both
+	 * attributes on every element in the document, even though they have no
+	 * HTML semantics outside <td>/<th>.  Tag classification above is already
+	 * paid for, so ordinary elements skip two DOM attribute-map lookups. */
+	if (is_table_cell_tag) {
+		err = dom_element_get_attribute(ctx->n, corestring_dom_colspan, &s);
+		if (err != DOM_NO_ERR)
+			return false;
 
-	if (s != NULL) {
-		const char *val = dom_string_data(s);
+		if (s != NULL) {
+			const char *val = dom_string_data(s);
 
-		/* Convert to a number, clamping to [1,1000] according to 4.9.11 */
-		if ('0' <= val[0] && val[0] <= '9')
-			box->columns = clamp(strtol(val, NULL, 10), 1, 1000);
+			/* Convert to a number, clamping to [1,1000] according to 4.9.11 */
+			if ('0' <= val[0] && val[0] <= '9')
+				box->columns = clamp(strtol(val, NULL, 10), 1, 1000);
 
-		dom_string_unref(s);
-	}
+			dom_string_unref(s);
+		}
 
-	err = dom_element_get_attribute(ctx->n, corestring_dom_rowspan, &s);
-	if (err != DOM_NO_ERR)
-		return false;
+		err = dom_element_get_attribute(ctx->n, corestring_dom_rowspan, &s);
+		if (err != DOM_NO_ERR)
+			return false;
 
-	if (s != NULL) {
-		const char *val = dom_string_data(s);
+		if (s != NULL) {
+			const char *val = dom_string_data(s);
 
-		/* Convert to a number, clamping to [0,65534] according to 4.9.11 */
-		if ('0' <= val[0] && val[0] <= '9')
-			box->rows = clamp(strtol(val, NULL, 10), 0, 65534);
+			/* Convert to a number, clamping to [0,65534] according to 4.9.11 */
+			if ('0' <= val[0] && val[0] <= '9')
+				box->rows = clamp(strtol(val, NULL, 10), 0, 65534);
 
-		dom_string_unref(s);
+			dom_string_unref(s);
+		}
 	}
 
 	css_display = ns_computed_display_static(box->style);
