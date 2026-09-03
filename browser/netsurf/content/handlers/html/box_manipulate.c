@@ -51,38 +51,21 @@
  * both hardware crashes. Read by html.c. */
 unsigned long macsurf_box_backlink_cleared = 0;
 
-/* fixes908 -- recently-freed-box ring for the reconvert double-free hunt.
- * box_talloc_destructor is the single choke point every box passes through on
- * its FIRST free (via box_free_box, or via talloc_free(tree) recursion -- talloc
- * runs the destructor per chunk). Recording (box, during-label) here lets the
- * talloc double-free abort in talloc.c report WHERE the box was first freed --
- * the missing half of the picture (the second-free path is the live during=
- * label). 4096 slots so a whole heavy-page tree-free does not evict the target
- * before the double-free lands. Diagnostic only. */
-#define MACSURF_BOXFREE_RING 4096
-static void *g_boxfree_ptr[MACSURF_BOXFREE_RING];
-static const char *g_boxfree_ctx[MACSURF_BOXFREE_RING];
-static int g_boxfree_ix = 0;
-
+/* The recently-freed-box ring was diagnostic scaffolding for the resolved
+ * reconvert double-free hunt. Keeping it active costs global writes for every
+ * box destructor and permanently reserves the static ring. Retain the exported
+ * hooks because talloc's fatal diagnostic references them, but make normal
+ * teardown allocation- and write-free. */
 void macsurf_box_freed_note(void *box, const char *ctx)
 {
-	g_boxfree_ptr[g_boxfree_ix] = box;
-	g_boxfree_ctx[g_boxfree_ix] = (ctx != NULL) ? ctx : "(null)";
-	g_boxfree_ix++;
-	if (g_boxfree_ix >= MACSURF_BOXFREE_RING) {
-		g_boxfree_ix = 0;
-	}
+	(void)box;
+	(void)ctx;
 }
 
 const char *macsurf_box_freed_lookup(void *box)
 {
-	int i;
-	for (i = 0; i < MACSURF_BOXFREE_RING; i++) {
-		if (g_boxfree_ptr[i] == box) {
-			return g_boxfree_ctx[i];
-		}
-	}
-	return "(not-in-ring)";
+	(void)box;
+	return "(boxfree-diag-disabled)";
 }
 
 /**
@@ -94,12 +77,6 @@ const char *macsurf_box_freed_lookup(void *box)
 static int box_talloc_destructor(struct box *b)
 {
 	struct html_scrollbar_data *data;
-
-	/* fixes908 -- note this box's first free + the free path in flight. */
-	{
-		extern const char *macsurf_talloc_free_ctx;
-		macsurf_box_freed_note(b, macsurf_talloc_free_ctx);
-	}
 
 	/* fixes1076 - free an ORPHAN form control here, not only in
 	 * box_free_box.
@@ -187,7 +164,6 @@ static int box_talloc_destructor(struct box *b)
 			(void) dom_node_set_user_data(b->node,
 					corestring_dom___ns_key_box_node_data,
 					NULL, NULL, &old_ud);
-			macsurf_box_backlink_cleared++;
 		}
 		dom_node_unref(b->node);
 	}
