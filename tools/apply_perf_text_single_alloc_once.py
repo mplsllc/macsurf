@@ -15,10 +15,11 @@ new = '''\t\ttext = box_squash_whitespace(ctx->bctx,\n\t\t\tdom_string_data(cont
 assert old in s
 s = s.replace(old, new, 1)
 
-# All temporary-buffer release paths in this branch now release a talloc child.
-# Limit replacements to the function region before the PRE/PRE_WRAP branch.
+# Delimit the exact NORMAL/NOWRAP branch using the unique PRE branch comment;
+# inner if/else statements must not terminate this transformation early.
 start = s.index('static bool box_construct_text(')
-branch_end = s.index('\t} else {', start)
+branch_marker = '\n\t} else {\n\t\t/* white-space: pre */'
+branch_end = s.index(branch_marker, start)
 prefix = s[:start]
 body = s[start:branch_end]
 suffix = s[branch_end:]
@@ -30,8 +31,7 @@ assert old_final in body
 body = body.replace(old_final, new_final, 1)
 s = prefix + body + suffix
 
-# Ensure this normal branch no longer uses the generic two-allocation helper.
-normal = s[start:s.index('\t} else {', start)]
+normal = s[start:s.index(branch_marker, start)]
 assert 'squash_whitespace(dom_string_data(content))' not in normal
 assert 'talloc_memdup(ctx->bctx, text, text_len + 1)' not in normal
 assert 'free(text);' not in normal
