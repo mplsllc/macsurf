@@ -2258,22 +2258,6 @@ static bool layout_flex_inner(struct box *flex, int available_width,
 	/* fixes166 -- shared FLEXPHASE probes capped at first 200 flex calls
 	 * per redraw (same cap as the entry-FLEX marker). Tags each phase
 	 * with the flex box pointer so apple's crash site can be localized. */
-	{
-		extern long macsurf_layout_seq;
-		static long macsurf_flexphase_seq = -1;
-		static long macsurf_flexphase_calls = 0;
-		if (macsurf_flexphase_seq != macsurf_layout_seq) {
-			macsurf_flexphase_calls = 0;
-			macsurf_flexphase_seq = macsurf_layout_seq;
-		}
-		macsurf_flexphase_calls++;
-		if (macsurf_flexphase_calls <= 200) {
-			macsurf_debug_log_writef(
-				"FLEXPHASE box=%p pre-populate avail_main=%d cross=%d",
-				(void *)flex, (int)ctx->available_main,
-				(int)ctx->available_cross);
-		}
-	}
 
 	/* fixes167b - populate now returns bool. A failing child kicks
 	 * the whole container into block-flow fallback. */
@@ -2300,41 +2284,9 @@ static bool layout_flex_inner(struct box *flex, int available_width,
 				content);
 	}
 
-	{
-		extern long macsurf_layout_seq;
-		static long macsurf_flexphase3_seq = -1;
-		static long macsurf_flexphase3_calls = 0;
-		if (macsurf_flexphase3_seq != macsurf_layout_seq) {
-			macsurf_flexphase3_calls = 0;
-			macsurf_flexphase3_seq = macsurf_layout_seq;
-		}
-		macsurf_flexphase3_calls++;
-		if (macsurf_flexphase3_calls <= 200) {
-			macsurf_debug_log_writef(
-				"FLEXPHASE box=%p post-collect lines=%d main=%d cross=%d",
-				(void *)flex, (int)ctx->line.count,
-				(int)ctx->main_size, (int)ctx->cross_size);
-		}
-	}
 
 	layout_flex__place_lines(ctx);
 
-	{
-		extern long macsurf_layout_seq;
-		static long macsurf_flexphase4_seq = -1;
-		static long macsurf_flexphase4_calls = 0;
-		if (macsurf_flexphase4_seq != macsurf_layout_seq) {
-			macsurf_flexphase4_calls = 0;
-			macsurf_flexphase4_seq = macsurf_layout_seq;
-		}
-		macsurf_flexphase4_calls++;
-		if (macsurf_flexphase4_calls <= 200) {
-			macsurf_debug_log_writef(
-				"FLEXPHASE box=%p post-place main=%d cross=%d h=%d",
-				(void *)flex, (int)ctx->main_size,
-				(int)ctx->cross_size, (int)flex->height);
-		}
-	}
 
 	if (flex->height == AUTO) {
 		flex->height = ctx->horizontal ?
@@ -2386,22 +2338,6 @@ static bool layout_flex_inner(struct box *flex, int available_width,
 	 * on the success path, so 'cleanup:' is no longer needed as a
 	 * label. The exit FLEXPHASE probe still fires for the success
 	 * case. */
-	{
-		extern long macsurf_layout_seq;
-		static long macsurf_flexphase5_seq = -1;
-		static long macsurf_flexphase5_calls = 0;
-		if (macsurf_flexphase5_seq != macsurf_layout_seq) {
-			macsurf_flexphase5_calls = 0;
-			macsurf_flexphase5_seq = macsurf_layout_seq;
-		}
-		macsurf_flexphase5_calls++;
-		if (macsurf_flexphase5_calls <= 200) {
-			macsurf_debug_log_writef(
-				"FLEXPHASE box=%p exit success=%d w=%d h=%d",
-				(void *)flex, (int)success,
-				(int)flex->width, (int)flex->height);
-		}
-	}
 	layout_flex_ctx__destroy(ctx);
 
 	NSLOG(flex, DEEPDEBUG, "box %p: %s: w: %i, h: %i", flex,
