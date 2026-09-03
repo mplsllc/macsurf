@@ -419,6 +419,9 @@ void macos9_prefs_save(void);
 void macos9_prefs_log_deltas(void);
 const char *macos9_home_url(void);
 void macos9_prefs_apply_live(void);
+/* True only after preferences opt into diagnostics/profiling. Kept here so
+ * instrumentation can be a no-op before the option table is initialized. */
+int macos9_debug_integrations_enabled(void);
 
 /* MACSURF_HOME_URL canonical definition is in macsurf_config.h.
  * Old frogfind default removed per fixes301. */

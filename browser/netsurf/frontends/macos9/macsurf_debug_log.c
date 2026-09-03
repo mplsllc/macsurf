@@ -91,6 +91,11 @@
 
 #include "macsurf_debug_log.h"
 
+/* Preference-owned runtime gate. It returns false before nsoption_init(), so
+ * startup work does not accidentally activate diagnostics ahead of the
+ * persisted release setting. */
+extern int macos9_debug_integrations_enabled(void);
+
 #include <string.h>
 #include <stdarg.h>
 
@@ -474,7 +479,7 @@ macsurf_debug_log_init(void)
 	const char *name;
 	size_t nlen;
 
-	if (g_log_open) return;
+	if (!macos9_debug_integrations_enabled() || g_log_open) return;
 
 	vRefNum = 0;
 	dirID = 0;
@@ -1067,6 +1072,7 @@ macsurf_debug_log_writef(const char *fmt, ...)
 	 * straight through), so this is the one place that needed to grow. */
 	char buf[1024];
 	va_list ap;
+	if (!macos9_debug_integrations_enabled()) return;
 
 	va_start(ap, fmt);
 	fmt_vformat(buf, (int)sizeof(buf), fmt, ap);
@@ -1241,7 +1247,8 @@ macsurf_debug_log_tracef(const char *fmt, ...)
 	char buf[1024];
 	va_list ap;
 
-	if (!macsurf_debug_log_trace_enabled) return;
+	if (!macos9_debug_integrations_enabled() ||
+		!macsurf_debug_log_trace_enabled) return;
 	va_start(ap, fmt);
 	fmt_vformat(buf, (int)sizeof(buf), fmt, ap);
 	va_end(ap);
@@ -1335,6 +1342,7 @@ profile_us_from_wide(const UnsignedWide *w)
 void
 macsurf_profile_reset(void)
 {
+	if (!macos9_debug_integrations_enabled()) return;
 #ifdef __MACOS9__
 	Microseconds(&g_profile_t0);
 	g_profile_t0_set = 1;
@@ -1379,6 +1387,7 @@ macsurf_profile_reset(void)
 void
 macsurf_profile_nav_begin(void)
 {
+	if (!macos9_debug_integrations_enabled()) return;
 #ifdef __MACOS9__
 	Microseconds(&g_nav_t0);
 #endif
@@ -1388,6 +1397,7 @@ macsurf_profile_nav_begin(void)
 void
 macsurf_profile_stamp(const char *label)
 {
+	if (!macos9_debug_integrations_enabled()) return;
 #ifdef __MACOS9__
 	UnsignedWide now;
 	double us_now;
@@ -1437,14 +1447,14 @@ macsurf_profile_note_milestone(const char *label, int delta_us_i)
  * guard. A phase that ran but measured 0us (sub-microsecond, or a clock
  * hiccup) still happened, and a count of 0 next to a non-zero total would be
  * a lie of exactly the kind this engine has paid for repeatedly. */
-void macsurf_profile_accum_tls(long us)     { g_n_tls++;     if (us > 0) g_accum_tls_us     += us; }
-void macsurf_profile_accum_net(long us)     { g_n_net++;     if (us > 0) g_accum_net_us     += us; }
-void macsurf_profile_accum_parse(long us)   { g_n_parse++;   if (us > 0) g_accum_parse_us   += us; }
-void macsurf_profile_accum_cascade(long us) { g_n_cascade++; if (us > 0) g_accum_cascade_us += us; }
-void macsurf_profile_accum_layout(long us)  { g_n_layout++;  if (us > 0) g_accum_layout_us  += us; }
-void macsurf_profile_accum_paint(long us)   { g_n_paint++;   if (us > 0) g_accum_paint_us   += us; }
-void macsurf_profile_accum_js(long us)      { g_n_js++;      if (us > 0) g_accum_js_us      += us; }
-void macsurf_profile_note_reflow(void)      { g_accum_reflows++; }
+void macsurf_profile_accum_tls(long us)     { if (!macos9_debug_integrations_enabled()) return; g_n_tls++;     if (us > 0) g_accum_tls_us     += us; }
+void macsurf_profile_accum_net(long us)     { if (!macos9_debug_integrations_enabled()) return; g_n_net++;     if (us > 0) g_accum_net_us     += us; }
+void macsurf_profile_accum_parse(long us)   { if (!macos9_debug_integrations_enabled()) return; g_n_parse++;   if (us > 0) g_accum_parse_us   += us; }
+void macsurf_profile_accum_cascade(long us) { if (!macos9_debug_integrations_enabled()) return; g_n_cascade++; if (us > 0) g_accum_cascade_us += us; }
+void macsurf_profile_accum_layout(long us)  { if (!macos9_debug_integrations_enabled()) return; g_n_layout++;  if (us > 0) g_accum_layout_us  += us; }
+void macsurf_profile_accum_paint(long us)   { if (!macos9_debug_integrations_enabled()) return; g_n_paint++;   if (us > 0) g_accum_paint_us   += us; }
+void macsurf_profile_accum_js(long us)      { if (!macos9_debug_integrations_enabled()) return; g_n_js++;      if (us > 0) g_accum_js_us      += us; }
+void macsurf_profile_note_reflow(void)      { if (!macos9_debug_integrations_enabled()) return; g_accum_reflows++; }
 
 /* fixes640a (review blocker): inline <script> executes SYNCHRONOUSLY inside
  * dom_hubbub_parser_parse_chunk (parser script callback -> js_exec -> JS_Eval),
@@ -1466,6 +1476,7 @@ macsurf_profile_emit_phases(const char *url)
 	long wall_us;
 	long unacct_us;
 	long unacct_pct;
+	if (!macos9_debug_integrations_enabled()) return;
 	(void)url;
 	total = g_accum_tls_us + g_accum_net_us + g_accum_parse_us +
 		g_accum_cascade_us + g_accum_layout_us + g_accum_paint_us +
@@ -1590,18 +1601,21 @@ macsurf_profile_emit_phases(const char *url)
 void
 macsurf_profile_add_bytes(long n)
 {
+	if (!macos9_debug_integrations_enabled()) return;
 	if (n > 0) g_profile_bytes += n;
 }
 
 void
 macsurf_profile_count_resource(void)
 {
+	if (!macos9_debug_integrations_enabled()) return;
 	g_profile_resources++;
 }
 
 void
 macsurf_profile_emit(const char *url)
 {
+	if (!macos9_debug_integrations_enabled()) return;
 	if (url == NULL) url = "(null)";
 	macsurf_debug_log_writef(
 		"PROFILE url=%s total_bytes=%ld subresources=%d",

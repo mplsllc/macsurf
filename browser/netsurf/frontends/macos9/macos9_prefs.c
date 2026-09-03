@@ -69,6 +69,9 @@ void macos9_prefs_apply_defaults(void)
 	 * defaults to false; without this html_script_exec returns early
 	 * and the JS bridge is dead code from core's perspective. */
 	nsoption_set_bool(enable_javascript, true);
+	/* Diagnostic logging and phase profiling are deliberately opt-in for the
+	 * release build. They add formatting, timing and HFS I/O to page loads. */
+	nsoption_set_bool(macsurf_debug_integrations, false);
 	/* fixes1115b (#265) - <select> dropdown menus. The core
 	 * form-control <select> handler is gated on this option; without
 	 * it <select> elements render as empty rectangles. The Amiga and
@@ -251,10 +254,11 @@ void macos9_prefs_log_deltas(void)
 	 * effective values unconditionally so a bare/unimaged page is diagnosable
 	 * from the first boot lines, even when the general delta list is missed. */
 	macsurf_debug_log_writef(
-		"LIFE PREF render css_author=%d fg_images=%d bg_images=%d",
+		"LIFE PREF render css_author=%d fg_images=%d bg_images=%d debug=%d",
 		(int) nsoption_bool(author_level_css),
 		(int) nsoption_bool(foreground_images),
-		(int) nsoption_bool(background_images));
+		(int) nsoption_bool(background_images),
+		(int) nsoption_bool(macsurf_debug_integrations));
 	macsurf_debug_log_writef("LIFE prefsdelta summary n=%d", n);
 }
 
@@ -295,10 +299,23 @@ const char *macos9_home_url(void)
 void macos9_prefs_apply_live(void)
 {
 	struct gui_window *g;
+	/* The logger opens only after the user opts in. Applying this live avoids
+	 * making a restart necessary for a focused diagnostic session, and closing
+	 * it immediately removes its file-I/O cost again. */
+	if (macos9_debug_integrations_enabled())
+		macsurf_debug_log_init();
+	else
+		macsurf_debug_log_close();
 	for (g = macos9_window_list_head(); g != NULL; g = g->next) {
 		macos9_window_request_reformat(g);
 		macos9_window_invalidate_all(g);
 	}
+}
+
+int macos9_debug_integrations_enabled(void)
+{
+	return nsoptions != NULL &&
+		nsoption_bool(macsurf_debug_integrations) ? 1 : 0;
 }
 
 #ifdef __MACOS9__
@@ -392,6 +409,7 @@ struct prefs_win {
 	ControlRef ck_css;
 	ControlRef ck_ads;
 	ControlRef ck_popups;
+	ControlRef ck_debug;
 	/* Privacy */
 	ControlRef ck_dnt;
 	ControlRef ck_ref;
@@ -428,6 +446,7 @@ static const Rect s_ck_js_rect       = { 84, 24, 106, 340 };
 static const Rect s_ck_css_rect      = { 114, 24, 136, 340 };
 static const Rect s_ck_ads_rect      = { 144, 24, 166, 340 };
 static const Rect s_ck_popups_rect   = { 174, 24, 196, 340 };
+static const Rect s_ck_debug_rect    = { 204, 24, 226, 340 };
 static const Rect s_ck_dnt_rect      = { 84, 24, 106, 340 };
 static const Rect s_ck_ref_rect      = { 114, 24, 136, 340 };
 static const Rect s_ck_cookies_rect  = { 144, 24, 166, 340 };
@@ -640,6 +659,7 @@ static void prefs_panel_vis(struct prefs_win *pw)
 	prefs_set_vis(pw->ck_css,    pw->cat == PREFS_CAT_CONTENT);
 	prefs_set_vis(pw->ck_ads,    pw->cat == PREFS_CAT_CONTENT);
 	prefs_set_vis(pw->ck_popups, pw->cat == PREFS_CAT_CONTENT);
+	prefs_set_vis(pw->ck_debug,  pw->cat == PREFS_CAT_CONTENT);
 	prefs_set_vis(pw->ck_dnt,    pw->cat == PREFS_CAT_PRIVACY);
 	prefs_set_vis(pw->ck_ref,    pw->cat == PREFS_CAT_PRIVACY);
 	prefs_set_vis(pw->ck_cookies,pw->cat == PREFS_CAT_PRIVACY);
@@ -723,6 +743,8 @@ static void prefs_apply_from_ui(struct prefs_win *pw)
 		prefs_get_val(pw->ck_ads) != 0);
 	nsoption_set_bool(disable_popups,
 		prefs_get_val(pw->ck_popups) != 0);
+	nsoption_set_bool(macsurf_debug_integrations,
+		prefs_get_val(pw->ck_debug) != 0);
 	nsoption_set_bool(do_not_track,
 		prefs_get_val(pw->ck_dnt) != 0);
 	nsoption_set_bool(send_referer,
@@ -775,6 +797,8 @@ static void prefs_load_values(struct prefs_win *pw)
 	prefs_set_val(pw->ck_css, nsoption_bool(author_level_css) ? 1 : 0);
 	prefs_set_val(pw->ck_ads, nsoption_bool(block_advertisements) ? 1 : 0);
 	prefs_set_val(pw->ck_popups, nsoption_bool(disable_popups) ? 1 : 0);
+	prefs_set_val(pw->ck_debug,
+		nsoption_bool(macsurf_debug_integrations) ? 1 : 0);
 	prefs_set_val(pw->ck_dnt, nsoption_bool(do_not_track) ? 1 : 0);
 	prefs_set_val(pw->ck_ref, nsoption_bool(send_referer) ? 1 : 0);
 	prefs_set_val(pw->ck_cookies, nsoption_bool(accept_cookies) ? 1 : 0);
@@ -1005,6 +1029,9 @@ static int prefs_click(struct prefs_win *pw, Point lp)
 		if (PtInRect(lp, &s_ck_popups_rect)) {
 			prefs_check_toggle(pw->ck_popups, lp); return 0;
 		}
+		if (PtInRect(lp, &s_ck_debug_rect)) {
+			prefs_check_toggle(pw->ck_debug, lp); return 0;
+		}
 		break;
 	case PREFS_CAT_PRIVACY:
 		if (PtInRect(lp, &s_ck_dnt_rect)) {
@@ -1136,6 +1163,8 @@ void macos9_prefs_show(void)
 		"Block advertisements", kControlCheckBoxProc);
 	PS_CTRL(pw.ck_popups, pw.win, &s_ck_popups_rect,
 		"Block pop-up windows", kControlCheckBoxProc);
+	PS_CTRL(pw.ck_debug, pw.win, &s_ck_debug_rect,
+		"Enable debug integrations", kControlCheckBoxProc);
 	/* Privacy */
 	PS_CTRL(pw.ck_dnt, pw.win, &s_ck_dnt_rect,
 		"Send Do Not Track request", kControlCheckBoxProc);
@@ -1244,6 +1273,7 @@ void macos9_prefs_show(void)
 	prefs_disp_ctrl(pw.ck_css);
 	prefs_disp_ctrl(pw.ck_ads);
 	prefs_disp_ctrl(pw.ck_popups);
+	prefs_disp_ctrl(pw.ck_debug);
 	prefs_disp_ctrl(pw.ck_dnt);
 	prefs_disp_ctrl(pw.ck_ref);
 	prefs_disp_ctrl(pw.ck_cookies);

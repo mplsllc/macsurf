@@ -791,18 +791,27 @@ void macos9_handle_update(const EventRecord *event) {
 			 * update event. clip = dirty rect (small when only a textarea line
 			 * changed); boxes = how many the walk visited regardless of clip
 			 * (if ~all page boxes, the tree walk isn't pruning to the clip). */
-			double t_paint = macos9_micros();
+			int profile = macos9_debug_integrations_enabled();
+			double t_paint = 0.0;
 			extern long macos9_hrb_visits;
-			long _v0 = macos9_hrb_visits, _pdt;
+			long _v0 = 0, _pdt = 0;
+			if (profile) {
+				t_paint = macos9_micros();
+				_v0 = macos9_hrb_visits;
+			}
 			browser_window_redraw(gw->bw,
 				gw->content_rect.left - gw->scroll_x,
 				gw->content_rect.top  - gw->scroll_y,
 				&clip, &ctx);
-			_pdt = (long)(macos9_micros() - t_paint);
-			macsurf_profile_accum_paint(_pdt);
-			macsurf_debug_log_writef("RECON PAINT dt=%ldus clip=%dx%d boxes=%ld",
-				_pdt, (int)(clip.x1 - clip.x0), (int)(clip.y1 - clip.y0),
-				(long)(macos9_hrb_visits - _v0));
+			if (profile) {
+				_pdt = (long)(macos9_micros() - t_paint);
+				macsurf_profile_accum_paint(_pdt);
+				macsurf_debug_log_writef(
+					"RECON PAINT dt=%ldus clip=%dx%d boxes=%ld",
+					_pdt, (int)(clip.x1 - clip.x0),
+					(int)(clip.y1 - clip.y0),
+					(long)(macos9_hrb_visits - _v0));
+			}
 		}
 		{ extern int macos9_op_depth; macos9_op_depth--; }
 		{ extern struct gui_window *macos9_paint_gw;
@@ -2016,7 +2025,8 @@ int main(void) {
 	 * baseline from the first JS eval.  Two TickCount boundaries
 	 * (~33 ms) elapse here at startup; acceptable cost. */
 	macsurf_tb_calibrate();
-	macsurf_debug_log_init();
+	/* Diagnostics are opt-in and preferences are not available yet. The
+	 * logger is opened after the saved settings have been loaded below. */
 	/* fixes936 (OS X tier 1): settle OS 9 vs Mac OS X BEFORE anything consumes
 	 * the answer. macsurf_heap_bounds_init() below is the FIRST consumer -- on
 	 * OS X the Process Manager partition window it reads is fiction and must
@@ -2204,6 +2214,9 @@ int main(void) {
 	MS_LOG("BOOT nsoption_init done");
 	macos9_prefs_load();
 	MS_LOG("BOOT prefs file loaded");
+	macsurf_debug_log_init();
+	if (macos9_debug_integrations_enabled())
+		MS_LOG("BOOT debug integrations enabled");
 	/* fixes1189 - the line this replaces ("images enabled, author_css on,
 	 * fetcher 128/16, mem cache 32MB") was a hardcoded claim left over
 	 * from before macos9_prefs_load existed, and stayed accurate only by

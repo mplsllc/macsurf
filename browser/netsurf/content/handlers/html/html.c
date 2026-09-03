@@ -2257,15 +2257,23 @@ html_process_data(struct content *c, const char *data, unsigned int size)
 		extern double macos9_micros(void);
 		extern void macsurf_profile_accum_parse(long us);
 		extern long macsurf_profile_get_js_us(void);
-		double t_parse = macos9_micros();
-		long js_before = macsurf_profile_get_js_us();
+		extern int macos9_debug_integrations_enabled(void);
+		int profile = macos9_debug_integrations_enabled();
+		double t_parse = 0.0;
+		long js_before = 0;
 		long parse_us;
+		if (profile) {
+			t_parse = macos9_micros();
+			js_before = macsurf_profile_get_js_us();
+		}
 		dom_ret = dom_hubbub_parser_parse_chunk(html->parser,
 						      (const uint8_t *) data,
 						      size);
-		parse_us = (long)(macos9_micros() - t_parse)
-				- (macsurf_profile_get_js_us() - js_before);
-		macsurf_profile_accum_parse(parse_us);
+		if (profile) {
+			parse_us = (long)(macos9_micros() - t_parse)
+					- (macsurf_profile_get_js_us() - js_before);
+			macsurf_profile_accum_parse(parse_us);
+		}
 	}
 
 	err = libdom_hubbub_error_to_nserror(dom_ret);
