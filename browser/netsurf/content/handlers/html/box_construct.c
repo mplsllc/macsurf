@@ -2134,6 +2134,7 @@ static bool box_construct_text(struct box_construct_ctx *ctx)
 			css_computed_white_space(props.parent_style) ==
 			CSS_WHITE_SPACE_NOWRAP) {
 		char *text;
+		size_t text_len;
 
 		text = squash_whitespace(dom_string_data(content));
 
@@ -2142,25 +2143,12 @@ static bool box_construct_text(struct box_construct_ctx *ctx)
 		if (text == NULL)
 			return false;
 
-#ifdef __MACOS9__
-		/* fixes491 diag - trace the source of "data-xf-init" text nodes.
-		 * Log the offending character data plus the content-data pointer
-		 * so the node can be tied back to its DOM origin. Remove once the
-		 * leak is root-caused. */
-		{
-			extern void macsurf_debug_log_writef(const char *fmt,
-					...);
-			if (text[0] != '\0' && strstr(text, "xf-init") != NULL) {
-				macsurf_debug_log_writef(
-					"fixes491 TEXTNODE='%s' node=%p",
-					text, (void *)ctx->n);
-			}
-		}
-#endif
+		text_len = strlen(text);
+
 
 		/* if the text is just a space, combine it with the preceding
 		 * text node, if any */
-		if (text[0] == ' ' && text[1] == 0) {
+		if (text_len == 1 && text[0] == ' ') {
 			if (props.inline_container != NULL) {
 				assert(props.inline_container->last != NULL);
 
@@ -2199,22 +2187,21 @@ static bool box_construct_text(struct box_construct_ctx *ctx)
 				props.inline_container->last->space == 0 &&
 				props.inline_container->last->text != NULL) {
 			struct box *prev = props.inline_container->last;
-			size_t tlen = strlen(text);
 			size_t plen = prev->length;
-			int new_is_shy = (tlen >= 2 &&
+			int new_is_shy = (text_len >= 2 &&
 				(unsigned char) text[0] == 0xC2 &&
 				(unsigned char) text[1] == 0xAD);
 			int prev_shy = (plen >= 2 &&
 				(unsigned char) prev->text[plen - 2] == 0xC2 &&
 				(unsigned char) prev->text[plen - 1] == 0xAD);
-			if ((new_is_shy || prev_shy) && tlen > 0) {
+			if ((new_is_shy || prev_shy) && text_len > 0) {
 				char *merged = talloc_realloc(ctx->bctx,
-					prev->text, char, plen + tlen + 1);
+					prev->text, char, plen + text_len + 1);
 				if (merged != NULL) {
-					memcpy(merged + plen, text, tlen);
-					merged[plen + tlen] = '\0';
+					memcpy(merged + plen, text, text_len);
+					merged[plen + text_len] = '\0';
 					prev->text = merged;
-					prev->length = plen + tlen;
+					prev->length = plen + text_len;
 					free(text);
 					return true;
 				}
@@ -2300,12 +2287,12 @@ static bool box_construct_text(struct box_construct_ctx *ctx)
 		box->type = BOX_TEXT;
 		macos9_box_text_created++;
 
-		box->text = talloc_strdup(ctx->bctx, text);
+		box->text = talloc_memdup(ctx->bctx, text, text_len + 1);
 		free(text);
 		if (box->text == NULL)
 			return false;
 
-		box->length = strlen(box->text);
+		box->length = text_len;
 
 		/* strip ending space char off */
 		if (box->length > 1 && box->text[box->length - 1] == ' ') {
@@ -2444,7 +2431,7 @@ static bool box_construct_text(struct box_construct_ctx *ctx)
 
 		if (css_computed_text_transform(props.parent_style) !=
 				CSS_TEXT_TRANSFORM_NONE)
-			box_text_transform(text, strlen(text),
+			box_text_transform(text, text_len,
 				css_computed_text_transform(
 						props.parent_style));
 
@@ -2507,13 +2494,13 @@ static bool box_construct_text(struct box_construct_ctx *ctx)
 			box->type = BOX_TEXT;
 		macos9_box_text_created++;
 
-			box->text = talloc_strdup(ctx->bctx, current);
+			box->text = talloc_memdup(ctx->bctx, current, len + 1);
 			if (box->text == NULL) {
 				free(text);
 				return false;
 			}
 
-			box->length = strlen(box->text);
+			box->length = len;
 
 			box_add_child(props.inline_container, box);
 
