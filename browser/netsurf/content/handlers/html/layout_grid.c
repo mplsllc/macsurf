@@ -109,67 +109,6 @@ static uint8_t layout_grid_justify_effective(const struct box *grid,
 	return ji;
 }
 
-static const char *layout_grid_justify_name(uint8_t value)
-{
-	switch (value) {
-	case CSS_JUSTIFY_ITEMS_STRETCH:
-		return "stretch";
-	case CSS_JUSTIFY_ITEMS_START:
-		return "start";
-	case CSS_JUSTIFY_ITEMS_CENTER:
-		return "center";
-	default:
-		return "other";
-	}
-}
-
-static const char *layout_grid_justify_self_name(uint8_t value)
-{
-	switch (value) {
-	case CSS_JUSTIFY_SELF_AUTO:
-		return "auto";
-	case CSS_JUSTIFY_SELF_STRETCH:
-		return "stretch";
-	case CSS_JUSTIFY_SELF_START:
-		return "start";
-	case CSS_JUSTIFY_SELF_CENTER:
-		return "center";
-	default:
-		return "other";
-	}
-}
-
-static void layout_grid_log_justify(const char *phase,
-		const struct box *grid, const struct box *item,
-		uint8_t effective, int cell_w, int item_w, int outer_w,
-		int x_pos, int child_x)
-{
-	extern long macsurf_layout_seq;
-	static long seq = -1;
-	static int budget = 0;
-	uint8_t js = CSS_JUSTIFY_SELF_AUTO;
-
-	if (seq != macsurf_layout_seq) {
-		seq = macsurf_layout_seq;
-		budget = 24;
-	}
-	if (budget <= 0)
-		return;
-	budget--;
-
-	if (item != NULL && item->style != NULL)
-		js = css_computed_justify_self(item->style);
-
-	macsurf_debug_log_writef(
-		"LIFE fixes1204 gridjs phase=%s grid=%p item=%p "
-		"self=%s(%d) eff=%s(%d) cell=%d itemw=%d outer=%d "
-		"x0=%d x=%d",
-		phase, (void *)grid, (void *)item,
-		layout_grid_justify_self_name(js), (int)js,
-		layout_grid_justify_name(effective), (int)effective,
-		cell_w, item_w, outer_w, x_pos, child_x);
-}
-
 /* fixes168b - Grid local fallback. When a grid container hits an
  * unsafe input (AUTO/INT_MIN propagated through a parent, child
  * count overflow, layout failure in a child) we stack its in-flow
@@ -385,10 +324,6 @@ static bool layout_grid_item(
 		item->width = 0;
 	}
 
-	layout_grid_log_justify("size", item->parent, item,
-			effective_justify, cell_width, item->width,
-			item->width + lh__delta_outer_width(item), 0, 0);
-
 	switch (item->type) {
 	case BOX_BLOCK:
 	case BOX_INLINE_BLOCK:
@@ -543,25 +478,6 @@ static bool layout_grid_inner(struct box *grid, int available_width,
 	int grid_has_placement = 0;
 	int minmax_fr_tracks = 0;
 	int i;
-
-	/* fixes161e - per-call GRID marker capped at first 100 calls per
-	 * redraw. Counter resets when macsurf_layout_seq changes. */
-	{
-		extern long macsurf_layout_seq;
-		static long macsurf_grid_calls = 0;
-		static long macsurf_grid_seq = -1;
-		if (macsurf_grid_seq != macsurf_layout_seq) {
-			macsurf_grid_calls = 0;
-			macsurf_grid_seq = macsurf_layout_seq;
-		}
-		macsurf_grid_calls++;
-		if (macsurf_grid_calls <= 100) {
-			macsurf_debug_log_writef(
-				"LAYOUTPHASE grid #%ld box=%p w=%d",
-				macsurf_grid_calls, (void *)grid,
-				(int)available_width);
-		}
-	}
 
 	for (i = 0; i < MACSURF_GRID_TRACK_MAX; i++) {
 		track_widths[i] = 0;
@@ -1684,11 +1600,6 @@ static bool layout_grid_inner(struct box *grid, int available_width,
 							  (cell_w - outer_w) / 2;
 						}
 					}
-					layout_grid_log_justify("place",
-							grid, child, grid_ji,
-							cell_w, child->width,
-							outer_w, x_pos,
-							child->x);
 				}
 
 				if (slot_row < 0 ||
