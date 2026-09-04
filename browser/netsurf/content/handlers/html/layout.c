@@ -2907,6 +2907,14 @@ static bool layout_table_inner(
 	enum css_height_e htype;
 	css_fixed value = 0;
 	css_unit unit = CSS_UNIT_PX;
+	unsigned char *work;
+	unsigned char *work_p;
+	size_t col_bytes;
+	size_t excess_bytes;
+	size_t row_span_bytes;
+	size_t row_span_cell_bytes;
+	size_t xs_bytes;
+	size_t work_size;
 
 	/* fixes161e - per-call TABLE marker capped at first 100 calls
 	 * per redraw. fixes161d used %u which the writef formatter does
