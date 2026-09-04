@@ -1,0 +1,50 @@
+name: perf sync coalesce once
+
+on:
+  push:
+    branches: [performance]
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: performance
+          fetch-depth: 0
+
+      - name: Apply patch
+        run: python3 tools/apply_perf_sync_coalesce_once.py
+
+      - name: Check diff
+        run: git diff --check
+
+      - name: Syntax check when toolchain exists
+        shell: bash
+        run: |
+          set +e
+          bash tools/retro68_check.sh browser/netsurf/frontends/macos9/javascript/macsurf_qjs.c
+          q=$?
+          bash tools/retro68_check.sh browser/netsurf/frontends/macos9/macos9_reconvert.c
+          r=$?
+          set -e
+          [ "$q" -ne 1 ] && [ "$r" -ne 1 ]
+
+      - name: Commit and push
+        shell: bash
+        run: |
+          rm -f tools/apply_perf_sync_coalesce_once.py \
+                .github/workflows/perf-sync-coalesce-once.yml
+          git config user.name "MacSurf Perf Bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add -A
+          git commit -m "perf(js): coalesce sync barriers per execution" \
+            -m "Latch a declined geometry flush until JS yields, eliminating repeated retries whose blockers cannot clear cooperatively. Reuse proven style/inherited-color transactions in forced geometry before full reconvert."
+          for n in 1 2 3; do
+            git fetch origin performance
+            git rebase origin/performance || { git rebase --abort; exit 1; }
+            if git push origin HEAD:performance; then exit 0; fi
+          done
+          exit 1
