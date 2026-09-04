@@ -2126,17 +2126,32 @@ long g_geom_real  = 0;  /* exported for audit */
  * flush count below the budget.
  *
  * Content-keyed (iframes have their own content): a settle in one
- * runtime must not silence flushes for another. A DECLINED flush leaves
- * the flag 0 so the next read retries -- today's retry semantics are
- * preserved. qjs_geometry_settled() still independently gates every
- * read on tree stability/liveness. */
+ * runtime must not silence flushes for another.
+ *
+ * performance: a DECLINED forced flush is now also latched for the rest of
+ * this JS execution. MacSurf is cooperatively scheduled, so every transient
+ * reason a forced flush can decline (paint on stack, reconvert in progress,
+ * active fetch hazard, conversion/layout busy) cannot clear until JS yields.
+ * Retrying the same barrier on the next geometry getter in the SAME callback
+ * can therefore never make progress; Hackaday measured 725 such declined
+ * attempts. The first decline already schedules the existing 80ms retry when
+ * appropriate. At the next JS execution boundary qjs_geom_settle_begin()
+ * clears this latch and a fresh geometry read may try again.
+ *
+ * qjs_geometry_settled() still independently gates every read on tree
+ * stability/liveness, so a latched decline returns the same safe undefined
+ * answer rather than exposing stale boxes. */
 static int g_geom_settled = 0;
 static void *g_geom_settled_c = NULL;
+static int g_geom_attempted = 0;
+static void *g_geom_attempted_c = NULL;
 
 static void qjs_geom_settle_begin(void)
 {
 	g_geom_settled = 0;
 	g_geom_settled_c = NULL;
+	g_geom_attempted = 0;
+	g_geom_attempted_c = NULL;
 }
 
 
@@ -6314,6 +6329,14 @@ static void qjs_geometry_flush(JSContext *ctx)
 	if (g_geom_settled && g_geom_settled_c == (void *) content)
 		return;
 
+	/* A flush attempt already declined in this SAME JS execution. None of
+	 * macos9_reconvert_flush_now's transient blockers can clear until the
+	 * cooperative event loop gets control back, so do not hammer the same
+	 * guard/scheduler path on every geometry getter. qjs_geometry_settled()
+	 * will still see the pending mutation and return the safe undefined. */
+	if (g_geom_attempted && g_geom_attempted_c == (void *) content)
+		return;
+
 	/* Nothing pending: the box tree already answers for the current DOM.
 	 * Settle without even paying for the flush call. */
 	if (!macos9_reconvert_pending_for(content)) {
@@ -6323,10 +6346,11 @@ static void qjs_geometry_flush(JSContext *ctx)
 	}
 
 	/* Pending marks: flush synchronously (the fixes1073 forced reflow).
-	 * Return 1 means a flush ran and consumed this content's slots --
-	 * settled. Return 0 is a DECLINED flush (budget, in-progress, ...):
-	 * leave the flag 0 so the next read retries, preserving today's
-	 * retry semantics. */
+	 * One attempt per content per JS execution is sufficient: if it declines,
+	 * the existing retry is queued for after JS yields; if it succeeds, the
+	 * settled flag below serves every remaining read in this execution. */
+	g_geom_attempted = 1;
+	g_geom_attempted_c = (void *) content;
 	t0 = macos9_micros();
 	if (macos9_reconvert_flush_now((void *) content)) {
 		g_geom_settled = 1;

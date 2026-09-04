@@ -37,6 +37,11 @@
 
 /* core re-convert trigger: 0 = NSERROR_OK (queued), non-zero = busy/skip. */
 extern int html_reconvert_content(struct content *c);
+/* The asynchronous callback already uses these proven transactions for a
+ * precise inline-style mutation. The synchronous geometry path must use the
+ * same cheap proof before paying for a whole-document rebuild. */
+extern int html_reconvert_fast_style(struct content *c, void *node);
+extern int html_reconvert_fast_inherited_color(struct content *c, void *node);
 /* fixes1094 (#265 Round B) - see html.c. */
 extern int macsurf_html_has_droppable_inflight(struct content *c);
 /* browser_window -> current content handle. */
@@ -770,6 +775,62 @@ macos9_reconvert_flush_now(void *cv)
 				&ms_prov);
 			ms_rs_open = 1;
 			break;
+		}
+	}
+
+	/* performance: forced geometry used to bypass the exact style fast paths
+	 * used by macos9_reconvert_cb and always buy a full dom_to_box rebuild.
+	 * For one precise inline-style mutation, first run the same transactions:
+	 * html_reconvert_fast_style commits only paint-only changes, and the
+	 * inherited-colour transaction commits only when its whole affected
+	 * subtree proves geometry/topology stable. A commit therefore satisfies
+	 * the geometry barrier without rebuilding boxes. Any uncertainty falls
+	 * straight through to the proven full synchronous reconvert below. */
+	if (i < RECONVERT_MAX_PENDING &&
+	    g_pending[i].multi == 0 &&
+	    g_pending[i].kind == MACOS9_DOMMUT_SETATTR_STYLE &&
+	    g_pending[i].node != NULL &&
+	    (c->status == CONTENT_STATUS_READY ||
+	     c->status == CONTENT_STATUS_DONE)) {
+		t0 = macos9_micros();
+		in_flush = 1;
+		g_style_fast_attempt++;
+		rc = html_reconvert_fast_style(c, g_pending[i].node);
+		ms_diag_render_stage(MS_STAGE_STYLEFAST,
+			rc == 0 ? MS_SRES_COMMIT : MS_SRES_FALLBACK,
+			MS_SREASON_NONE, 0, 0, 0, (const char *) 0, 0);
+		if (rc == 0) {
+			g_style_fast_commit++;
+		} else {
+			g_style_fast_fallback++;
+			g_inherited_color_attempt++;
+			rc = html_reconvert_fast_inherited_color(c,
+				g_pending[i].node);
+			if (rc == 0)
+				g_inherited_color_commit++;
+			else
+				g_inherited_color_fallback++;
+		}
+		in_flush = 0;
+		if (rc == 0) {
+			g_sync_us += (long)(macos9_micros() - t0);
+			g_sync_flushes++;
+			if (ms_rs_open) {
+				ms_diag_render_leave(&ms_rs, MS_RRES_DONE,
+					MS_SREASON_NONE);
+				ms_rs_open = 0;
+			}
+			for (i = 0; i < RECONVERT_MAX_PENDING; i++) {
+				if (g_pending[i].c == c)
+					macos9_reconvert_slot_clear(i);
+			}
+			if (g_pending_overflow == 0 &&
+			    macos9_reconvert_pending_count() == 0) {
+				g_first_mark_tick = 0;
+				g_defer_reported = 0;
+			}
+			g_last_reconvert_tick = (unsigned long) TickCount();
+			return 1;
 		}
 	}
 
