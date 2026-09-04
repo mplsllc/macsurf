@@ -64,7 +64,7 @@ macsurf_html_tag_name_get_type(const dom_string *tag,
 	name = dom_string_data(tag);
 	if (name == NULL)
 		return DOM_NO_ERR;
-	len = dom_string_length(tag);
+	len = dom_string_byte_length(tag);
 	if (len == 0)
 		return DOM_NO_ERR;
 	c0 = macsurf_tag_lower((unsigned char)name[0]);
