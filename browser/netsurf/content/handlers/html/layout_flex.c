@@ -2270,6 +2270,19 @@ static bool layout_flex_inner(struct box *flex, int available_width,
 				content);
 	}
 
+	/* Order items before placing them on lines. The line collector is the
+	 * actual flex-layout step: without it, ctx->line.count stays zero and
+	 * placement continues with an unfinished container. */
+	layout_flex__order_items(ctx);
+	success = layout_flex__collect_items_into_lines(ctx);
+	if (!success) {
+		layout_flex_ctx__destroy(ctx);
+		macsurf_debug_log_writef(
+			"FLEXSAFE collect failed flex=%p -> block fallback",
+			(void *)flex);
+		return layout_flex_fallback_block(flex, available_width,
+				content);
+	}
 
 	/* fixes167b - runaway line count guard. The collector is bounded
 	 * by item count, but a degenerate wrap pattern can still produce
