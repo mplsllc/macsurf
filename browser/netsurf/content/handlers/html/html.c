@@ -60,6 +60,7 @@
 #include "desktop/gui_internal.h"
 
 #include "html/html.h"
+#include "html/private.h"
 #include "macsurf_debug.h"
 #include "macsurf_diag.h"	/* MacSurf Trace 1c: doc_id + render-stage records */
 #include "frontends/macos9/macos9_transition.h"
@@ -73,8 +74,10 @@
  * on this html_content (deferred_parser_unpause, html_css_process_modified_
  * styles, ...) before any parser/content state is torn down. */
 #ifdef __MACOS9__
+extern nserror macos9_schedule(int t, void (*callback)(void *p), void *p);
 extern void macos9_schedule_cancel_owner(void *p);
 #else
+#define macos9_schedule(t, callback, p) NSERROR_OK
 #define macos9_schedule_cancel_owner(p) ((void)0)
 #endif
 
@@ -86,6 +89,48 @@ long macos9_html_bytes_processed = 0;
  * per-reformat cost (ms_after-ms_before, already in the SITE line) be read
  * against the count.  See project_mactrove_reflow_storm. */
 static long macos9_html_reformat_seq = 0;
+
+/*
+ * A MediaQueryList change listener is arbitrary page JavaScript.  It must not
+ * execute from html_reformat: reformat is often entered by an image-ready
+ * callback, and listener code can mutate the DOM, navigate, or synchronously
+ * ask for geometry while that callback still owns the layout call chain.
+ *
+ * The old reconvert crash fixes established the corresponding rule for box
+ * rebuilds: do not re-enter page work until the current rendering operation
+ * has completely unwound.  Queue this as a document-owned main-loop callback
+ * instead.  html_close/html_destroy cancel every callback with htmlc as its
+ * owner before the JS thread can be closed or freed.  macos9_schedule also
+ * coalesces identical callback/owner pairs, so a burst of image reformats
+ * produces one media-state comparison at the next safe event-loop boundary.
+ */
+#ifdef WITH_QUICKJS
+static void html_media_state_changed_deferred(void *p)
+{
+	html_content *htmlc = (html_content *) p;
+
+	if (htmlc == NULL || htmlc->aborted || htmlc->js_thread == NULL)
+		return;
+	if (htmlc->reflowing) {
+		(void) macos9_schedule(1, html_media_state_changed_deferred,
+				htmlc);
+		return;
+	}
+	js_media_state_changed(htmlc->js_thread);
+}
+
+static void html_media_state_changed_queue(html_content *htmlc)
+{
+	if (htmlc == NULL || htmlc->aborted || htmlc->js_thread == NULL)
+		return;
+#ifdef __MACOS9__
+	(void) macos9_schedule(0, html_media_state_changed_deferred, htmlc);
+#else
+	/* Other frontends have no MacSurf scheduler/lifetime contract. */
+	js_media_state_changed(htmlc->js_thread);
+#endif
+}
+#endif
 
 /* fixes848 (#167 perf investigation) - wall-clock span of box construction
  * + per-element CSS cascade (dom_to_box is an incremental, self-rescheduling
@@ -5918,12 +5963,11 @@ static void html_reformat(struct content *c, int width, int height)
 	htmlc->reflowing = false;
 	htmlc->had_initial_layout = true;
 
-	/* The completed layout now owns the same css_media state author CSS used.
-	 * Let MediaQueryLists compare their prior value only at this safe boundary;
-	 * a listener-induced DOM mutation will follow the ordinary reconvert path. */
+	/* The completed layout has published the css_media state author CSS uses.
+	 * Deliver MediaQueryList changes only after this image/layout callback has
+	 * fully unwound; page listeners are allowed to mutate the DOM. */
 #ifdef WITH_QUICKJS
-	if (htmlc->js_thread != NULL)
-		js_media_state_changed(htmlc->js_thread);
+	html_media_state_changed_queue(htmlc);
 #endif
 
 	/* calculate next reflow time at three times what it took to reflow */
