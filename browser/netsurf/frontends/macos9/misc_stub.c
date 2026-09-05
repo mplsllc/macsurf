@@ -8,6 +8,7 @@
  */
 
 #include <stddef.h>
+#include <string.h>
 #include "utils/ns_errors.h"
 
 struct nsurl;
@@ -93,8 +94,16 @@ int nsu_base64_encode_url(const unsigned char *input, unsigned long input_length
 extern unsigned long TickCount(void);
 int nsu_getmonotonic_ms(unsigned long long *now)
 {
+	unsigned long ticks;
+	double millis;
+
 	if (now != NULL) {
-		*now = (unsigned long long)(TickCount() * 1000UL / 60UL);
+		/* Keep the multiply out of 32-bit arithmetic: at normal uptime
+		 * TickCount() * 1000UL wraps before the division.  Double is also
+		 * the established CW8-safe path for converting Mac time counters. */
+		ticks = (unsigned long)TickCount();
+		millis = (double)ticks * (1000.0 / 60.0);
+		*now = (unsigned long long)millis;
 	}
 	return 0;
 }
