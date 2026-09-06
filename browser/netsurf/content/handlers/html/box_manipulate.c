@@ -77,6 +77,11 @@ const char *macsurf_box_freed_lookup(void *box)
 static int box_talloc_destructor(struct box *b)
 {
 	struct html_scrollbar_data *data;
+	css_custom_env *env;
+	css_select_results *styles;
+	css_computed_style *st;
+	struct box *cur = NULL;
+	void *old_ud = NULL;
 
 	/* fixes1076 - free an ORPHAN form control here, not only in
 	 * box_free_box.
@@ -112,14 +117,31 @@ static int box_talloc_destructor(struct box *b)
 		b->gadget = NULL;
 	}
 
+	/* fixes1268c (#167) - release this box's reference to its
+	 * custom-property environment. Guarded by !CLONE alongside
+	 * styles: a CLONE box shares both with its original and must
+	 * not drop a reference it never took. Detach custom_env BEFORE
+	 * styles. */
+	if (b->custom_env != NULL) {
+		env = b->custom_env;
+		b->custom_env = NULL;
+		if (!(b->flags & CLONE)) {
+			css_custom_env_unref(env);
+		}
+	}
+
 	if ((b->flags & STYLE_OWNED) && b->style != NULL) {
-		css_computed_style_destroy(b->style);
+		st = b->style;
 		b->style = NULL;
+		css_computed_style_destroy(st);
 	}
 
 	if (b->styles != NULL) {
-		css_select_results_destroy(b->styles);
+		styles = b->styles;
 		b->styles = NULL;
+		if (!(b->flags & CLONE)) {
+			css_select_results_destroy(styles);
+		}
 	}
 
 	if (b->href != NULL)
@@ -156,11 +178,11 @@ static int box_talloc_destructor(struct box *b)
 		 * An unconditional clear here would null the LIVE tree's back-pointer
 		 * and break box_for_node for the page that just rendered. Only ever
 		 * retract our own backlink. */
-		struct box *cur = NULL;
+		cur = NULL;
 		if (dom_node_get_user_data(b->node,
 				corestring_dom___ns_key_box_node_data,
 				&cur) == DOM_NO_ERR && cur == b) {
-			void *old_ud = NULL;
+			old_ud = NULL;
 			(void) dom_node_set_user_data(b->node,
 					corestring_dom___ns_key_box_node_data,
 					NULL, NULL, &old_ud);
@@ -315,31 +337,12 @@ void box_free(struct box *box)
 /* Exported function documented in html/box.h */
 void box_free_box(struct box *box)
 {
-	if (!(box->flags & CLONE)) {
-		/* fixes1076 - NULL it. box_free_box ends in talloc_free(box),
-		 * which runs box_talloc_destructor, which now also frees an
-		 * orphan gadget; without clearing the pointer here that path
-		 * would free the same control twice. */
-		if (box->gadget) {
-			form_free_control(box->gadget);
-			box->gadget = NULL;
-		}
-		if (box->scroll_x != NULL)
-			scrollbar_destroy(box->scroll_x);
-		if (box->scroll_y != NULL)
-			scrollbar_destroy(box->scroll_y);
-		if (box->styles != NULL)
-			css_select_results_destroy(box->styles);
-		/* fixes1268c (#167) - release this box's reference to its
-		 * custom-property environment. Guarded by !CLONE alongside
-		 * styles: a CLONE box shares both with its original and must
-		 * not drop a reference it never took. */
-		if (box->custom_env != NULL) {
-			css_custom_env_unref(box->custom_env);
-			box->custom_env = NULL;
-		}
-	}
+	if (box == NULL)
+		return;
 
+	/* Canonical release point is box_talloc_destructor. Freeing the box
+	 * runs the talloc destructor, which handles custom_env, styles, orphan
+	 * gadgets, scrollbars, and node backlinks while respecting CLONE flags. */
 	talloc_free(box);
 }
 

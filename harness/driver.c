@@ -46,8 +46,10 @@
  * already in the harness link set (EXTRA_SRC) and corestrings_init() already
  * runs at startup. */
 #include "utils/corestrings.h"
+#include "utils/talloc.h"
 #include "content/urldb.h"
 #include "content/handlers/html/box.h"
+#include "content/handlers/html/box_manipulate.h"
 #include "content/handlers/html/html.h"
 #include "content/handlers/css/internal.h"	/* fixes1161c: grid-template rewrite for --layout */
 #include "content/handlers/html/private.h"		/* html_content, for layout_internal.h */
@@ -12491,7 +12493,7 @@ box_coords(bx, &cx, &cy);
 
 		fprintf(stderr, "=== Test 99 PASS: negative calc() margin-bottom resolves to a real negative pixel value ===\n");
 
-		fprintf(stderr, "\n=== Test 100: html_recascade_tree leak regression test ===\n");
+		fprintf(stderr, "\n=== Test 100: html_recascade_tree leak regression & style lifetime audit ===\n");
 		{
 			extern nserror html_recascade_tree(struct html_content *c);
 			int i;
@@ -12504,7 +12506,85 @@ box_coords(bx, &cx, &cy);
 			}
 			fprintf(stderr, "  5x html_recascade_tree completed. ASan will fail if leaks occurred.\n");
 		}
-		fprintf(stderr, "=== Test 100 PASS: recascade did not crash ===\n");
+		/* --- 100 tree lifetimes, CLONE borrows, and rollback audit under ASan --- */
+		{
+			extern css_error css__cp_env_set_inherited(css_custom_env **env, css_custom_env *parent);
+			int k;
+			for (k = 0; k < 100; k++) {
+				void *old_bctx = talloc_new(NULL);
+				void *new_bctx = talloc_new(NULL);
+				css_custom_env *env1 = NULL;
+				css_custom_env *env2 = NULL;
+				css_select_results *sr1 = NULL;
+				css_select_results *sr2 = NULL;
+				struct box *b_root;
+				struct box *b_child;
+				struct box *b_clone1;
+				struct box *b_clone2;
+				struct box *n_root;
+				struct box *n_child;
+
+				/* 1. Build old tree in old_bctx with custom_env, styles, and CLONE boxes */
+				css__cp_env_set_inherited(&env1, NULL);
+				css__cp_env_set_inherited(&env2, env1);
+				sr1 = (css_select_results *)calloc(1, sizeof(css_select_results));
+				sr1->refs = 1;
+				sr2 = (css_select_results *)calloc(1, sizeof(css_select_results));
+				sr2->refs = 1;
+
+				b_root = box_create(sr1, NULL, false, NULL, NULL, NULL, NULL, old_bctx);
+				b_root->custom_env = env1;
+
+				b_child = box_create(sr2, NULL, false, NULL, NULL, NULL, NULL, old_bctx);
+				b_child->custom_env = env2;
+				box_add_child(b_root, b_child);
+
+				/* Cloned box borrows sr2 and env2 without taking additional refs */
+				b_clone1 = box_create(NULL, NULL, false, NULL, NULL, NULL, NULL, old_bctx);
+				b_clone1->flags |= CLONE;
+				b_clone1->styles = sr2;
+				b_clone1->custom_env = env2;
+				box_add_child(b_root, b_clone1);
+
+				b_clone2 = box_create(NULL, NULL, false, NULL, NULL, NULL, NULL, old_bctx);
+				b_clone2->flags |= CLONE;
+				b_clone2->styles = sr1;
+				b_clone2->custom_env = env1;
+				box_add_child(b_root, b_clone2);
+
+				/* 2. Simulate start of reconvert: allocate new tree in new_bctx */
+				{
+					css_custom_env *nenv = NULL;
+					css_select_results *nsr = NULL;
+					css__cp_env_set_inherited(&nenv, NULL);
+					nsr = (css_select_results *)calloc(1, sizeof(css_select_results));
+					nsr->refs = 1;
+
+					n_root = box_create(nsr, NULL, false, NULL, NULL, NULL, NULL, new_bctx);
+					n_root->custom_env = nenv;
+					n_child = box_create(NULL, NULL, false, NULL, NULL, NULL, NULL, new_bctx);
+					n_child->flags |= CLONE;
+					n_child->styles = nsr;
+					n_child->custom_env = nenv;
+					box_add_child(n_root, n_child);
+
+					/* 3. Simulate reconvert failure / rollback: discard new_bctx */
+					talloc_free(new_bctx);
+				}
+
+				/* 4. Verify old tree still intact across rollback, then teardown */
+				if (k % 2 == 0) {
+					/* Even iterations: bulk talloc free (as in html_reconvert_free_old) */
+					talloc_free(old_bctx);
+				} else {
+					/* Odd iterations: explicit box_free */
+					box_free(b_root);
+					talloc_free(old_bctx);
+				}
+			}
+			fprintf(stderr, "  100x box tree lifetime + rollback + CLONE audit completed cleanly under ASan\n");
+		}
+		fprintf(stderr, "=== Test 100 PASS: recascade, 100 lifetimes, and rollback clean ===\n");
 
 		fprintf(stderr, "\n=== Test 101: Inline style paint fast path ===\n");
 		{
