@@ -1663,6 +1663,16 @@ void macsurf_profile_accum_js(long us)      { (void)us; }
 void macsurf_profile_note_reflow(void) {}
 long macsurf_profile_get_js_us(void) { return 0; }
 void macsurf_profile_emit_phases(const char *url) { (void)url; }
+void macsurf_debug_log_flush(void) {}
+long macsurf_debug_log_read(char *out, long cap) { if (out && cap > 0) *out = '\0'; return 0; }
+void macsurf_debug_log_reconv_flush(int on) { (void)on; }
+void macsurf_reconv_pos_set(const char *phase, long seq, long node_ix,
+		const char *tag)
+{
+	(void)phase; (void)seq; (void)node_ix; (void)tag;
+}
+void macsurf_reconv_pos_flush(void) {}
+long macsurf_free_mem(void) { return -1; }
 
 #endif /* MACSURF_DEBUG */
 
