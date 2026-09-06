@@ -3048,13 +3048,6 @@ html_recascade_tree(html_content *c)
 					use_parent, use_root, box->node,
 					use_parent_env, &new_env);
 			if (new_styles != NULL) {
-				/* Start presentation effects before replacing the old computed
-				 * style. The transition handler only reads TickCount if this
-				 * change actually creates an effect. */
-				macsurf_transition_handle_style_change(c, box->node,
-						old_self_style,
-						new_styles->styles[CSS_PSEUDO_ELEMENT_NONE],
-						MACSURF_TRANSITION_NOW_AUTO);
 				/* fixes1268c - replace, releasing the
 				 * environment from the previous cascade. */
 				if (box->custom_env != NULL && !(box->flags & CLONE))

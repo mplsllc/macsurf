@@ -4799,12 +4799,13 @@ nserror html_reconvert(html_content *c)
 			" root_style=NULL", (long) macsurf_reconvert_seq, ncleared);
 	}
 
-	/* CSS Transitions 2B-2: full reconstruction normally replaces the box
-	 * tree wholesale, bypassing html_reconvert_fast_style's old/new style
-	 * comparison. Re-cascade the still-live old tree first so it can start
-	 * presentation effects from each genuine Style A -> Style B pair. The
-	 * normal reconstruction below still owns geometry and installs Style B. */
-	(void)html_recascade_tree(c);
+	/* Transition pre-recascade removal: retire stale effects scoped to this
+	 * content and document. Single-node opacity transitions are handled via
+	 * the mutation path (html_reconvert_fast_style). */
+	macsurf_transition_retire_content(c);
+	if (c->document != NULL) {
+		macsurf_transition_retire_document(c->document);
+	}
 
 	/* fixes896 - pin the DOM's live text-node dom_strings across the rebuild
 	 * window. Was fixes843, which walked c->layout (the box tree) for BOX_TEXT
@@ -6135,6 +6136,10 @@ static void html_destroy(struct content *c)
 	 * the freed+reused html_content, and resumes a garbage parser inside the
 	 * hubbub tokenizer (crash sig: lbzu through r4=0/1, r3=reuse garbage). */
 	macos9_schedule_cancel_owner(html);
+	macsurf_transition_retire_content(html);
+	if (html->document != NULL) {
+		macsurf_transition_retire_document(html->document);
+	}
 
 	/* If we're still converting a layout, cancel it.
 	 * fixes499g - NULL the context after cancel so a second html_destroy

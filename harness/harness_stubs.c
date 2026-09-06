@@ -161,3 +161,5 @@ static struct gui_layout_table harness_layout_table_impl = {
 	harness_font_width, NULL, NULL
 };
 struct gui_layout_table *macos9_layout_table = &harness_layout_table_impl;
+
+int macos9_debug_integrations_enabled(void) { return 0; }

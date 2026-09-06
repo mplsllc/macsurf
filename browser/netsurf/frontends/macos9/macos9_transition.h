@@ -33,6 +33,8 @@ struct macsurf_transition_effect {
     enum macsurf_transition_state state;
     bool in_use;
     uint8_t diag_milestones;
+    struct html_content *owner_content;
+    struct dom_document *owner_doc;
 };
 
 /* wrap-safe elapsed: unsigned 32-bit subtraction handles TickCount wrap */
@@ -58,8 +60,15 @@ void macsurf_transition_node_destroy(dom_node *node);
 int macsurf_transition_active_count(void);
 bool macsurf_transition_scheduler_active(void);
 
-/* 2B-2 opacity: shared style-change entry point */
+/* Content- and document-scoped effect retirement (no global reset) */
 struct html_content;
+struct dom_document;
+void macsurf_transition_retire_content(struct html_content *c);
+void macsurf_transition_retire_document(struct dom_document *doc);
+void macsurf_transition_set_owner(dom_node *node, uint32_t prop,
+        struct html_content *c, struct dom_document *doc);
+
+/* 2B-2 opacity: shared style-change entry point */
 bool macsurf_transition_handle_style_change(struct html_content *c, dom_node *node,
         const css_computed_style *old_style, const css_computed_style *new_style,
         uint32_t now);

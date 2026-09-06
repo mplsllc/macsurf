@@ -730,7 +730,7 @@ html_css_new_selection_context(html_content *c, css_select_ctx **ret_select_ctx)
 	css_select_ctx *select_ctx;
 
 	/* check that the base stylesheet loaded; layout fails without it */
-	if (c->stylesheets[STYLESHEET_BASE].sheet == NULL) {
+	if (c->stylesheets == NULL || c->stylesheets[STYLESHEET_BASE].sheet == NULL) {
 		MS_LOG("css_select_ctx: BASE sheet NULL");
 		return NSERROR_CSS_BASE;
 	}
