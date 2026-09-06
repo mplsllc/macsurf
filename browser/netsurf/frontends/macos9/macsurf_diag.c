@@ -118,6 +118,9 @@ void macsurf_diag_request_record(void *f, int state, int status,
 			g_req_cur_fail++;
 		}
 	}
+	if (bytes_in > 0) {
+		ms_diag_perf_net_bytes(bytes_in);
+	}
 }
 
 void macsurf_diag_nav_done(unsigned long nav_id)
@@ -128,6 +131,7 @@ void macsurf_diag_nav_done(unsigned long nav_id)
 	g_req_cur = 0;
 	g_req_cur_fail = 0;
 	ms_diag_progress(MS_PROGRESS_NETWORK);
+	ms_diag_perf_nav_done(nav_id, 0);
 }
 
 void macsurf_diag_navigation_begin(void)
@@ -136,6 +140,7 @@ void macsurf_diag_navigation_begin(void)
 	if (g_readiness_epoch == 0) g_readiness_epoch = 1;
 	memset(&g_readiness_sample, 0, sizeof(g_readiness_sample));
 	ms_diag_progress(MS_PROGRESS_NETWORK);
+	ms_diag_perf_nav_start(g_readiness_epoch, 1, "");
 }
 
 /* Bounded append: returns the new length, never writes past cap-1, always
@@ -2450,4 +2455,492 @@ long macsurf_diag_serialize_errors(char *buf, long cap)
 		n = diag_cat(buf, cap, n, line);
 	}
 	return n;
+}
+
+/* ===================== Performance Aggregation ===================== */
+#define MS_PERF_HISTORY_MAX 8
+
+static struct ms_perf_record g_perf_history[MS_PERF_HISTORY_MAX];
+static unsigned int g_perf_head = 0;
+static unsigned int g_perf_count = 0;
+static char g_perf_scenario[MS_PERF_SCENARIO_MAX] = "unspecified";
+static unsigned int g_perf_run = 0;
+
+static struct ms_perf_record *ms_diag_perf_active_record(void)
+{
+	if (g_perf_count == 0)
+		return NULL;
+	return &g_perf_history[(g_perf_head + MS_PERF_HISTORY_MAX - 1) % MS_PERF_HISTORY_MAX];
+}
+
+void ms_diag_perf_set_metadata(const char *scenario, unsigned int run)
+{
+	struct ms_perf_record *cur;
+	if (scenario != NULL && scenario[0] != '\0') {
+		strncpy(g_perf_scenario, scenario, sizeof(g_perf_scenario) - 1);
+		g_perf_scenario[sizeof(g_perf_scenario) - 1] = '\0';
+	} else {
+		strncpy(g_perf_scenario, "unspecified", sizeof(g_perf_scenario) - 1);
+	}
+	g_perf_run = run;
+
+	cur = ms_diag_perf_active_record();
+	if (cur != NULL) {
+		strncpy(cur->scenario, g_perf_scenario, sizeof(cur->scenario) - 1);
+		cur->scenario[sizeof(cur->scenario) - 1] = '\0';
+		cur->run = g_perf_run;
+	}
+}
+
+void ms_diag_perf_nav_start(unsigned long nav_id, unsigned long doc_gen, const char *url)
+{
+	struct ms_perf_record *old_rec;
+	struct ms_perf_record *rec;
+	unsigned long now = ms_diag_progress_now();
+
+	old_rec = ms_diag_perf_active_record();
+	if (old_rec != NULL && old_rec->status == MS_PERF_STATUS_ACTIVE) {
+		old_rec->endpoint_ms = (now >= old_rec->nav_start_ms) ? (now - old_rec->nav_start_ms) : 0;
+	}
+
+	rec = &g_perf_history[g_perf_head];
+	g_perf_head = (g_perf_head + 1) % MS_PERF_HISTORY_MAX;
+	if (g_perf_count < MS_PERF_HISTORY_MAX)
+		g_perf_count++;
+
+	memset(rec, 0, sizeof(*rec));
+	rec->nav_id = nav_id;
+	rec->doc_generation = doc_gen ? doc_gen : 1;
+	if (url != NULL) {
+		strncpy(rec->url, url, sizeof(rec->url) - 1);
+		rec->url[sizeof(rec->url) - 1] = '\0';
+	}
+	strncpy(rec->scenario, g_perf_scenario, sizeof(rec->scenario) - 1);
+	rec->scenario[sizeof(rec->scenario) - 1] = '\0';
+	rec->run = g_perf_run;
+	rec->status = MS_PERF_STATUS_ACTIVE;
+	rec->clock_res_ms = 1;
+	rec->metric_version = 1;
+	rec->nav_start_ms = now;
+}
+
+void ms_diag_perf_first_paint(unsigned long nav_id, unsigned long doc_gen)
+{
+	struct ms_perf_record *rec = ms_diag_perf_active_record();
+	(void)nav_id;
+	(void)doc_gen;
+
+	if (rec == NULL || rec->first_paint_recorded)
+		return;
+
+	rec->first_paint_recorded = true;
+	rec->first_paint_ms = (ms_diag_progress_now() >= rec->nav_start_ms) ?
+		(ms_diag_progress_now() - rec->nav_start_ms) : 0;
+}
+
+void ms_diag_perf_nav_done(unsigned long nav_id, unsigned long doc_gen)
+{
+	struct ms_perf_record *rec = ms_diag_perf_active_record();
+	unsigned long now = ms_diag_progress_now();
+	(void)nav_id;
+	(void)doc_gen;
+
+	if (rec == NULL || rec->done_ms != 0)
+		return;
+
+	rec->done_ms = (now >= rec->nav_start_ms) ? (now - rec->nav_start_ms) : 0;
+	rec->status = MS_PERF_STATUS_DONE;
+	rec->endpoint_ms = rec->done_ms;
+}
+
+void ms_diag_perf_nav_abort(unsigned long nav_id, unsigned long doc_gen)
+{
+	struct ms_perf_record *rec = ms_diag_perf_active_record();
+	unsigned long now = ms_diag_progress_now();
+	(void)nav_id;
+	(void)doc_gen;
+
+	if (rec == NULL)
+		return;
+
+	rec->status = MS_PERF_STATUS_ABORTED;
+	rec->endpoint_ms = (now >= rec->nav_start_ms) ? (now - rec->nav_start_ms) : 0;
+}
+
+void ms_diag_perf_nav_fail(unsigned long nav_id, unsigned long doc_gen)
+{
+	struct ms_perf_record *rec = ms_diag_perf_active_record();
+	unsigned long now = ms_diag_progress_now();
+	(void)nav_id;
+	(void)doc_gen;
+
+	if (rec == NULL)
+		return;
+
+	rec->status = MS_PERF_STATUS_FAILED;
+	rec->endpoint_ms = (now >= rec->nav_start_ms) ? (now - rec->nav_start_ms) : 0;
+}
+
+void ms_diag_perf_js_enter(void)
+{
+	struct ms_perf_record *rec = ms_diag_perf_active_record();
+	if (rec == NULL)
+		return;
+	if (rec->js_depth++ == 0)
+		rec->js_start_ms = ms_diag_progress_now();
+}
+
+void ms_diag_perf_js_leave(void)
+{
+	struct ms_perf_record *rec = ms_diag_perf_active_record();
+	if (rec == NULL || rec->js_depth == 0)
+		return;
+	if (--rec->js_depth == 0) {
+		unsigned long now = ms_diag_progress_now();
+		rec->js_wall_ms += (now >= rec->js_start_ms) ? (now - rec->js_start_ms) : 0;
+	}
+}
+
+void ms_diag_perf_js_wrapper_enter(void)
+{
+	struct ms_perf_record *rec = ms_diag_perf_active_record();
+	if (rec == NULL)
+		return;
+	if (rec->js_wrapper_depth++ == 0)
+		rec->js_wrapper_start_ms = ms_diag_progress_now();
+}
+
+void ms_diag_perf_js_wrapper_leave(void)
+{
+	struct ms_perf_record *rec = ms_diag_perf_active_record();
+	if (rec == NULL || rec->js_wrapper_depth == 0)
+		return;
+	if (--rec->js_wrapper_depth == 0) {
+		unsigned long now = ms_diag_progress_now();
+		rec->js_wrapper_ms += (now >= rec->js_wrapper_start_ms) ? (now - rec->js_wrapper_start_ms) : 0;
+	}
+}
+
+void ms_diag_perf_box_enter(void)
+{
+	struct ms_perf_record *rec = ms_diag_perf_active_record();
+	if (rec == NULL)
+		return;
+	if (rec->box_depth++ == 0)
+		rec->box_start_ms = ms_diag_progress_now();
+}
+
+void ms_diag_perf_box_leave(void)
+{
+	struct ms_perf_record *rec = ms_diag_perf_active_record();
+	if (rec == NULL || rec->box_depth == 0)
+		return;
+	if (--rec->box_depth == 0) {
+		unsigned long now = ms_diag_progress_now();
+		rec->box_ms += (now >= rec->box_start_ms) ? (now - rec->box_start_ms) : 0;
+	}
+}
+
+void ms_diag_perf_layout_enter(void)
+{
+	struct ms_perf_record *rec = ms_diag_perf_active_record();
+	if (rec == NULL)
+		return;
+	if (rec->layout_depth++ == 0)
+		rec->layout_start_ms = ms_diag_progress_now();
+}
+
+void ms_diag_perf_layout_leave(void)
+{
+	struct ms_perf_record *rec = ms_diag_perf_active_record();
+	if (rec == NULL || rec->layout_depth == 0)
+		return;
+	if (--rec->layout_depth == 0) {
+		unsigned long now = ms_diag_progress_now();
+		rec->layout_ms += (now >= rec->layout_start_ms) ? (now - rec->layout_start_ms) : 0;
+	}
+}
+
+void ms_diag_perf_paint_enter(void)
+{
+	struct ms_perf_record *rec = ms_diag_perf_active_record();
+	if (rec == NULL)
+		return;
+	if (rec->paint_depth++ == 0)
+		rec->paint_start_ms = ms_diag_progress_now();
+}
+
+void ms_diag_perf_paint_leave(void)
+{
+	struct ms_perf_record *rec = ms_diag_perf_active_record();
+	if (rec == NULL || rec->paint_depth == 0)
+		return;
+	if (--rec->paint_depth == 0) {
+		unsigned long now = ms_diag_progress_now();
+		rec->paint_ms += (now >= rec->paint_start_ms) ? (now - rec->paint_start_ms) : 0;
+	}
+}
+
+void ms_diag_perf_reconvert_attempt(void)
+{
+	struct ms_perf_record *rec = ms_diag_perf_active_record();
+	if (rec != NULL)
+		rec->reconverts_attempted++;
+}
+
+void ms_diag_perf_reconvert_defer(void)
+{
+	struct ms_perf_record *rec = ms_diag_perf_active_record();
+	if (rec != NULL)
+		rec->reconverts_deferred++;
+}
+
+void ms_diag_perf_reconvert_start(void)
+{
+	struct ms_perf_record *rec = ms_diag_perf_active_record();
+	if (rec == NULL)
+		return;
+	if (rec->reconvert_depth++ == 0)
+		rec->reconvert_start_ms = ms_diag_progress_now();
+}
+
+void ms_diag_perf_reconvert_end(bool success)
+{
+	struct ms_perf_record *rec = ms_diag_perf_active_record();
+	if (rec == NULL || rec->reconvert_depth == 0)
+		return;
+	if (--rec->reconvert_depth == 0) {
+		unsigned long now = ms_diag_progress_now();
+		unsigned long span = (now >= rec->reconvert_start_ms) ? (now - rec->reconvert_start_ms) : 0;
+		rec->reconverts_total_ms += span;
+		if (span > rec->reconverts_max_ms)
+			rec->reconverts_max_ms = span;
+		if (success)
+			rec->reconverts_completed++;
+		else
+			rec->reconverts_failed++;
+	}
+}
+
+void ms_diag_perf_net_bytes(unsigned long bytes)
+{
+	struct ms_perf_record *rec = ms_diag_perf_active_record();
+	if (rec != NULL)
+		rec->net_bytes += bytes;
+}
+
+void ms_diag_perf_cache_hit_bytes(unsigned long bytes)
+{
+	struct ms_perf_record *rec = ms_diag_perf_active_record();
+	if (rec != NULL)
+		rec->cache_hit_bytes += bytes;
+}
+
+static void ms_perf_hist_sample_internal(struct ms_perf_histogram *h, unsigned long latency_ms, unsigned long presentation_ms)
+{
+	unsigned int bin;
+	if (h == NULL)
+		return;
+
+	h->samples++;
+	if (latency_ms > h->max_latency_ms)
+		h->max_latency_ms = latency_ms;
+
+	if (latency_ms >= MS_PERF_HIST_MAX_MS) {
+		h->overflow++;
+	} else {
+		bin = (unsigned int)(latency_ms / MS_PERF_HIST_BIN_WIDTH_MS);
+		if (bin >= MS_PERF_HIST_BINS)
+			bin = MS_PERF_HIST_BINS - 1;
+		h->bins[bin]++;
+	}
+
+	if (presentation_ms > 0) {
+		if (h->last_presentation_ms > 0 && presentation_ms >= h->last_presentation_ms) {
+			unsigned long gap = presentation_ms - h->last_presentation_ms;
+			if (gap > h->max_gap_ms)
+				h->max_gap_ms = gap;
+		}
+		h->last_presentation_ms = presentation_ms;
+	}
+}
+
+void ms_diag_perf_scroll_input(unsigned long event_timestamp_ms)
+{
+	struct ms_perf_record *rec = ms_diag_perf_active_record();
+	if (rec == NULL)
+		return;
+	if (rec->pending_scroll_event_ms == 0)
+		rec->pending_scroll_event_ms = event_timestamp_ms ? event_timestamp_ms : ms_diag_progress_now();
+}
+
+void ms_diag_perf_scroll_present(unsigned long presentation_ms)
+{
+	struct ms_perf_record *rec = ms_diag_perf_active_record();
+	unsigned long now;
+	unsigned long latency;
+	struct ms_perf_histogram *target;
+
+	if (rec == NULL || rec->pending_scroll_event_ms == 0)
+		return;
+
+	now = presentation_ms ? presentation_ms : ms_diag_progress_now();
+	latency = (now >= rec->pending_scroll_event_ms) ? (now - rec->pending_scroll_event_ms) : 0;
+	target = (rec->status == MS_PERF_STATUS_ACTIVE) ? &rec->hist_nav : &rec->hist_scroll;
+
+	ms_perf_hist_sample_internal(target, latency, now);
+	rec->pending_scroll_event_ms = 0;
+}
+
+void ms_diag_perf_scroll_cancel(void)
+{
+	struct ms_perf_record *rec = ms_diag_perf_active_record();
+	if (rec != NULL)
+		rec->pending_scroll_event_ms = 0;
+}
+
+static void ms_perf_hist_percentile(const struct ms_perf_histogram *h, unsigned int pct, char *out, size_t out_cap)
+{
+	uint32_t k;
+	uint32_t accum = 0;
+	unsigned int i;
+
+	if (h == NULL || h->samples == 0) {
+		snprintf(out, out_cap, "n/a");
+		return;
+	}
+
+	k = (uint32_t)((((unsigned long)pct * (unsigned long)h->samples) + 99UL) / 100UL);
+	if (k == 0)
+		k = 1;
+	if (k > h->samples)
+		k = h->samples;
+
+	for (i = 0; i < MS_PERF_HIST_BINS; i++) {
+		accum += h->bins[i];
+		if (accum >= k) {
+			snprintf(out, out_cap, "[%u,%u) ms",
+				i * MS_PERF_HIST_BIN_WIDTH_MS,
+				(i + 1) * MS_PERF_HIST_BIN_WIDTH_MS);
+			return;
+		}
+	}
+
+	snprintf(out, out_cap, ">=4096 ms");
+}
+
+long macsurf_diag_serialize_perf(char *buf, long cap)
+{
+	char line[256];
+	char med_str[32];
+	char p95_str[32];
+	long n = 0;
+	unsigned int count;
+
+	if (buf == NULL || cap < 2)
+		return 0;
+
+	buf[0] = '\0';
+	n = diag_cat(buf, cap, n, "MSDIAG 1 perf\n");
+	snprintf(line, sizeof(line), "version=1\nscenario=%s run=%u\nrecords=%u\n",
+		g_perf_scenario, g_perf_run, g_perf_count);
+	n = diag_cat(buf, cap, n, line);
+
+	for (count = 0; count < g_perf_count; count++) {
+		struct ms_perf_record *rec;
+		unsigned int idx = (g_perf_head + MS_PERF_HISTORY_MAX - g_perf_count + count) % MS_PERF_HISTORY_MAX;
+		rec = &g_perf_history[idx];
+
+		n = diag_cat(buf, cap, n, "\n[record]\n");
+		snprintf(line, sizeof(line), "generation=%lu nav=%lu url=%s\n",
+			rec->doc_generation, rec->nav_id, rec->url);
+		n = diag_cat(buf, cap, n, line);
+
+		snprintf(line, sizeof(line), "status=%s clock_res_ms=%d metric_version=%d\n",
+			(rec->status == MS_PERF_STATUS_DONE) ? "done" :
+			(rec->status == MS_PERF_STATUS_ABORTED) ? "aborted" :
+			(rec->status == MS_PERF_STATUS_FAILED) ? "failed" : "active",
+			rec->clock_res_ms, rec->metric_version);
+		n = diag_cat(buf, cap, n, line);
+
+		snprintf(line, sizeof(line), "nav_start_ms=%lu\n", rec->nav_start_ms);
+		n = diag_cat(buf, cap, n, line);
+
+		if (rec->first_paint_recorded)
+			snprintf(line, sizeof(line), "first_paint_ms=%lu\n", rec->first_paint_ms);
+		else
+			snprintf(line, sizeof(line), "first_paint_ms=n/a\n");
+		n = diag_cat(buf, cap, n, line);
+
+		if (rec->status == MS_PERF_STATUS_DONE)
+			snprintf(line, sizeof(line), "done_ms=%lu\n", rec->done_ms);
+		else
+			snprintf(line, sizeof(line), "done_ms=n/a\n");
+		n = diag_cat(buf, cap, n, line);
+
+		snprintf(line, sizeof(line), "endpoint_ms=%lu\n", rec->endpoint_ms);
+		n = diag_cat(buf, cap, n, line);
+
+		snprintf(line, sizeof(line), "js_wall_ms=%lu js_wrapper_ms=%lu\n",
+			rec->js_wall_ms, rec->js_wrapper_ms);
+		n = diag_cat(buf, cap, n, line);
+
+		snprintf(line, sizeof(line), "box_ms=%lu layout_ms=%lu paint_ms=%lu\n",
+			rec->box_ms, rec->layout_ms, rec->paint_ms);
+		n = diag_cat(buf, cap, n, line);
+
+		snprintf(line, sizeof(line),
+			"reconverts attempted=%lu deferred=%lu completed=%lu failed=%lu total_ms=%lu max_ms=%lu\n",
+			rec->reconverts_attempted, rec->reconverts_deferred,
+			rec->reconverts_completed, rec->reconverts_failed,
+			rec->reconverts_total_ms, rec->reconverts_max_ms);
+		n = diag_cat(buf, cap, n, line);
+
+		snprintf(line, sizeof(line), "network_bytes=%lu cache_hit_bytes=%lu\n",
+			rec->net_bytes, rec->cache_hit_bytes);
+		n = diag_cat(buf, cap, n, line);
+
+		snprintf(line, sizeof(line), "percentile_method=hist16ms-v1\n");
+		n = diag_cat(buf, cap, n, line);
+
+		ms_perf_hist_percentile(&rec->hist_nav, 50, med_str, sizeof(med_str));
+		ms_perf_hist_percentile(&rec->hist_nav, 95, p95_str, sizeof(p95_str));
+		snprintf(line, sizeof(line),
+			"scroll_nav samples=%lu median=%s p95=%s max_latency_ms=%lu max_gap_ms=%lu overflow=%lu\n",
+			(unsigned long)rec->hist_nav.samples, med_str, p95_str,
+			rec->hist_nav.max_latency_ms, rec->hist_nav.max_gap_ms,
+			(unsigned long)rec->hist_nav.overflow);
+		n = diag_cat(buf, cap, n, line);
+
+		ms_perf_hist_percentile(&rec->hist_scroll, 50, med_str, sizeof(med_str));
+		ms_perf_hist_percentile(&rec->hist_scroll, 95, p95_str, sizeof(p95_str));
+		snprintf(line, sizeof(line),
+			"scroll_sustained samples=%lu median=%s p95=%s max_latency_ms=%lu max_gap_ms=%lu overflow=%lu\n",
+			(unsigned long)rec->hist_scroll.samples, med_str, p95_str,
+			rec->hist_scroll.max_latency_ms, rec->hist_scroll.max_gap_ms,
+			(unsigned long)rec->hist_scroll.overflow);
+		n = diag_cat(buf, cap, n, line);
+	}
+
+	return n;
+}
+
+void macsurf_test_perf_reset(void)
+{
+	memset(g_perf_history, 0, sizeof(g_perf_history));
+	g_perf_head = 0;
+	g_perf_count = 0;
+	strncpy(g_perf_scenario, "unspecified", sizeof(g_perf_scenario) - 1);
+	g_perf_scenario[sizeof(g_perf_scenario) - 1] = '\0';
+	g_perf_run = 0;
+}
+
+void macsurf_test_perf_hist_sample(struct ms_perf_histogram *h, unsigned long latency_ms, unsigned long presentation_ms)
+{
+	ms_perf_hist_sample_internal(h, latency_ms, presentation_ms);
+}
+
+void macsurf_test_perf_hist_percentile(const struct ms_perf_histogram *h, unsigned int pct, char *out, size_t out_cap)
+{
+	ms_perf_hist_percentile(h, pct, out, out_cap);
 }

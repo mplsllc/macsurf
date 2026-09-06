@@ -13462,5 +13462,174 @@ box_coords(bx, &cx, &cy);
 		fprintf(stderr, "=== Test 109 PASS: Media-change gating (semantic equality across distinct storage, quiet init, re-eval on change) ===\n");
 	}
 
+	/* --- Test 110: Performance aggregation (fixed storage, 16ms histogram, percentiles, multi-window, nesting) --- */
+	{
+		struct ms_perf_histogram h;
+		char p_str[64];
+		char ser_buf[4096];
+		long ser_len;
+
+		fprintf(stderr, "\n=== Test 110: Performance aggregation & 16ms histogram ===\n");
+
+		/* Part 1: Histogram boundary testing */
+		memset(&h, 0, sizeof(h));
+		macsurf_test_perf_hist_sample(&h, 0, 100);    /* bin 0: [0, 16) */
+		macsurf_test_perf_hist_sample(&h, 15, 200);   /* bin 0: [0, 16) */
+		macsurf_test_perf_hist_sample(&h, 16, 350);   /* bin 1: [16, 32) */
+		macsurf_test_perf_hist_sample(&h, 4095, 450); /* bin 255: [4080, 4096) */
+		macsurf_test_perf_hist_sample(&h, 4096, 500); /* overflow: >= 4096 */
+		macsurf_test_perf_hist_sample(&h, 5000, 600); /* overflow: >= 4096 */
+
+		if (h.samples != 6) {
+			fprintf(stderr, "FAIL: Test 110 sample count mismatch (%u)\n", h.samples);
+			return 1;
+		}
+		if (h.bins[0] != 2) {
+			fprintf(stderr, "FAIL: Test 110 bin 0 count mismatch (%u)\n", h.bins[0]);
+			return 1;
+		}
+		if (h.bins[1] != 1) {
+			fprintf(stderr, "FAIL: Test 110 bin 1 count mismatch (%u)\n", h.bins[1]);
+			return 1;
+		}
+		if (h.bins[255] != 1) {
+			fprintf(stderr, "FAIL: Test 110 bin 255 count mismatch (%u)\n", h.bins[255]);
+			return 1;
+		}
+		if (h.overflow != 2) {
+			fprintf(stderr, "FAIL: Test 110 overflow count mismatch (%u)\n", h.overflow);
+			return 1;
+		}
+		if (h.max_latency_ms != 5000) {
+			fprintf(stderr, "FAIL: Test 110 max_latency_ms mismatch (%lu)\n", h.max_latency_ms);
+			return 1;
+		}
+		/* Gaps: 200-100=100, 350-200=150, 450-350=100, 500-450=50, 600-500=100 -> max_gap = 150 */
+		if (h.max_gap_ms != 150) {
+			fprintf(stderr, "FAIL: Test 110 max_gap_ms mismatch (%lu)\n", h.max_gap_ms);
+			return 1;
+		}
+
+		/* Part 2: Nearest-rank percentiles */
+		/* Empty histogram -> n/a */
+		{
+			struct ms_perf_histogram empty_h;
+			memset(&empty_h, 0, sizeof(empty_h));
+			macsurf_test_perf_hist_percentile(&empty_h, 50, p_str, sizeof(p_str));
+			if (strcmp(p_str, "n/a") != 0) {
+				fprintf(stderr, "FAIL: Test 110 empty median not n/a (%s)\n", p_str);
+				return 1;
+			}
+		}
+
+		/* Single sample at 25 ms (bin 1: [16,32) ms) */
+		{
+			struct ms_perf_histogram s_h;
+			memset(&s_h, 0, sizeof(s_h));
+			macsurf_test_perf_hist_sample(&s_h, 25, 0);
+			macsurf_test_perf_hist_percentile(&s_h, 50, p_str, sizeof(p_str));
+			if (strcmp(p_str, "[16,32) ms") != 0) {
+				fprintf(stderr, "FAIL: Test 110 single sample median mismatch (%s)\n", p_str);
+				return 1;
+			}
+			macsurf_test_perf_hist_percentile(&s_h, 95, p_str, sizeof(p_str));
+			if (strcmp(p_str, "[16,32) ms") != 0) {
+				fprintf(stderr, "FAIL: Test 110 single sample p95 mismatch (%s)\n", p_str);
+				return 1;
+			}
+		}
+
+		/* Overflow reporting for percentiles */
+		{
+			struct ms_perf_histogram of_h;
+			memset(&of_h, 0, sizeof(of_h));
+			macsurf_test_perf_hist_sample(&of_h, 4500, 0);
+			macsurf_test_perf_hist_percentile(&of_h, 50, p_str, sizeof(p_str));
+			if (strcmp(p_str, ">=4096 ms") != 0) {
+				fprintf(stderr, "FAIL: Test 110 overflow median mismatch (%s)\n", p_str);
+				return 1;
+			}
+		}
+
+		/* Part 3: Overlapping phases, nesting protection, and repeated reformats */
+		macsurf_test_perf_reset();
+		ms_diag_perf_set_metadata("test_scenario", 42);
+
+		/* Window 1 Navigation */
+		ms_diag_perf_nav_start(101, 1, "https://macsurf.org/test1");
+		ms_diag_perf_first_paint(101, 1);
+		/* Repeated first-paint calls must be ignored (record once) */
+		ms_diag_perf_first_paint(101, 1);
+
+		/* Nested JS execution: outer JS enters, nested wrapper enters, wrapper leaves, JS leaves */
+		ms_diag_perf_js_enter();
+		ms_diag_perf_js_wrapper_enter();
+		ms_diag_perf_js_wrapper_leave();
+		ms_diag_perf_js_leave();
+
+		/* Box and layout phases */
+		ms_diag_perf_box_enter();
+		ms_diag_perf_box_leave();
+		ms_diag_perf_layout_enter();
+		ms_diag_perf_layout_leave();
+
+		/* Repeated reformats & reconverts */
+		ms_diag_perf_reconvert_attempt();
+		ms_diag_perf_reconvert_defer();
+		ms_diag_perf_reconvert_start();
+		ms_diag_perf_reconvert_end(true);
+
+		ms_diag_perf_reconvert_attempt();
+		ms_diag_perf_reconvert_start();
+		ms_diag_perf_reconvert_end(false);
+
+		/* Bytes */
+		ms_diag_perf_net_bytes(1024);
+		ms_diag_perf_cache_hit_bytes(512);
+
+		/* Scroll latency with input coalescing during active nav */
+		ms_diag_perf_scroll_input(1000);
+		ms_diag_perf_scroll_input(1005); /* coalescing keeps 1000 */
+		ms_diag_perf_scroll_present(1025); /* 25 ms latency -> [16,32) ms */
+
+		/* Navigation completes */
+		ms_diag_perf_nav_done(101, 1);
+
+		/* Sustained scrolling after DONE */
+		ms_diag_perf_scroll_input(2000);
+		ms_diag_perf_scroll_present(2050); /* 50 ms latency -> [48,64) ms */
+
+		/* Part 4: Multiple windows / generations and aborts */
+		/* Window 2 Navigation starts, but is aborted before DONE and without first paint */
+		ms_diag_perf_nav_start(102, 1, "https://macsurf.org/test2");
+		ms_diag_perf_nav_abort(102, 1);
+
+		/* Part 5: Serialization verification */
+		memset(ser_buf, 0, sizeof(ser_buf));
+		ser_len = macsurf_diag_serialize_perf(ser_buf, (long)sizeof(ser_buf));
+		if (ser_len <= 0) {
+			fprintf(stderr, "FAIL: Test 110 serialization failed\n");
+			return 1;
+		}
+
+		if (strstr(ser_buf, "MSDIAG 1 perf") == NULL ||
+		    strstr(ser_buf, "scenario=test_scenario run=42") == NULL ||
+		    strstr(ser_buf, "records=2") == NULL ||
+		    strstr(ser_buf, "generation=1 nav=101 url=https://macsurf.org/test1") == NULL ||
+		    strstr(ser_buf, "status=done") == NULL ||
+		    strstr(ser_buf, "reconverts attempted=2 deferred=1 completed=1 failed=1") == NULL ||
+		    strstr(ser_buf, "network_bytes=1024 cache_hit_bytes=512") == NULL ||
+		    strstr(ser_buf, "percentile_method=hist16ms-v1") == NULL ||
+		    strstr(ser_buf, "generation=1 nav=102 url=https://macsurf.org/test2") == NULL ||
+		    strstr(ser_buf, "status=aborted") == NULL ||
+		    strstr(ser_buf, "first_paint_ms=n/a") == NULL ||
+		    strstr(ser_buf, "done_ms=n/a") == NULL) {
+			fprintf(stderr, "FAIL: Test 110 serialized output content mismatch:\n%s\n", ser_buf);
+			return 1;
+		}
+
+		fprintf(stderr, "=== Test 110 PASS: Performance aggregation (fixed storage, 16ms histogram, percentiles, multi-window, nesting) ===\n");
+	}
+
 	return 0;
 }
