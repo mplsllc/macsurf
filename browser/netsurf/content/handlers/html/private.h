@@ -266,6 +266,10 @@ typedef struct html_content {
 	bool page_js_scheduled;
 	void *page_js_payload;
 
+	/* Stage 1: Semantic media snapshot for media-change gating */
+	css_media media_snapshot;
+	bool media_snapshot_valid;
+
 } html_content;
 
 enum html_page_js_events {

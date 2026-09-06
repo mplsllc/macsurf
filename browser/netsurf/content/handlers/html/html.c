@@ -230,6 +230,74 @@ static void html_page_js_cancel(html_content *c)
 	c->page_js_pending = 0;
 }
 
+static bool css_media_equal(const css_media *a, const css_media *b)
+{
+	bool match = false;
+
+	if (a == b)
+		return true;
+	if (a == NULL || b == NULL)
+		return false;
+
+	if (a->type != b->type ||
+	    a->width != b->width ||
+	    a->height != b->height ||
+	    a->aspect_ratio != b->aspect_ratio ||
+	    a->orientation != b->orientation ||
+	    a->resolution.value != b->resolution.value ||
+	    a->resolution.unit != b->resolution.unit ||
+	    a->scan != b->scan ||
+	    a->grid != b->grid ||
+	    a->update != b->update ||
+	    a->overflow_block != b->overflow_block ||
+	    a->overflow_inline != b->overflow_inline ||
+	    a->color != b->color ||
+	    a->color_index != b->color_index ||
+	    a->monochrome != b->monochrome ||
+	    a->inverted_colors != b->inverted_colors ||
+	    a->pointer != b->pointer ||
+	    a->any_pointer != b->any_pointer ||
+	    a->hover != b->hover ||
+	    a->any_hover != b->any_hover ||
+	    a->light_level != b->light_level ||
+	    a->scripting != b->scripting)
+		return false;
+
+	if (a->prefers_color_scheme != b->prefers_color_scheme) {
+		if (a->prefers_color_scheme == NULL || b->prefers_color_scheme == NULL)
+			return false;
+		if (lwc_string_isequal(a->prefers_color_scheme, b->prefers_color_scheme, &match) != lwc_error_ok || !match)
+			return false;
+	}
+
+	return true;
+}
+
+static void html_media_update_and_gate(html_content *c)
+{
+	if (c == NULL)
+		return;
+
+	if (!c->media_snapshot_valid) {
+		/* Initial format: establish baseline snapshot without change event */
+		c->media_snapshot = c->media;
+		if (c->media_snapshot.prefers_color_scheme != NULL)
+			lwc_string_ref(c->media_snapshot.prefers_color_scheme);
+		c->media_snapshot_valid = true;
+		return;
+	}
+
+	if (!css_media_equal(&c->media, &c->media_snapshot)) {
+		/* Semantic change detected: update snapshot and queue media event */
+		if (c->media_snapshot.prefers_color_scheme != NULL)
+			lwc_string_unref(c->media_snapshot.prefers_color_scheme);
+		c->media_snapshot = c->media;
+		if (c->media_snapshot.prefers_color_scheme != NULL)
+			lwc_string_ref(c->media_snapshot.prefers_color_scheme);
+		html_page_js_queue(c, HTML_PAGE_JS_MEDIA);
+	}
+}
+
 long macos9_html_bytes_processed = 0;
 /* fixes560 - per-load reformat sequence counter.  Reset to 0 at
  * parse-convert-done (start of a page's reformat cycle) and incremented at
@@ -1979,6 +2047,8 @@ html_create_html_data(html_content *c, const http_parameter *params)
 	c->doc_generation = 1;
 	c->page_js_scheduled = false;
 	c->page_js_payload = NULL;
+	c->media_snapshot_valid = false;
+	memset(&c->media_snapshot, 0, sizeof(c->media_snapshot));
 
 	c->enable_scripting = nsoption_bool(enable_javascript);
 #ifdef __MACOS9__
@@ -2351,6 +2421,12 @@ html_process_encoding_change(struct content *c,
 	 * old DOM-document id; html_begin_conversion opens a fresh one. */
 	html->doc_generation++;
 	html_page_js_cancel(html);
+	if (html->media_snapshot_valid) {
+		if (html->media_snapshot.prefers_color_scheme != NULL)
+			lwc_string_unref(html->media_snapshot.prefers_color_scheme);
+		html->media_snapshot_valid = false;
+		memset(&html->media_snapshot, 0, sizeof(html->media_snapshot));
+	}
 	if (html->doc_id != 0) {
 		ms_diag_document_close(html->doc_id);
 		html->doc_id = 0;
@@ -3419,6 +3495,16 @@ void macsurf_test_set_reconvert_depth(int depth)
 int macsurf_test_get_reconvert_depth(void)
 {
 	return g_html_reconvert_depth;
+}
+
+bool macsurf_test_css_media_equal(const css_media *a, const css_media *b)
+{
+	return css_media_equal(a, b);
+}
+
+void macsurf_test_html_media_update_and_gate(html_content *c)
+{
+	html_media_update_and_gate(c);
 }
 #endif
 
@@ -6081,7 +6167,7 @@ static void html_reformat(struct content *c, int width, int height)
 	/* The completed layout has published the css_media state author CSS uses.
 	 * Deliver MediaQueryList changes only after this image/layout callback has
 	 * fully unwound; page listeners are allowed to mutate the DOM. */
-	html_page_js_queue(htmlc, HTML_PAGE_JS_MEDIA);
+	html_media_update_and_gate(htmlc);
 
 	/* calculate next reflow time at three times what it took to reflow */
 	nsu_getmonotonic_ms(&ms_after);
@@ -6344,6 +6430,12 @@ static void html_destroy(struct content *c)
 
 	lwc_string_unref(html->media.prefers_color_scheme);
 	html->media.prefers_color_scheme = NULL;
+
+	if (html->media_snapshot_valid) {
+		if (html->media_snapshot.prefers_color_scheme != NULL)
+			lwc_string_unref(html->media_snapshot.prefers_color_scheme);
+		html->media_snapshot_valid = false;
+	}
 
 	/* Free stylesheets */
 	html_css_free_stylesheets(html);

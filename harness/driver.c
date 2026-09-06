@@ -13292,5 +13292,175 @@ box_coords(bx, &cx, &cy);
 		fprintf(stderr, "=== Test 108 PASS: Deferred coalesced page-JS delivery (ordered, token-gated, gen-tracked, cancellable) ===\n");
 	}
 
+	/* --- Test 109: Media-change gating and semantic equality ----------- */
+	{
+		extern bool macsurf_test_css_media_equal(const css_media *a, const css_media *b);
+		extern void macsurf_test_html_media_update_and_gate(html_content *c);
+		extern void macsurf_test_set_reconvert_depth(int depth);
+		css_media m1;
+		css_media m2;
+		struct html_content t109c;
+		lwc_string *str_dark = NULL;
+		lwc_string *str_light = NULL;
+
+		fprintf(stderr, "\n=== Test 109: Media-change gating and semantic equality ===\n");
+
+		if (lwc_intern_string("dark", 4, &str_dark) != lwc_error_ok ||
+		    lwc_intern_string("light", 5, &str_light) != lwc_error_ok) {
+			fprintf(stderr, "FAIL: Test 109 intern strings\n");
+			return 1;
+		}
+
+		memset(&m1, 0, sizeof(m1));
+		m1.type = CSS_MEDIA_SCREEN;
+		m1.width = INTTOFIX(1024);
+		m1.height = INTTOFIX(768);
+		m1.aspect_ratio = INTTOFIX(1);
+		m1.orientation = CSS_MEDIA_ORIENTATION_LANDSCAPE;
+		m1.resolution.value = INTTOFIX(96);
+		m1.resolution.unit = CSS_UNIT_PX;
+		m1.scan = CSS_MEDIA_SCAN_PROGRESSIVE;
+		m1.grid = 0;
+		m1.update = CSS_MEDIA_UPDATE_FREQUENCY_NORMAL;
+		m1.overflow_block = CSS_MEDIA_OVERFLOW_BLOCK_SCROLL;
+		m1.overflow_inline = CSS_MEDIA_OVERFLOW_INLINE_SCROLL;
+		m1.color = INTTOFIX(24);
+		m1.color_index = 0;
+		m1.monochrome = 0;
+		m1.inverted_colors = 0;
+		m1.prefers_color_scheme = str_dark;
+		m1.pointer = CSS_MEDIA_POINTER_FINE;
+		m1.any_pointer = CSS_MEDIA_POINTER_FINE;
+		m1.hover = CSS_MEDIA_HOVER_HOVER;
+		m1.any_hover = CSS_MEDIA_HOVER_HOVER;
+		m1.light_level = CSS_MEDIA_LIGHT_LEVEL_NORMAL;
+		m1.scripting = CSS_MEDIA_SCRIPTING_ENABLED;
+
+		/* Separate storage instance */
+		memset(&m2, 0, sizeof(m2));
+		m2 = m1;
+
+		/* Part 1: Semantic equality with distinct storage */
+		if (&m1 == &m2) {
+			fprintf(stderr, "FAIL: Test 109 storage addresses not distinct\n");
+			return 1;
+		}
+		if (!macsurf_test_css_media_equal(&m1, &m2)) {
+			fprintf(stderr, "FAIL: Test 109 identical values not equal\n");
+			return 1;
+		}
+
+		/* Part 2: Field-by-field inequality detection */
+		m2.width = INTTOFIX(800);
+		if (macsurf_test_css_media_equal(&m1, &m2)) {
+			fprintf(stderr, "FAIL: Test 109 width inequality missed\n");
+			return 1;
+		}
+		m2.width = m1.width;
+
+		m2.height = INTTOFIX(600);
+		if (macsurf_test_css_media_equal(&m1, &m2)) {
+			fprintf(stderr, "FAIL: Test 109 height inequality missed\n");
+			return 1;
+		}
+		m2.height = m1.height;
+
+		m2.orientation = CSS_MEDIA_ORIENTATION_PORTRAIT;
+		if (macsurf_test_css_media_equal(&m1, &m2)) {
+			fprintf(stderr, "FAIL: Test 109 orientation inequality missed\n");
+			return 1;
+		}
+		m2.orientation = m1.orientation;
+
+		m2.resolution.value = INTTOFIX(192);
+		if (macsurf_test_css_media_equal(&m1, &m2)) {
+			fprintf(stderr, "FAIL: Test 109 resolution inequality missed\n");
+			return 1;
+		}
+		m2.resolution.value = m1.resolution.value;
+
+		m2.color = INTTOFIX(8);
+		if (macsurf_test_css_media_equal(&m1, &m2)) {
+			fprintf(stderr, "FAIL: Test 109 color inequality missed\n");
+			return 1;
+		}
+		m2.color = m1.color;
+
+		m2.prefers_color_scheme = str_light;
+		if (macsurf_test_css_media_equal(&m1, &m2)) {
+			fprintf(stderr, "FAIL: Test 109 color scheme inequality missed\n");
+			return 1;
+		}
+		m2.prefers_color_scheme = m1.prefers_color_scheme;
+
+		if (!macsurf_test_css_media_equal(&m1, &m2)) {
+			fprintf(stderr, "FAIL: Test 109 restored equality failed\n");
+			return 1;
+		}
+
+		/* Part 3: Media-change gating lifecycle */
+		memset(&t109c, 0, sizeof(t109c));
+		t109c.media = m1;
+		t109c.media_snapshot_valid = false;
+		t109c.page_js_pending = 0;
+		t109c.page_js_scheduled = false;
+		t109c.js_thread = (void *)0x108; /* non-NULL dummy thread for queue accept */
+
+		/* Simulate mid-reconvert depth > 0 so queuing does not dispatch immediately */
+		macsurf_test_set_reconvert_depth(1);
+
+		/* First format: establishes baseline snapshot without queuing media event */
+		macsurf_test_html_media_update_and_gate(&t109c);
+		if (!t109c.media_snapshot_valid) {
+			fprintf(stderr, "FAIL: Test 109 baseline snapshot not marked valid\n");
+			return 1;
+		}
+		if ((t109c.page_js_pending & HTML_PAGE_JS_MEDIA) != 0) {
+			fprintf(stderr, "FAIL: Test 109 initial format queued media change event\n");
+			return 1;
+		}
+		if (!macsurf_test_css_media_equal(&t109c.media, &t109c.media_snapshot)) {
+			fprintf(stderr, "FAIL: Test 109 snapshot value mismatch\n");
+			return 1;
+		}
+
+		/* Second format with unchanged media: must remain quiet */
+		macsurf_test_html_media_update_and_gate(&t109c);
+		if ((t109c.page_js_pending & HTML_PAGE_JS_MEDIA) != 0) {
+			fprintf(stderr, "FAIL: Test 109 identical format queued media change event\n");
+			return 1;
+		}
+
+		/* Reformat with genuine media change: must queue media change event */
+		t109c.media.width = INTTOFIX(1280);
+		macsurf_test_html_media_update_and_gate(&t109c);
+		if ((t109c.page_js_pending & HTML_PAGE_JS_MEDIA) == 0) {
+			fprintf(stderr, "FAIL: Test 109 changed media failed to queue event\n");
+			return 1;
+		}
+		if (!macsurf_test_css_media_equal(&t109c.media, &t109c.media_snapshot)) {
+			fprintf(stderr, "FAIL: Test 109 snapshot not updated after change\n");
+			return 1;
+		}
+
+		/* Reset reconvert depth */
+		macsurf_test_set_reconvert_depth(0);
+
+		/* Clean up snapshot */
+		if (t109c.media_snapshot_valid && t109c.media_snapshot.prefers_color_scheme != NULL) {
+			lwc_string_unref(t109c.media_snapshot.prefers_color_scheme);
+			t109c.media_snapshot_valid = false;
+		}
+		if (t109c.page_js_payload != NULL) {
+			free(t109c.page_js_payload);
+			t109c.page_js_payload = NULL;
+		}
+
+		lwc_string_unref(str_dark);
+		lwc_string_unref(str_light);
+
+		fprintf(stderr, "=== Test 109 PASS: Media-change gating (semantic equality across distinct storage, quiet init, re-eval on change) ===\n");
+	}
+
 	return 0;
 }
