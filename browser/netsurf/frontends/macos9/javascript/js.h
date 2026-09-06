@@ -109,6 +109,8 @@ unsigned char js_fire_script_load(jsthread *thread, struct dom_node *node,
 
 void js_handle_new_element(jsthread *thread, struct dom_element *node);
 void js_event_cleanup(jsthread *thread, struct dom_event *evt);
+void js_fire_mutation_batch(jsthread *thread);
+void js_media_state_changed(jsthread *thread);
 
 #endif /* NETSURF_JAVASCRIPT_JS_H_ */
 #endif /* WITH_QUICKJS */

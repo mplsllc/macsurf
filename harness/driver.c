@@ -682,6 +682,26 @@ static JSValue t93_job_mark_b(JSContext *ctx, int argc, JSValueConst *argv)
 	return JS_UNDEFINED;
 }
 
+/* Test 108: Deferred page-JS delivery teardown helper */
+struct jsthread {
+	struct jsheap *heap;
+	JSContext *ctx;
+	void *win_priv;
+	void *doc_priv;
+};
+
+static struct html_content *g_t108_content = NULL;
+
+static JSValue js_test_t108_teardown(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
+{
+	extern void macos9_content_unregister(struct content *c);
+	(void)ctx; (void)this_val; (void)argc; (void)argv;
+	if (g_t108_content != NULL) {
+		macos9_content_unregister((struct content *)g_t108_content);
+	}
+	return JS_UNDEFINED;
+}
+
 int main(int argc, char **argv)
 {
 	char *html_src_big = build_large_doc(300);
@@ -12940,6 +12960,336 @@ box_coords(bx, &cx, &cy);
 			return 1;
 		}
 		fprintf(stderr, "=== Test 107 PASS: Opacity presentation (interpolation, delay, interruption) ===\n");
+	}
+
+	/* --- Test 108: Deferred coalesced page-JS delivery ------------------ */
+	{
+		extern void macsurf_test_page_js_queue(html_content *c, uint32_t events);
+		extern void macsurf_test_page_js_cancel(html_content *c);
+		extern void macsurf_test_page_js_deliver(void *payload);
+		extern void macsurf_test_set_reconvert_depth(int depth);
+		extern int macsurf_test_get_reconvert_depth(void);
+		extern void macos9_content_register(struct content *c);
+		extern void macos9_content_unregister(struct content *c);
+		extern unsigned long macos9_content_token(struct content *c);
+		extern int macos9_content_token_valid(struct content *c, unsigned long token);
+
+		const char *t108_html =
+			"<!DOCTYPE html><html><head></head><body>"
+			"<div id=\"t108_root\"><p>t108</p></div>"
+			"</body></html>";
+		struct html_content t108c;
+		dom_hubbub_parser *t108p = NULL;
+		dom_document *t108doc = NULL;
+		dom_node *t108root = NULL;
+		css_select_ctx *t108ctx = NULL;
+		css_stylesheet *t108ua = NULL;
+		dom_hubbub_parser_params t108params;
+		css_stylesheet_params t108sp;
+		void *t108_box_ctx = NULL;
+		struct jsheap *t108heap = NULL;
+		struct jsthread *t108thread = NULL;
+		dom_exception t108derr;
+		css_error t108cerr;
+		nserror t108nerr;
+		unsigned char ok;
+		JSValue global_obj;
+
+		fprintf(stderr, "\n=== Test 108: Deferred coalesced page-JS delivery ===\n");
+
+		memset(&t108params, 0, sizeof(t108params));
+		t108params.enc = NULL;
+		t108params.fix_enc = true;
+		t108params.enable_script = false;
+		t108params.daf = NULL;
+		t108derr = dom_hubbub_parser_create(&t108params, &t108p, &t108doc);
+		if (t108derr != DOM_HUBBUB_OK || t108p == NULL || t108doc == NULL) {
+			fprintf(stderr, "FAIL: Test 108 parser create\n");
+			return 1;
+		}
+		t108derr = dom_hubbub_parser_parse_chunk(t108p,
+				(const uint8_t *)t108_html, strlen(t108_html));
+		if (t108derr != DOM_HUBBUB_OK) {
+			fprintf(stderr, "FAIL: Test 108 parse chunk\n");
+			return 1;
+		}
+		t108derr = dom_hubbub_parser_completed(t108p);
+		if (t108derr != DOM_HUBBUB_OK) {
+			fprintf(stderr, "FAIL: Test 108 parse complete\n");
+			return 1;
+		}
+		dom_hubbub_parser_destroy(t108p);
+
+		memset(&t108c, 0, sizeof(t108c));
+		t108c.base_url = g_base_url;
+		t108c.document = t108doc;
+		t108c.quirks = DOM_DOCUMENT_QUIRKS_MODE_NONE;
+		t108c.enable_scripting = true;
+		t108c.doc_generation = 1;
+
+		if (css_select_ctx_create(&t108ctx) != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 108 select_ctx_create\n");
+			return 1;
+		}
+		t108c.select_ctx = t108ctx;
+
+		memset(&t108sp, 0, sizeof(t108sp));
+		t108sp.params_version = CSS_STYLESHEET_PARAMS_VERSION_1;
+		t108sp.level = CSS_LEVEL_3;
+		t108sp.charset = "UTF-8";
+		t108sp.url = "resource:default.css";
+		t108sp.title = "default";
+		t108sp.allow_quirks = false;
+		t108sp.inline_style = false;
+		t108sp.resolve = harness_css_resolve_url;
+		t108sp.resolve_pw = NULL;
+		t108cerr = css_stylesheet_create(&t108sp, &t108ua);
+		if (t108cerr != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 108 UA sheet\n");
+			return 1;
+		}
+		{
+			const char *ua_css = "html,body,div,p{display:block}";
+			css_error ae = css_stylesheet_append_data(t108ua,
+					(const uint8_t *)ua_css, strlen(ua_css));
+			if (ae != CSS_OK && ae != CSS_NEEDDATA) {
+				fprintf(stderr, "FAIL: Test 108 UA append\n");
+				return 1;
+			}
+			(void)css_stylesheet_data_done(t108ua);
+		}
+		if (css_select_ctx_append_sheet(t108ctx, t108ua,
+				CSS_ORIGIN_UA, "screen") != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 108 UA append sheet\n");
+			return 1;
+		}
+
+		t108c.media.type = CSS_MEDIA_SCREEN;
+		t108c.media.width = INTTOFIX(800);
+		t108c.media.height = INTTOFIX(600);
+		t108c.unit_len_ctx.viewport_width = INTTOFIX(800);
+		t108c.unit_len_ctx.viewport_height = INTTOFIX(600);
+		t108c.unit_len_ctx.device_dpi = INTTOFIX(90);
+		t108c.unit_len_ctx.font_size_default = INTTOFIX(16);
+		t108c.unit_len_ctx.font_size_minimum = INTTOFIX(8);
+		if (lwc_intern_string("*", 1, &t108c.universal) != lwc_error_ok) {
+			fprintf(stderr, "FAIL: Test 108 universal\n");
+			return 1;
+		}
+
+		t108c.base.status = CONTENT_STATUS_LOADING;
+		t108c.base.active = 0;
+		t108c.base.handler = &g_dummy_handler;
+		macos9_content_register((struct content *)&t108c);
+
+		t108derr = dom_document_get_document_element(t108doc, (void *)&t108root);
+		if (t108derr != DOM_NO_ERR || t108root == NULL) {
+			fprintf(stderr, "FAIL: Test 108 doc element\n");
+			return 1;
+		}
+		g_initial_build_done = 0;
+		g_initial_build_ok = false;
+		t108nerr = dom_to_box(t108root, &t108c, initial_build_cb, &t108_box_ctx);
+		dom_node_unref(t108root);
+		if (t108nerr != NSERROR_OK) {
+			fprintf(stderr, "FAIL: Test 108 dom_to_box\n");
+			return 1;
+		}
+		harness_pump_all(100000);
+		if (!g_initial_build_done || !g_initial_build_ok) {
+			fprintf(stderr, "FAIL: Test 108 initial build\n");
+			return 1;
+		}
+		t108c.base.status = CONTENT_STATUS_DONE;
+
+		t108nerr = js_newheap(20000, &t108heap);
+		if (t108nerr != NSERROR_OK || t108heap == NULL) {
+			fprintf(stderr, "FAIL: Test 108 js_newheap\n");
+			return 1;
+		}
+		t108nerr = js_newthread(t108heap, NULL, (void *)&t108c, &t108thread);
+		if (t108nerr != NSERROR_OK || t108thread == NULL) {
+			fprintf(stderr, "FAIL: Test 108 js_newthread\n");
+			return 1;
+		}
+		t108c.js_thread = t108thread;
+		g_t108_content = &t108c;
+
+		/* Register teardownContent C function into JS realm */
+		global_obj = JS_GetGlobalObject(t108thread->ctx);
+		JS_SetPropertyStr(t108thread->ctx, global_obj, "teardownContent",
+				JS_NewCFunction(t108thread->ctx, js_test_t108_teardown, "teardownContent", 0));
+		JS_FreeValue(t108thread->ctx, global_obj);
+
+		/* Setup JS handlers */
+		{
+			const char *setup_js =
+				"globalThis.__deliveryLog = [];\n"
+				"globalThis.__teardownOnResize = false;\n"
+				"globalThis.__msMediaCheck = function() { globalThis.__deliveryLog.push('media'); };\n"
+				"window.addEventListener('resize', function() {\n"
+				"    globalThis.__deliveryLog.push('resize');\n"
+				"    if (globalThis.__teardownOnResize) { teardownContent(); }\n"
+				"});\n"
+				"window.addEventListener('load', function() { globalThis.__deliveryLog.push('load'); });\n"
+				"globalThis.__msDeliverMutations = function() { globalThis.__deliveryLog.push('mo'); };\n";
+			ok = js_exec(t108thread, (const unsigned char *)setup_js, strlen(setup_js), "t108-setup.js");
+			if (!ok) {
+				fprintf(stderr, "FAIL: Test 108 JS setup threw\n");
+				return 1;
+			}
+		}
+
+		/* Part 1: Coalesced dispatch ordering media -> resize -> reconvert-load -> MutationObserver */
+		{
+			const char *check_order_js =
+				"if (globalThis.__deliveryLog.join(',') !== 'media,resize,load,mo') {\n"
+				"    throw new Error('Unexpected order: ' + globalThis.__deliveryLog.join(','));\n"
+				"}";
+
+			macsurf_test_set_reconvert_depth(1);
+			/* Queue events in arbitrary order and across multiple calls */
+			macsurf_test_page_js_queue(&t108c, HTML_PAGE_JS_MUTATION_OBSERVER | HTML_PAGE_JS_RESIZE);
+			macsurf_test_page_js_queue(&t108c, HTML_PAGE_JS_RECONVERT_LOAD | HTML_PAGE_JS_MEDIA);
+
+			if (!t108c.page_js_scheduled || t108c.page_js_payload == NULL) {
+				fprintf(stderr, "FAIL: Test 108 Part 1 payload not scheduled\n");
+				return 1;
+			}
+			if (t108c.page_js_pending != (HTML_PAGE_JS_MEDIA | HTML_PAGE_JS_RESIZE |
+			                              HTML_PAGE_JS_RECONVERT_LOAD | HTML_PAGE_JS_MUTATION_OBSERVER)) {
+				fprintf(stderr, "FAIL: Test 108 Part 1 pending mask mismatch (0x%x)\n", t108c.page_js_pending);
+				return 1;
+			}
+
+			/* Depth > 0 simulates mid-reconvert: nothing should have executed yet */
+			{
+				const char *check_empty_js =
+					"if (globalThis.__deliveryLog.length !== 0) throw new Error('Ran early');";
+				ok = js_exec(t108thread, (const unsigned char *)check_empty_js, strlen(check_empty_js), "t108-empty.js");
+				if (!ok) {
+					fprintf(stderr, "FAIL: Test 108 Part 1 ran prematurely while depth > 0\n");
+					return 1;
+				}
+			}
+
+			/* Outer reconvert completes: depth returns to 0 and callback executes */
+			macsurf_test_set_reconvert_depth(0);
+			macsurf_test_page_js_deliver(t108c.page_js_payload);
+
+			if (t108c.page_js_scheduled || t108c.page_js_pending != 0) {
+				fprintf(stderr, "FAIL: Test 108 Part 1 batch not cleared\n");
+				return 1;
+			}
+
+			ok = js_exec(t108thread, (const unsigned char *)check_order_js, strlen(check_order_js), "t108-order.js");
+			if (!ok) {
+				fprintf(stderr, "FAIL: Test 108 Part 1 ordered delivery failed\n");
+				return 1;
+			}
+		}
+
+		/* Part 2: Token validation abort on mid-dispatch teardown */
+		{
+			const char *prep_abort_js =
+				"globalThis.__deliveryLog = [];\n"
+				"globalThis.__teardownOnResize = true;\n";
+			const char *check_aborted_js =
+				"if (globalThis.__deliveryLog.join(',') !== 'media,resize') {\n"
+				"    throw new Error('Expected media,resize but got: ' + globalThis.__deliveryLog.join(','));\n"
+				"}";
+
+			ok = js_exec(t108thread, (const unsigned char *)prep_abort_js, strlen(prep_abort_js), "t108-prep-abort.js");
+			if (!ok) {
+				fprintf(stderr, "FAIL: Test 108 Part 2 prep failed\n");
+				return 1;
+			}
+
+			macsurf_test_set_reconvert_depth(1);
+			macsurf_test_page_js_queue(&t108c, HTML_PAGE_JS_MEDIA | HTML_PAGE_JS_RESIZE |
+			                                  HTML_PAGE_JS_RECONVERT_LOAD | HTML_PAGE_JS_MUTATION_OBSERVER);
+			macsurf_test_set_reconvert_depth(0);
+			macsurf_test_page_js_deliver(t108c.page_js_payload);
+
+			ok = js_exec(t108thread, (const unsigned char *)check_aborted_js, strlen(check_aborted_js), "t108-check-abort.js");
+			if (!ok) {
+				fprintf(stderr, "FAIL: Test 108 Part 2 mid-dispatch abort failed\n");
+				return 1;
+			}
+		}
+
+		/* Part 3: Doc generation mismatch cancellation */
+		{
+			const char *reset_log_js = "globalThis.__deliveryLog = [];";
+			const char *check_none_js =
+				"if (globalThis.__deliveryLog.length !== 0) throw new Error('Expected 0 events');";
+
+			/* Restore content in registry */
+			macos9_content_register((struct content *)&t108c);
+
+			ok = js_exec(t108thread, (const unsigned char *)reset_log_js, strlen(reset_log_js), "t108-reset.js");
+			if (!ok) {
+				fprintf(stderr, "FAIL: Test 108 Part 3 reset failed\n");
+				return 1;
+			}
+
+			macsurf_test_set_reconvert_depth(1);
+			macsurf_test_page_js_queue(&t108c, HTML_PAGE_JS_MEDIA | HTML_PAGE_JS_RESIZE);
+
+			/* Invalidate doc_generation (simulating encoding change or navigation) */
+			t108c.doc_generation++;
+
+			macsurf_test_set_reconvert_depth(0);
+			macsurf_test_page_js_deliver(t108c.page_js_payload);
+
+			if (t108c.page_js_pending != 0) {
+				fprintf(stderr, "FAIL: Test 108 Part 3 pending not dropped on mismatch\n");
+				return 1;
+			}
+
+			ok = js_exec(t108thread, (const unsigned char *)check_none_js, strlen(check_none_js), "t108-check-none.js");
+			if (!ok) {
+				fprintf(stderr, "FAIL: Test 108 Part 3 generation mismatch fired events\n");
+				return 1;
+			}
+		}
+
+		/* Part 4: Cancellation on destruction */
+		{
+			macsurf_test_set_reconvert_depth(1);
+			macsurf_test_page_js_queue(&t108c, HTML_PAGE_JS_MEDIA | HTML_PAGE_JS_RESIZE);
+			if (!t108c.page_js_scheduled || t108c.page_js_payload == NULL || t108c.page_js_pending == 0) {
+				fprintf(stderr, "FAIL: Test 108 Part 4 queue failed\n");
+				return 1;
+			}
+
+			macsurf_test_page_js_cancel(&t108c);
+			if (t108c.page_js_scheduled || t108c.page_js_payload != NULL || t108c.page_js_pending != 0) {
+				fprintf(stderr, "FAIL: Test 108 Part 4 cancel failed to clear state\n");
+				return 1;
+			}
+			macsurf_test_set_reconvert_depth(0);
+		}
+
+		/* Cleanup */
+		g_t108_content = NULL;
+		macos9_content_unregister((struct content *)&t108c);
+		js_closethread(t108thread);
+		js_destroyheap(t108heap);
+		if (t108c.layout != NULL) {
+			box_free_box(t108c.layout);
+			t108c.layout = NULL;
+		}
+		if (t108ua != NULL)
+			css_stylesheet_destroy(t108ua);
+		if (t108ctx != NULL)
+			css_select_ctx_destroy(t108ctx);
+		if (t108c.universal != NULL)
+			lwc_string_unref(t108c.universal);
+		if (t108doc != NULL)
+			dom_node_unref(t108doc);
+
+		fprintf(stderr, "=== Test 108 PASS: Deferred coalesced page-JS delivery (ordered, token-gated, gen-tracked, cancellable) ===\n");
 	}
 
 	return 0;
