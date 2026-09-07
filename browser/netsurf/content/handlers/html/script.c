@@ -1270,7 +1270,7 @@ exec_src_script(html_content *c,
 		if (source_id != 0) {
 			ms_diag_source_note_terminal(source_id,
 				MS_SRC_STATE_FETCH_FAILED,
-				MS_SRC_REASON_NETWORK_ERROR);
+				MS_SRC_REASON_FETCH_START_FAILED);
 		}
 	} else {
 		if (source_id != 0) {
@@ -1487,7 +1487,7 @@ html_process_script(void *ctx, dom_node *node)
 
 	g_script_tags_seen++;   /* fixes1239 - every callback, no early return skips this */
 
-	sid = ms_diag_source_create(content_get_nav_id(&c->base), c->doc_id);
+	sid = ms_diag_source_create(content_get_nav_id(&c->base), c->frame_id, c->doc_id);
 
 	/* ensure javascript context is available */
 	/* We should only ever be here if scripting was enabled for this

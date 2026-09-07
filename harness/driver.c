@@ -12993,8 +12993,8 @@ box_coords(bx, &cx, &cy);
 
 		fprintf(stderr, "\n=== Test 102c: script source discovery and lifecycle ledger ===\n");
 
-		/* 1. Inline classic source executed successfully */
-		sid1 = ms_diag_source_create(701, 101);
+		/* 1. Inline classic source executed successfully (Frame 1, Doc 101) */
+		sid1 = ms_diag_source_create(701, 1, 101);
 		ms_diag_source_set_classification(sid1,
 			MS_SRC_KIND_CLASSIC, MS_SRC_DECL_CLASSIC, MS_SRC_TREAT_DIRECT,
 			MS_SRC_SCHED_INLINE, 0, NULL);
@@ -13010,7 +13010,7 @@ box_coords(bx, &cx, &cy);
 		(void)macsurf_diag_serialize_scripts(scripts, (long)sizeof(scripts));
 
 		if (strstr(sources, "coverage=discovered_sources\n") == NULL ||
-				strstr(sources, "kind=classic declared_kind=classic treatment=direct schedule=inline blocking=0 state=executed reason=ok") == NULL ||
+				strstr(sources, "nav=701 frame=1 doc=101 kind=classic declared_kind=classic treatment=direct schedule=inline blocking=0 state=executed reason=ok") == NULL ||
 				strstr(sources, "len=64 hash=11112222 url=-") == NULL) {
 			fprintf(stderr, "FAIL: Test 102c inline source execution entry\n"); return 1;
 		}
@@ -13026,28 +13026,28 @@ box_coords(bx, &cx, &cy);
 			}
 		}
 
-		/* 2. External script: full lifecycle (classified -> queued -> fetching -> done -> executed) */
-		sid2 = ms_diag_source_create(701, 101);
+		/* 2. External module script with classic fallback on Frame 2, Doc 102 */
+		sid2 = ms_diag_source_create(701, 2, 102);
 		ms_diag_source_set_classification(sid2,
-			MS_SRC_KIND_CLASSIC, MS_SRC_DECL_CLASSIC, MS_SRC_TREAT_DIRECT,
-			MS_SRC_SCHED_ASYNC, 0, "https://example.com/app.js");
+			MS_SRC_KIND_CLASSIC, MS_SRC_DECL_MODULE, MS_SRC_TREAT_CLASSIC_FALLBACK,
+			MS_SRC_SCHED_ASYNC, 0, "https://example.com/app-module.js");
 		ms_diag_source_note_fetch_start(sid2, 0);
 		ms_diag_source_note_fetch_done(sid2, 1024, 0x33334444UL);
-		ms_diag_script_enter(&scope, 701, MS_SCRIPT_CLASSIC, "https://example.com/app.js");
-		ms_diag_script_set_provenance(&scope, 1, 101);
+		ms_diag_script_enter(&scope, 701, MS_SCRIPT_CLASSIC, "https://example.com/app-module.js");
+		ms_diag_script_set_provenance(&scope, 2, 102);
 		ms_diag_script_set_source_id(&scope, sid2);
 		ms_diag_script_set_source(&scope, MS_SCR_SRC_EXTERNAL, 2, 1024, 0x33334444UL);
 		ms_diag_source_note_execution(sid2, scope.my_id);
 		ms_diag_script_leave(&scope, MS_SCR_DONE);
 
 		(void)macsurf_diag_serialize_sources(sources, (long)sizeof(sources));
-		if (strstr(sources, "schedule=async blocking=0 state=executed reason=ok") == NULL ||
-				strstr(sources, "len=1024 hash=33334444 url=https://example.com/app.js") == NULL) {
-			fprintf(stderr, "FAIL: Test 102c external source execution entry\n"); return 1;
+		if (strstr(sources, "nav=701 frame=2 doc=102 kind=classic declared_kind=module treatment=classic_fallback schedule=async blocking=0 state=executed reason=ok") == NULL ||
+				strstr(sources, "len=1024 hash=33334444 url=https://example.com/app-module.js") == NULL) {
+			fprintf(stderr, "FAIL: Test 102c external module classic fallback on frame 2\n"); return 1;
 		}
 
-		/* 3. Discovered external source with network error before execution attempt */
-		sid3 = ms_diag_source_create(701, 101);
+		/* 3. Discovered external source with network error callback before execution attempt */
+		sid3 = ms_diag_source_create(701, 1, 101);
 		ms_diag_source_set_classification(sid3,
 			MS_SRC_KIND_CLASSIC, MS_SRC_DECL_CLASSIC, MS_SRC_TREAT_DIRECT,
 			MS_SRC_SCHED_SYNC, 1, "https://example.com/404.js");
@@ -13056,11 +13056,25 @@ box_coords(bx, &cx, &cy);
 		(void)macsurf_diag_serialize_sources(sources, (long)sizeof(sources));
 		if (strstr(sources, "schedule=sync blocking=1 state=fetch_failed reason=network_error script=0") == NULL ||
 				strstr(sources, "url=https://example.com/404.js") == NULL) {
-			fprintf(stderr, "FAIL: Test 102c fetch-failed source entry (script=0)\n"); return 1;
+			fprintf(stderr, "FAIL: Test 102c fetch-failed (network_error) source entry (script=0)\n"); return 1;
+		}
+
+		/* 3b. Discovered external source with immediate fetch start failure (script=0) */
+		{
+			unsigned long sid3b = ms_diag_source_create(701, 1, 101);
+			ms_diag_source_set_classification(sid3b,
+				MS_SRC_KIND_CLASSIC, MS_SRC_DECL_CLASSIC, MS_SRC_TREAT_DIRECT,
+				MS_SRC_SCHED_SYNC, 1, "https://invalid-uri/");
+			ms_diag_source_note_terminal(sid3b, MS_SRC_STATE_FETCH_FAILED, MS_SRC_REASON_FETCH_START_FAILED);
+			(void)macsurf_diag_serialize_sources(sources, (long)sizeof(sources));
+			if (strstr(sources, "state=fetch_failed reason=fetch_start_failed script=0") == NULL ||
+					strstr(sources, "url=https://invalid-uri/") == NULL) {
+				fprintf(stderr, "FAIL: Test 102c fetch_start_failed source entry (script=0)\n"); return 1;
+			}
 		}
 
 		/* 4. Discovered source skipped due to unsupported MIME (e.g. application/json) */
-		sid4 = ms_diag_source_create(701, 101);
+		sid4 = ms_diag_source_create(701, 1, 101);
 		ms_diag_source_set_classification(sid4,
 			MS_SRC_KIND_CLASSIC, MS_SRC_DECL_CLASSIC, MS_SRC_TREAT_DIRECT,
 			MS_SRC_SCHED_INLINE, 0, NULL);
@@ -13073,7 +13087,7 @@ box_coords(bx, &cx, &cy);
 		}
 
 		/* 5. Discovered source skipped due to no JS context */
-		sid5 = ms_diag_source_create(701, 101);
+		sid5 = ms_diag_source_create(701, 1, 101);
 		ms_diag_source_note_terminal(sid5, MS_SRC_STATE_SKIPPED, MS_SRC_REASON_NO_JS_CONTEXT);
 
 		(void)macsurf_diag_serialize_sources(sources, (long)sizeof(sources));
@@ -13082,7 +13096,7 @@ box_coords(bx, &cx, &cy);
 		}
 
 		/* 6. Document destroyed while source pending (teardown cancellation) & monotonicity */
-		sid6 = ms_diag_source_create(701, 101);
+		sid6 = ms_diag_source_create(701, 1, 101);
 		ms_diag_source_set_classification(sid6,
 			MS_SRC_KIND_CLASSIC, MS_SRC_DECL_CLASSIC, MS_SRC_TREAT_DIRECT,
 			MS_SRC_SCHED_DEFER, 0, "https://example.com/defer.js");
@@ -13099,7 +13113,7 @@ box_coords(bx, &cx, &cy);
 
 		/* 7. Rollover & paged cursor query */
 		for (i = 0; i < 140; i++) {
-			unsigned long s = ms_diag_source_create(701, 101);
+			unsigned long s = ms_diag_source_create(701, 1, 101);
 			ms_diag_source_set_classification(s,
 				MS_SRC_KIND_CLASSIC, MS_SRC_DECL_CLASSIC, MS_SRC_TREAT_DIRECT,
 				MS_SRC_SCHED_INLINE, 0, NULL);

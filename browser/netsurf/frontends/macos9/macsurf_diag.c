@@ -590,6 +590,7 @@ struct ms_diag_task {
 struct ms_diag_source {
 	unsigned long id;		/* 0 == empty */
 	unsigned long nav_id;
+	unsigned long frame_id;
 	unsigned long doc_id;
 	unsigned long byte_len;
 	unsigned long hash;
@@ -678,7 +679,8 @@ static struct ms_diag_script *ms_diag_find_active_script(unsigned long script_id
 	return NULL;
 }
 
-unsigned long ms_diag_source_create(unsigned long nav_id, unsigned long doc_id)
+unsigned long ms_diag_source_create(unsigned long nav_id,
+	unsigned long frame_id, unsigned long doc_id)
 {
 	struct ms_diag_source *e;
 	struct ms_diag_source *act = NULL;
@@ -698,6 +700,7 @@ unsigned long ms_diag_source_create(unsigned long nav_id, unsigned long doc_id)
 
 	act->id = sid;
 	act->nav_id = nav_id != 0 ? nav_id : ms_diag_cur_nav();
+	act->frame_id = frame_id != 0 ? frame_id : ms_diag_cur_frame();
 	act->doc_id = doc_id != 0 ? doc_id : ms_diag_cur_doc();
 	act->kind = (short) MS_SRC_KIND_CLASSIC;
 	act->declared_kind = (short) MS_SRC_DECL_UNKNOWN;
@@ -1378,6 +1381,7 @@ const char *ms_source_reason_s(int v)
 	case MS_SRC_REASON_NO_JS_CONTEXT:       return "no_js_context";
 	case MS_SRC_REASON_MIME_UNSUPPORTED:    return "mime_unsupported";
 	case MS_SRC_REASON_NETWORK_ERROR:       return "network_error";
+	case MS_SRC_REASON_FETCH_START_FAILED:  return "fetch_start_failed";
 	case MS_SRC_REASON_EMPTY:               return "empty";
 	case MS_SRC_REASON_DOCUMENT_DESTROYED:  return "document_destroyed";
 	case MS_SRC_REASON_NAVIGATION_REPLACED: return "navigation_replaced";
@@ -1564,11 +1568,11 @@ long macsurf_diag_serialize_sources(char *buf, long cap)
 			continue;
 		}
 		snprintf(line, sizeof(line),
-			"source=%lu nav=%lu doc=%lu kind=%s declared_kind=%s "
+			"source=%lu nav=%lu frame=%lu doc=%lu kind=%s declared_kind=%s "
 			"treatment=%s schedule=%s blocking=%d state=%s reason=%s "
 			"script=%lu request=%lu len=%lu hash=%08lx url=%s\n",
 			(unsigned long) e->id, (unsigned long) e->nav_id,
-			(unsigned long) e->doc_id,
+			(unsigned long) e->frame_id, (unsigned long) e->doc_id,
 			ms_source_kind_s(e->kind),
 			ms_source_declared_kind_s(e->declared_kind),
 			ms_source_treatment_s(e->treatment),
@@ -1661,11 +1665,11 @@ long macsurf_diag_serialize_sources_since(char *buf, long cap,
 				break;
 			}
 			snprintf(line, sizeof(line),
-				"source=%lu nav=%lu doc=%lu kind=%s declared_kind=%s "
+				"source=%lu nav=%lu frame=%lu doc=%lu kind=%s declared_kind=%s "
 				"treatment=%s schedule=%s blocking=%d state=%s reason=%s "
 				"script=%lu request=%lu len=%lu hash=%08lx url=%s\n",
 				(unsigned long) e->id, (unsigned long) e->nav_id,
-				(unsigned long) e->doc_id,
+				(unsigned long) e->frame_id, (unsigned long) e->doc_id,
 				ms_source_kind_s(e->kind),
 				ms_source_declared_kind_s(e->declared_kind),
 				ms_source_treatment_s(e->treatment),

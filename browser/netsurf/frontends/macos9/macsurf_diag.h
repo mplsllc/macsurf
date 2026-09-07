@@ -186,6 +186,7 @@ enum ms_source_reason {
 	MS_SRC_REASON_NO_JS_CONTEXT,
 	MS_SRC_REASON_MIME_UNSUPPORTED,
 	MS_SRC_REASON_NETWORK_ERROR,
+	MS_SRC_REASON_FETCH_START_FAILED,
 	MS_SRC_REASON_EMPTY,
 	MS_SRC_REASON_DOCUMENT_DESTROYED,
 	MS_SRC_REASON_NAVIGATION_REPLACED,
@@ -226,7 +227,8 @@ const char *ms_execute_result_s(int v);
 const char *ms_script_term_reason_s(int v);
 
 /* --- source discovery & lifecycle ledger --- */
-unsigned long ms_diag_source_create(unsigned long nav_id, unsigned long doc_id);
+unsigned long ms_diag_source_create(unsigned long nav_id,
+	unsigned long frame_id, unsigned long doc_id);
 void ms_diag_source_set_classification(unsigned long source_id,
 	int kind, int declared_kind, int treatment, int schedule,
 	int blocking, const char *url);
