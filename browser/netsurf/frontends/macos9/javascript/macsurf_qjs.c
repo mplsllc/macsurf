@@ -214,6 +214,19 @@ static unsigned long qjs_realm_timer_count(JSContext *ctx,
 		unsigned long ctx_gen);
 static unsigned long qjs_realm_wrapper_count(JSRuntime *rt);
 
+/* A page can execute parser-time script before html_begin_conversion().
+ * Deferred native work created by that script must therefore see the same
+ * document identity it will have at delivery time.  Open the diagnostic
+ * document lifetime at the point its JS realm is built; html_begin_conversion
+ * retains its idempotent fallback for non-JS and reparse paths. */
+static void qjs_document_identity_open(html_content *htmlc, void *win_priv)
+{
+	if (htmlc == NULL || htmlc->doc_id != 0) return;
+	htmlc->frame_id = ms_diag_frame_get(win_priv);
+	htmlc->doc_id = ms_diag_document_open(
+		content_get_nav_id((struct content *)htmlc), htmlc->frame_id);
+}
+
 static void qjs_owner_refresh(JSContext *ctx, void *win_priv,
 		html_content *htmlc)
 {
@@ -2927,10 +2940,9 @@ int macsurf_qjs_realm_get(int index, struct qjs_realm_diag *out)
 		htmlc = (html_content *)owner->content;
 		out->realm_id = owner->realm_id;
 		out->frame_id = owner->frame_id;
-		/* html_begin_conversion allocates doc_id after js_newthread has
-		 * already registered this realm. Read the HTML content's authoritative
-		 * current identity at snapshot time; the owner record still supplies
-		 * the safe fallback for bootstrap contexts with no document. */
+		/* The document identity is opened before qjs_build_context() for
+		 * document realms. Read the HTML content so an encoding reparse that
+		 * replaces its DOM is reflected immediately. */
 		out->document_id = htmlc ? htmlc->doc_id : owner->document_id;
 		out->nav_id = htmlc ? content_get_nav_id((struct content *)htmlc) :
 			owner->nav_id;
@@ -15761,6 +15773,9 @@ nserror js_newthread(struct jsheap *heap, void *win_priv, void *doc_priv,
 		 * by the "LIFE js src" line and the FBCR __d wrapper so both
 		 * can be diffed nav-by-nav. */
 		g_qjs_nav_seq++;
+		/* Must precede qjs_build_context(): global setup can synchronously
+		 * enter native bindings, and subsequent page script may queue work. */
+		qjs_document_identity_open(htmlc, win_priv);
 		macsurf_qjs_realm_tearing_down(heap->ctx);
 		qjs_flush_timers(heap->ctx);
 		/* fixes846 (#167 S3) - same load-bearing ordering as the timer
