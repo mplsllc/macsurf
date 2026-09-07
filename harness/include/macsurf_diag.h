@@ -82,6 +82,26 @@ enum ms_realm_state {
 };
 long macsurf_diag_serialize_realms(char *buf, long cap);
 
+enum ms_realm_invariant_kind {
+	MS_RI_DEFERRED_CALLBACK = 0, MS_RI_REALM_CTX_NOT_REGISTERED,
+	MS_RI_CALLBACK_DOC_GENERATION_MISMATCH,
+	MS_RI_TIMER_REALM_OWNER_MISMATCH,
+	MS_RI_PENDING_WORK_ON_RETIRED_REALM, MS_RI_REALM_RUNTIME_MISMATCH
+};
+enum ms_realm_invariant_state {
+	MS_RIS_QUEUED = 0, MS_RIS_DELIVERED, MS_RIS_CANCELLED_DOCUMENT_DESTROYED,
+	MS_RIS_CANCELLED_NAVIGATION_REPLACED, MS_RIS_CANCELLED_REALM_RETIRED,
+	MS_RIS_REJECTED_CTX_GENERATION_MISMATCH,
+	MS_RIS_REJECTED_RUNTIME_REALM_MISMATCH,
+	MS_RIS_CALLBACK_INVALIDATED_DOCUMENT, MS_RIS_CALLBACK_INVALIDATED_REALM
+};
+void ms_diag_realm_invariant_record(int kind, int state,
+	unsigned long realm_id, unsigned long frame_id,
+	unsigned long queued_doc, unsigned long live_doc,
+	unsigned long queued_nav, unsigned long live_nav,
+	unsigned long heap_id, unsigned long ctx_gen, unsigned long work_id);
+long macsurf_diag_serialize_warnings(char *buf, long cap);
+
 
 /* ============================ Phase 1b ==============================
  * script_id  = one source EXECUTION attempt (not a source-file id).

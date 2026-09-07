@@ -1920,6 +1920,8 @@ static pascal OSErr macos9_ae_diag(const AppleEvent *ae, AppleEvent *reply,
 		n = macsurf_diag_serialize_network(out, (long)sizeof(out));
 	} else if (strcmp(verb, "realms") == 0) {
 		n = macsurf_diag_serialize_realms(out, (long)sizeof(out));
+	} else if (strcmp(verb, "warnings") == 0 || strcmp(verb, "invariants") == 0) {
+		n = macsurf_diag_serialize_warnings(out, (long)sizeof(out));
 	} else if (strcmp(verb, "scripts") == 0) {
 		n = macsurf_diag_serialize_scripts(out, (long)sizeof(out));
 	} else if (strcmp(verb, "tasks") == 0) {

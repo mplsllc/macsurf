@@ -100,6 +100,26 @@ struct qjs_realm_diag {
 	unsigned long deferred_notifications;
 };
 
+/* Immutable identity captured when native work is queued.  It deliberately
+ * contains no borrowed pointers: validation can compare it to the registered
+ * live owner without ever dereferencing an old context. */
+struct qjs_realm_identity {
+	unsigned long realm_id, frame_id, document_id, nav_id, heap_id, ctx_gen;
+	JSRuntime *rt;
+};
+enum qjs_realm_identity_check {
+	QJS_REALM_IDENTITY_OK = 0,
+	QJS_REALM_IDENTITY_CTX_NOT_REGISTERED,
+	QJS_REALM_IDENTITY_DOCUMENT_MISMATCH,
+	QJS_REALM_IDENTITY_NAV_MISMATCH,
+	QJS_REALM_IDENTITY_GENERATION_MISMATCH,
+	QJS_REALM_IDENTITY_RUNTIME_MISMATCH,
+	QJS_REALM_IDENTITY_RETIRED
+};
+int macsurf_qjs_realm_identity(JSContext *ctx, struct qjs_realm_identity *out);
+int macsurf_qjs_realm_identity_check(JSContext *ctx,
+	const struct qjs_realm_identity *queued, struct qjs_realm_identity *live);
+
 int macsurf_qjs_realm_count(void);
 int macsurf_qjs_realm_get(int index, struct qjs_realm_diag *out);
 unsigned long macsurf_qjs_realm_retired_total(void);

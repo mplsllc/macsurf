@@ -418,6 +418,104 @@ long macsurf_diag_serialize_realms(char *buf, long cap)
 	return n;
 }
 
+/* ===================== Realm lifetime invariant events ==================== */
+#define MS_REALM_INVARIANT_RING_N 64
+struct ms_realm_invariant_event {
+	unsigned long id, realm_id, frame_id, queued_doc, live_doc;
+	unsigned long queued_nav, live_nav, heap_id, ctx_gen, work_id;
+	unsigned char kind, state;
+};
+static struct ms_realm_invariant_event
+	g_realm_invariant_ring[MS_REALM_INVARIANT_RING_N];
+static unsigned long g_realm_invariant_total;
+static int g_realm_invariant_head;
+
+void ms_diag_realm_invariant_record(int kind, int state,
+	unsigned long realm_id, unsigned long frame_id,
+	unsigned long queued_doc, unsigned long live_doc,
+	unsigned long queued_nav, unsigned long live_nav,
+	unsigned long heap_id, unsigned long ctx_gen, unsigned long work_id)
+{
+	struct ms_realm_invariant_event *e =
+		&g_realm_invariant_ring[g_realm_invariant_head];
+	memset(e, 0, sizeof(*e));
+	e->id = ++g_realm_invariant_total;
+	if (e->id == 0) e->id = ++g_realm_invariant_total;
+	e->kind = (unsigned char)kind;
+	e->state = (unsigned char)state;
+	e->realm_id = realm_id; e->frame_id = frame_id;
+	e->queued_doc = queued_doc; e->live_doc = live_doc;
+	e->queued_nav = queued_nav; e->live_nav = live_nav;
+	e->heap_id = heap_id; e->ctx_gen = ctx_gen; e->work_id = work_id;
+	g_realm_invariant_head = (g_realm_invariant_head + 1) %
+		MS_REALM_INVARIANT_RING_N;
+}
+
+static const char *ms_realm_invariant_kind_name(int kind)
+{
+	if (kind == MS_RI_DEFERRED_CALLBACK) return "DEFERRED_CALLBACK";
+	if (kind == MS_RI_REALM_CTX_NOT_REGISTERED) return "REALM_CTX_NOT_REGISTERED";
+	if (kind == MS_RI_CALLBACK_DOC_GENERATION_MISMATCH) return "CALLBACK_DOC_GENERATION_MISMATCH";
+	if (kind == MS_RI_TIMER_REALM_OWNER_MISMATCH) return "TIMER_REALM_OWNER_MISMATCH";
+	if (kind == MS_RI_PENDING_WORK_ON_RETIRED_REALM) return "PENDING_WORK_ON_RETIRED_REALM";
+	if (kind == MS_RI_REALM_RUNTIME_MISMATCH) return "REALM_RUNTIME_MISMATCH";
+	return "unknown";
+}
+static const char *ms_realm_invariant_state_name(int state)
+{
+	if (state == MS_RIS_QUEUED) return "queued_for_live_matching_realm";
+	if (state == MS_RIS_DELIVERED) return "delivered";
+	if (state == MS_RIS_CANCELLED_DOCUMENT_DESTROYED) return "cancelled_document_destroyed";
+	if (state == MS_RIS_CANCELLED_NAVIGATION_REPLACED) return "cancelled_navigation_replaced";
+	if (state == MS_RIS_CANCELLED_REALM_RETIRED) return "cancelled_realm_retired";
+	if (state == MS_RIS_REJECTED_CTX_GENERATION_MISMATCH) return "rejected_ctx_generation_mismatch";
+	if (state == MS_RIS_REJECTED_RUNTIME_REALM_MISMATCH) return "rejected_runtime_realm_mismatch";
+	if (state == MS_RIS_CALLBACK_INVALIDATED_DOCUMENT) return "callback_invalidated_document";
+	if (state == MS_RIS_CALLBACK_INVALIDATED_REALM) return "callback_invalidated_realm";
+	return "unknown";
+}
+
+long macsurf_diag_serialize_warnings(char *buf, long cap)
+{
+	long n = 0;
+	unsigned long used = g_realm_invariant_total;
+	unsigned long first, i;
+	char line[320];
+	if (buf == NULL || cap < 2) return 0;
+	if (used > MS_REALM_INVARIANT_RING_N) used = MS_REALM_INVARIANT_RING_N;
+	buf[0] = '\0';
+	n = diag_cat(buf, cap, n, "MSDIAG 1 warnings\n");
+	snprintf(line, sizeof(line), "capacity=%d\nused=%lu\ntotal=%lu\ndropped=%lu\n",
+		MS_REALM_INVARIANT_RING_N, used, g_realm_invariant_total,
+		g_realm_invariant_total > MS_REALM_INVARIANT_RING_N ?
+		g_realm_invariant_total - MS_REALM_INVARIANT_RING_N : 0UL);
+	n = diag_cat(buf, cap, n, line);
+	/* These are deliberately explicit rather than synthetic zero-warning
+	 * answers.  The current owners do not retain the linkage needed to prove
+	 * them at a native boundary. */
+	n = diag_cat(buf, cap, n,
+		"thread_heap_ctx_mismatch=unavailable missing=thread_heap_owner\n"
+		"wrapper_runtime_owner_mismatch=unavailable missing=wrapper_realm_id\n"
+		"xhr_realm_owner_mismatch=unavailable missing=xhr_runtime_snapshot\n"
+		"observer_document_owner_mismatch=unavailable missing=observer_document_id\n"
+		"microtask_runtime_owner_mismatch=unavailable missing=job_realm_identity\n");
+	first = g_realm_invariant_total > MS_REALM_INVARIANT_RING_N ?
+		(unsigned long)g_realm_invariant_head : 0;
+	for (i = 0; i < used; i++) {
+		struct ms_realm_invariant_event *e =
+			&g_realm_invariant_ring[(first + i) % MS_REALM_INVARIANT_RING_N];
+		snprintf(line, sizeof(line), "id=%lu kind=%s state=%s realm=%lu frame=%lu queued_doc=%lu live_doc=%lu queued_nav=%lu live_nav=%lu heap=%lu ctx_gen=%lu work=%lu count=1\n",
+			e->id, ms_realm_invariant_kind_name(e->kind),
+			ms_realm_invariant_state_name(e->state), e->realm_id, e->frame_id,
+			e->queued_doc, e->live_doc, e->queued_nav, e->live_nav,
+			e->heap_id, e->ctx_gen, e->work_id);
+		if (n + (long)strlen(line) + 32 >= cap) break;
+		n = diag_cat(buf, cap, n, line);
+	}
+	snprintf(line, sizeof(line), "complete=%d\n", i == used);
+	return diag_cat(buf, cap, n, line);
+}
+
 /* ======================= Phase 1b: script / task ======================= */
 
 static unsigned long g_cur_script;

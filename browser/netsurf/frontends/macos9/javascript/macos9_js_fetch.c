@@ -118,6 +118,7 @@ struct qjs_xhr_slot {
 	int redirect_hops;
 	int is_error;			/* network-level failure, not an HTTP status */
 	int beacon;			/* sendBeacon slot: no JS delivery, no ctx */
+	struct qjs_realm_identity queued_realm; /* immutable native-work owner */
 };
 
 static struct qjs_xhr_slot s_xhr_arena[QJS_XHR_MAX];
@@ -314,6 +315,8 @@ xhr_deliver(void *p)
 	const char *url_str;
 	const char *msg = NULL;
 	const char *ss = NULL;
+	struct qjs_realm_identity live_realm;
+	int realm_check;
 
 	if (s == NULL || !s->used) return;
 	/* sendBeacon slots are fire-and-forget: nothing to deliver, and no
@@ -333,6 +336,35 @@ xhr_deliver(void *p)
 			MS_OP_DECLINE, MS_OPR_REALM_GONE, MS_ANSWER_NATIVE,
 			s->last_request_id);
 		xhr_slot_release(s); return;
+	}
+	/* Do not derive ownership from a mutable front window here.  The tuple was
+	 * captured when this native continuation was accepted. */
+	realm_check = macsurf_qjs_realm_identity_check(ctx, &s->queued_realm,
+		&live_realm);
+	if (realm_check != QJS_REALM_IDENTITY_OK) {
+		int kind = MS_RI_REALM_CTX_NOT_REGISTERED;
+		int state = MS_RIS_CANCELLED_REALM_RETIRED;
+		if (realm_check == QJS_REALM_IDENTITY_DOCUMENT_MISMATCH ||
+			realm_check == QJS_REALM_IDENTITY_NAV_MISMATCH) {
+			kind = MS_RI_CALLBACK_DOC_GENERATION_MISMATCH;
+			state = MS_RIS_CANCELLED_NAVIGATION_REPLACED;
+		} else if (realm_check == QJS_REALM_IDENTITY_GENERATION_MISMATCH) {
+			state = MS_RIS_REJECTED_CTX_GENERATION_MISMATCH;
+		} else if (realm_check == QJS_REALM_IDENTITY_RUNTIME_MISMATCH) {
+			kind = MS_RI_REALM_RUNTIME_MISMATCH;
+			state = MS_RIS_REJECTED_RUNTIME_REALM_MISMATCH;
+		}
+		ms_diag_realm_invariant_record(kind, state,
+			s->queued_realm.realm_id, s->queued_realm.frame_id,
+			s->queued_realm.document_id, live_realm.document_id,
+			s->queued_realm.nav_id, live_realm.nav_id,
+			s->queued_realm.heap_id, s->queued_realm.ctx_gen,
+			(unsigned long)s->id);
+		ms_diag_operation_record(s->operation_id, MS_OP_XHR, MS_OP_DELIVER,
+			MS_OP_DECLINE, MS_OPR_REALM_GONE, MS_ANSWER_NATIVE,
+			s->last_request_id);
+		xhr_slot_release(s);
+		return;
 	}
 
 	body = (s->resp_buf != NULL) ? s->resp_buf : "";
@@ -399,6 +431,31 @@ xhr_deliver(void *p)
 		JS_FreeValue(ctx, ret);
 	}
 	JS_FreeValue(ctx, fn);
+	realm_check = macsurf_qjs_realm_identity_check(ctx, &s->queued_realm,
+		&live_realm);
+	if (realm_check == QJS_REALM_IDENTITY_DOCUMENT_MISMATCH ||
+		realm_check == QJS_REALM_IDENTITY_NAV_MISMATCH) {
+		ms_diag_realm_invariant_record(MS_RI_DEFERRED_CALLBACK,
+			MS_RIS_CALLBACK_INVALIDATED_DOCUMENT, s->queued_realm.realm_id,
+			s->queued_realm.frame_id, s->queued_realm.document_id,
+			live_realm.document_id, s->queued_realm.nav_id, live_realm.nav_id,
+			s->queued_realm.heap_id, s->queued_realm.ctx_gen,
+			(unsigned long)s->id);
+	} else if (realm_check != QJS_REALM_IDENTITY_OK) {
+		ms_diag_realm_invariant_record(MS_RI_DEFERRED_CALLBACK,
+			MS_RIS_CALLBACK_INVALIDATED_REALM, s->queued_realm.realm_id,
+			s->queued_realm.frame_id, s->queued_realm.document_id,
+			live_realm.document_id, s->queued_realm.nav_id, live_realm.nav_id,
+			s->queued_realm.heap_id, s->queued_realm.ctx_gen,
+			(unsigned long)s->id);
+	} else {
+		ms_diag_realm_invariant_record(MS_RI_DEFERRED_CALLBACK,
+			MS_RIS_DELIVERED, s->queued_realm.realm_id,
+			s->queued_realm.frame_id, s->queued_realm.document_id,
+			live_realm.document_id, s->queued_realm.nav_id, live_realm.nav_id,
+			s->queued_realm.heap_id, s->queued_realm.ctx_gen,
+			(unsigned long)s->id);
+	}
 	ms_diag_operation_record(s->operation_id, MS_OP_XHR, MS_OP_SETTLE,
 		s->is_error ? MS_OP_REJECT : MS_OP_RESOLVE,
 		s->is_error ? MS_OPR_NETWORK_ERROR : MS_OPR_NONE,
@@ -758,6 +815,14 @@ qjs_xhr_native_send(JSContext *ctx, JSValueConst this_val,
 		MS_OP_OK, MS_OPR_NONE, MS_ANSWER_NATIVE, 0);
 
 	s->ctx = ctx;
+	if (!macsurf_qjs_realm_identity(ctx, &s->queued_realm)) {
+		xhr_slot_release(s);
+		JS_FreeCString(ctx, method_c);
+		JS_FreeCString(ctx, url_c);
+		ms_diag_operation_record(operation_id, MS_OP_XHR, MS_OP_NATIVE_ALLOC,
+			MS_OP_DECLINE, MS_OPR_REALM_GONE, MS_ANSWER_NATIVE, 0);
+		return JS_NewInt32(ctx, -1);
+	}
 	s->xhr_obj = JS_DupValue(ctx, argv[0]);
 	s->url = url;
 	s->referer = (base != NULL) ? nsurl_ref(base) : NULL;
@@ -765,6 +830,12 @@ qjs_xhr_native_send(JSContext *ctx, JSValueConst this_val,
 	s->last_request_id = 0;
 	s->origin_script_id = ms_diag_cur_script();	/* MacSurf Trace 1b */
 	s->operation_id = operation_id;
+	ms_diag_realm_invariant_record(MS_RI_DEFERRED_CALLBACK, MS_RIS_QUEUED,
+		s->queued_realm.realm_id, s->queued_realm.frame_id,
+		s->queued_realm.document_id, s->queued_realm.document_id,
+		s->queued_realm.nav_id, s->queued_realm.nav_id,
+		s->queued_realm.heap_id, s->queued_realm.ctx_gen,
+		(unsigned long)s->id);
 	strncpy(s->method, method_c, sizeof(s->method) - 1);
 	s->method[sizeof(s->method) - 1] = '\0';
 	for (i = 0; s->method[i]; i++) {

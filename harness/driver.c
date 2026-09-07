@@ -73,6 +73,7 @@ extern int macsurf_imgdims_lookup(struct nsurl *url, int *w, int *h);	/* fixes92
 #include "macsurf_diag.h"
 #include "macsurf_trace.h"
 #include "macsurf_capability.h"
+#include "macsurf_qjs.h"
 
 extern int html_reconvert_content(struct content *c);
 /* fixes866 (#292): the real parser hooks html.c uses, so the harness exercises
@@ -12947,6 +12948,57 @@ box_coords(bx, &cx, &cy);
 			return 1;
 		}
 		fprintf(stderr, "=== Test 108 PASS: live realm becomes pointer-free retained retirement evidence ===\n");
+	}
+
+	/* --- Test 109: realm lifetime identity checks and bounded warning ring.
+	 * The valid check and the deliberately corrupted document generation use
+	 * the real registered QJS owner, not a fabricated diagnostic row. */
+	{
+		struct jsheap *realm_heap = NULL;
+		struct qjs_realm_diag realm;
+		struct qjs_realm_identity queued, live;
+		char warnings[8192];
+		int i, found = 0;
+
+		fprintf(stderr, "\n=== Test 109: realm lifetime invariants ===\n");
+		if (js_newheap(20000, &realm_heap) != NSERROR_OK || realm_heap == NULL) {
+			fprintf(stderr, "FAIL: Test 109 -- js_newheap\n");
+			return 1;
+		}
+		for (i = 0; i < macsurf_qjs_realm_count(); i++) {
+			if (macsurf_qjs_realm_get(i, &realm) &&
+				realm.state == QJS_REALM_LIVE && realm.ctx != NULL) {
+				found = 1;
+				break;
+			}
+		}
+		if (!found || !macsurf_qjs_realm_identity(realm.ctx, &queued) ||
+			macsurf_qjs_realm_identity_check(realm.ctx, &queued, &live) !=
+			QJS_REALM_IDENTITY_OK) {
+			fprintf(stderr, "FAIL: Test 109 -- valid live identity\n");
+			return 1;
+		}
+		queued.document_id++;
+		if (macsurf_qjs_realm_identity_check(realm.ctx, &queued, &live) !=
+			QJS_REALM_IDENTITY_DOCUMENT_MISMATCH) {
+			fprintf(stderr, "FAIL: Test 109 -- document generation mismatch hidden\n");
+			return 1;
+		}
+		for (i = 0; i < 65; i++)
+			ms_diag_realm_invariant_record(MS_RI_CALLBACK_DOC_GENERATION_MISMATCH,
+				MS_RIS_CANCELLED_NAVIGATION_REPLACED, live.realm_id,
+				live.frame_id, queued.document_id, live.document_id,
+				queued.nav_id, live.nav_id, live.heap_id, live.ctx_gen,
+				(unsigned long)i + 1);
+		(void)macsurf_diag_serialize_warnings(warnings, (long)sizeof(warnings));
+		if (strstr(warnings, "capacity=64") == NULL ||
+			strstr(warnings, "CALLBACK_DOC_GENERATION_MISMATCH") == NULL ||
+			strstr(warnings, "dropped=0") != NULL) {
+			fprintf(stderr, "FAIL: Test 109 -- bounded warning evidence\n");
+			return 1;
+		}
+		js_destroyheap(realm_heap);
+		fprintf(stderr, "=== Test 109 PASS: immutable identity catches stale document and ring loss is explicit ===\n");
 	}
 
 	return 0;

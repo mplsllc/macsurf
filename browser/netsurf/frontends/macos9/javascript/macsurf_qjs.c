@@ -229,6 +229,55 @@ static void qjs_owner_refresh(JSContext *ctx, void *win_priv,
 	}
 }
 
+static void qjs_owner_identity(const struct qjs_realm_owner *owner,
+		struct qjs_realm_identity *out)
+{
+	html_content *htmlc;
+	memset(out, 0, sizeof(*out));
+	if (owner == NULL) return;
+	htmlc = (html_content *)owner->content;
+	out->realm_id = owner->realm_id;
+	out->frame_id = owner->frame_id;
+	out->document_id = htmlc ? htmlc->doc_id : owner->document_id;
+	out->nav_id = htmlc ? content_get_nav_id((struct content *)htmlc) :
+		owner->nav_id;
+	out->heap_id = owner->heap ? owner->heap->heap_id : 0;
+	out->ctx_gen = owner->heap ? owner->heap->ctx_gen : 0;
+	out->rt = owner->heap ? owner->heap->rt : NULL;
+}
+
+int macsurf_qjs_realm_identity(JSContext *ctx, struct qjs_realm_identity *out)
+{
+	struct qjs_realm_owner *owner = qjs_owner_for_ctx(ctx);
+	if (out == NULL) return 0;
+	qjs_owner_identity(owner, out);
+	return owner != NULL && owner->state == QJS_REALM_LIVE;
+}
+
+int macsurf_qjs_realm_identity_check(JSContext *ctx,
+	const struct qjs_realm_identity *queued, struct qjs_realm_identity *live)
+{
+	struct qjs_realm_owner *owner = qjs_owner_for_ctx(ctx);
+	struct qjs_realm_identity observed;
+	qjs_owner_identity(owner, &observed);
+	if (live != NULL) *live = observed;
+	if (owner == NULL) return QJS_REALM_IDENTITY_CTX_NOT_REGISTERED;
+	if (owner->state != QJS_REALM_LIVE) return QJS_REALM_IDENTITY_RETIRED;
+	if (queued == NULL) return QJS_REALM_IDENTITY_CTX_NOT_REGISTERED;
+	if (queued->realm_id != observed.realm_id ||
+		queued->heap_id != observed.heap_id)
+		return QJS_REALM_IDENTITY_GENERATION_MISMATCH;
+	if (queued->ctx_gen != observed.ctx_gen)
+		return QJS_REALM_IDENTITY_GENERATION_MISMATCH;
+	if (queued->rt != observed.rt)
+		return QJS_REALM_IDENTITY_RUNTIME_MISMATCH;
+	if (queued->document_id != observed.document_id)
+		return QJS_REALM_IDENTITY_DOCUMENT_MISMATCH;
+	if (queued->nav_id != observed.nav_id)
+		return QJS_REALM_IDENTITY_NAV_MISMATCH;
+	return QJS_REALM_IDENTITY_OK;
+}
+
 static void qjs_owner_tombstone(const struct qjs_realm_owner *owner)
 {
 	struct qjs_realm_diag *out;
@@ -252,6 +301,12 @@ static void qjs_owner_tombstone(const struct qjs_realm_owner *owner)
 	out->event_listeners = QJS_REALM_DIAG_UNAVAILABLE;
 	out->wrappers = qjs_realm_wrapper_count(owner->heap ? owner->heap->rt : NULL);
 	out->deferred_notifications = QJS_REALM_DIAG_UNAVAILABLE;
+	if (out->timers_owned != 0 || out->xhr_owned != 0) {
+		ms_diag_realm_invariant_record(MS_RI_PENDING_WORK_ON_RETIRED_REALM,
+			MS_RIS_CANCELLED_REALM_RETIRED, out->realm_id, out->frame_id,
+			out->document_id, 0, out->nav_id, 0, out->heap_id,
+			out->ctx_gen, out->timers_owned + out->xhr_owned);
+	}
 	g_qjs_realm_tombstone_head = (g_qjs_realm_tombstone_head + 1) %
 		QJS_REALM_TOMBSTONE_N;
 	g_qjs_realm_tombstone_total++;
@@ -263,6 +318,17 @@ void macsurf_qjs_realm_tearing_down(JSContext *ctx)
 {
 	struct qjs_realm_owner *owner = qjs_owner_for_ctx(ctx);
 	if (owner != NULL && owner->state == QJS_REALM_LIVE) {
+		struct qjs_realm_identity id;
+		unsigned long pending;
+		qjs_owner_identity(owner, &id);
+		pending = qjs_realm_timer_count(ctx, id.ctx_gen) +
+			macos9_js_fetch_realm_count(ctx);
+		if (pending != 0) {
+			ms_diag_realm_invariant_record(MS_RI_PENDING_WORK_ON_RETIRED_REALM,
+				MS_RIS_CANCELLED_REALM_RETIRED, id.realm_id, id.frame_id,
+				id.document_id, 0, id.nav_id, 0, id.heap_id, id.ctx_gen,
+				pending);
+		}
 		owner->state = QJS_REALM_TEARING_DOWN;
 	}
 }
@@ -1303,6 +1369,8 @@ struct qjs_timer {
 	 * generation bookkeeping is wrong -- which the hardware says it is, since
 	 * fixes875's gate passed and the free still blew up. */
 	JSRuntime *rt;
+	/* Immutable owner identity for this timer's JSValues. */
+	unsigned long realm_id, frame_id, document_id, heap_id;
 	/* MacSurf Trace 1b: causal origin, captured at setTimeout registration. */
 	unsigned long origin_script_id;
 	unsigned long nav_id;
@@ -1427,6 +1495,13 @@ static void timer_slot_clear(struct qjs_timer *t, int free_vals)
 	if (free_vals) {
 		JSRuntime *live_rt = qjs_ctx_live_rt(t->ctx);
 		if (live_rt == NULL || t->rt == NULL || live_rt != t->rt) {
+			struct qjs_realm_identity live;
+			(void)macsurf_qjs_realm_identity_check(t->ctx, NULL, &live);
+			ms_diag_realm_invariant_record(MS_RI_TIMER_REALM_OWNER_MISMATCH,
+				MS_RIS_REJECTED_RUNTIME_REALM_MISMATCH, t->realm_id,
+				t->frame_id, t->document_id, live.document_id, t->nav_id,
+				live.nav_id, t->heap_id, t->ctx_gen,
+				(unsigned long)t->id);
 			macsurf_debug_log_writef(
 				"WORK timer: REFUSING cross-runtime free id=%d ctx=%p "
 				"slot_rt=%p live_rt=%p -- abandoning instead",
@@ -1568,6 +1643,15 @@ static JSValue qjs_settimeout_impl(JSContext *ctx,
 	 * against it. */
 	t->ctx = ctx;
 	t->ctx_gen = qjs_ctx_gen(ctx);
+	{
+		struct qjs_realm_identity owner;
+		if (macsurf_qjs_realm_identity(ctx, &owner)) {
+			t->realm_id = owner.realm_id;
+			t->frame_id = owner.frame_id;
+			t->document_id = owner.document_id;
+			t->heap_id = owner.heap_id;
+		}
+	}
 	/* fixes888 (#304) - capture the owning runtime alongside the dup. Safe to
 	 * dereference here: we are executing IN this context, so it is live. */
 	t->rt = JS_GetRuntime(ctx);
@@ -1806,6 +1890,23 @@ void macsurf_qjs_run_timers(struct jscontext *ctx)
 				g_timer_due++;   /* fixes1273 */
 			}
 		} else if (s_timer_arena[i].live) {
+			/* Other live heaps normally own timers in this shared arena. That
+			 * is not an invariant failure. A same-address context whose saved
+			 * generation changed is the ABA case this diagnostic is for. */
+			if (s_timer_arena[i].ctx == qctx) {
+				struct qjs_realm_identity live;
+				(void)macsurf_qjs_realm_identity_check(qctx, NULL, &live);
+				ms_diag_realm_invariant_record(
+					MS_RI_TIMER_REALM_OWNER_MISMATCH,
+					MS_RIS_REJECTED_CTX_GENERATION_MISMATCH,
+					s_timer_arena[i].realm_id,
+					s_timer_arena[i].frame_id,
+					s_timer_arena[i].document_id, live.document_id,
+					s_timer_arena[i].nav_id, live.nav_id,
+					s_timer_arena[i].heap_id,
+					s_timer_arena[i].ctx_gen,
+					(unsigned long)s_timer_arena[i].id);
+			}
 			ms_diag_timer_state((unsigned long)s_timer_arena[i].id,
 				MS_TIMER_OWNER_MISMATCH);
 			/* fixes1273 - live, but belongs to another context.
