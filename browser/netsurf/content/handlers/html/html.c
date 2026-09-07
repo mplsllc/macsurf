@@ -58,6 +58,7 @@
 #include "netsurf/bitmap.h"
 #include "javascript/js.h"
 #include "desktop/gui_internal.h"
+#include "desktop/browser_private.h"
 
 #include "html/html.h"
 #include "macsurf_debug.h"
@@ -407,6 +408,9 @@ static void html_box_convert_done(html_content *c, bool success)
 		content_set_error(&c->base);
 		return;
 	}
+
+	/* Box tree successfully published for this content */
+	c->live_box_generation++;
 
 
 #if ALWAYS_DUMP_BOX
@@ -4285,6 +4289,8 @@ static void html_reconvert_done(html_content *c, bool success)
 		html_reconvert_free_old();
 		html_reconv_ph_add(RECONV_PH_FREEOLD, t0);
 	}
+	/* Replacement box tree published */
+	c->live_box_generation++;
 	macsurf_reconv_pos_set("after-free_old", (long) macsurf_reconvert_seq,
 			0, "");
 	macsurf_reconv_pos_flush();
@@ -6470,6 +6476,64 @@ html_get_contextual_content(struct content *c, int x, int y,
 	}
 	return NSERROR_OK;
 }
+
+static struct html_content *html_find_in_bw(struct browser_window *bw, unsigned long doc_id)
+{
+	struct html_content *found = NULL;
+	int i;
+
+	if (bw == NULL) return NULL;
+	if (bw->current_content != NULL) {
+		if (content_get_type(bw->current_content) == CONTENT_HTML) {
+			struct content *c = hlcache_handle_get_content(bw->current_content);
+			if (c != NULL) {
+				struct html_content *hc = (struct html_content *) c;
+				if (hc->doc_id == doc_id)
+					return hc;
+			}
+		}
+	}
+	if (bw->loading_content != NULL) {
+		if (content_get_type(bw->loading_content) == CONTENT_HTML) {
+			struct content *c = hlcache_handle_get_content(bw->loading_content);
+			if (c != NULL) {
+				struct html_content *hc = (struct html_content *) c;
+				if (hc->doc_id == doc_id)
+					return hc;
+			}
+		}
+	}
+	if (bw->children != NULL) {
+		for (i = 0; i < bw->rows * bw->cols; i++) {
+			found = html_find_in_bw(&bw->children[i], doc_id);
+			if (found != NULL) return found;
+		}
+	}
+	if (bw->iframes != NULL) {
+		for (i = 0; i < bw->iframe_count; i++) {
+			found = html_find_in_bw(&bw->iframes[i], doc_id);
+			if (found != NULL) return found;
+		}
+	}
+	return NULL;
+}
+
+struct html_content *html_find_by_doc_id(unsigned long doc_id)
+{
+#ifdef __MACOS9__
+	extern struct gui_window *macos9_window_list_head(void);
+	struct gui_window *gw;
+
+	if (doc_id == 0) return NULL;
+	for (gw = macos9_window_list_head(); gw != NULL; gw = gw->next) {
+		struct html_content *found = html_find_in_bw(gw->bw, doc_id);
+		if (found != NULL)
+			return found;
+	}
+#endif
+	return NULL;
+}
+
 
 
 /**

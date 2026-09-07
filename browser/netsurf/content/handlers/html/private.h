@@ -259,6 +259,7 @@ typedef struct html_content {
 					 * browsing context is attached */
 	unsigned long last_layout_pass_id;	/* most recent render pass over
 						 * this document (paint join) */
+	unsigned long live_box_generation;	/* published box-tree generation */
 
 } html_content;
 

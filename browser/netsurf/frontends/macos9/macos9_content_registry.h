@@ -87,4 +87,14 @@ unsigned long macos9_content_token(struct content *c);
  */
 int macos9_content_token_valid(struct content *c, unsigned long token);
 
+/**
+ * Total capacity of the content registry table.
+ */
+int macos9_content_registry_count(void);
+
+/**
+ * Slot lookup in the content registry table.
+ */
+struct content *macos9_content_registry_get(int idx);
+
 #endif /* MACSURF_CONTENT_REGISTRY_H */

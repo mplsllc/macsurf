@@ -277,5 +277,6 @@ void html_pagemap_brief(struct dom_node *n, char *out, int cap);
 
 extern int html_reconvert_fast_style(struct content *c, void *node);
 extern int html_reconvert_fast_inherited_color(struct content *c, void *node);
+struct html_content *html_find_by_doc_id(unsigned long doc_id);
 
 #endif

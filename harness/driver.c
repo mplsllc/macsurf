@@ -8912,6 +8912,7 @@ box_coords(bx, &cx, &cy);
 					struct content *c);
 			macsurf_js_notify_content_freed((struct content *)&t69c);
 		}
+		macos9_content_unregister((struct content *)&t69c);
 		js_destroyheap(t69heap);
 	}
 	fprintf(stderr, "=== Test 69 PASS: MutationObserver delivers a real "
@@ -9176,6 +9177,7 @@ box_coords(bx, &cx, &cy);
 					struct content *c);
 			macsurf_js_notify_content_freed((struct content *)&t70c);
 		}
+		macos9_content_unregister((struct content *)&t70c);
 		js_destroyheap(t70heap);
 	}
 	fprintf(stderr, "=== Test 70 PASS: querySelectorAll + textContent + "
@@ -12565,6 +12567,21 @@ box_coords(bx, &cx, &cy);
 	} /* End of Test 99 scope */
 
 	phase2_diag:
+	if (guit == NULL) {
+		memset(&g_misc_table, 0, sizeof(g_misc_table));
+		g_misc_table.schedule = harness_schedule;
+		{
+			static struct netsurf_table nt;
+			memset(&nt, 0, sizeof(nt));
+			nt.misc = &g_misc_table;
+			guit = &nt;
+		}
+		corestrings_init();
+		if (css_hint_init() != NSERROR_OK) {
+			fprintf(stderr, "FAIL: css_hint_init\n");
+			return 1;
+		}
+	}
 	/* --- Test 102: Phase 2 negative-state diagnostics ------------------
 	 * Exercise the diagnostic boundary directly: these are deterministic
 	 * MacSurf-owned state transitions, not an attempt to emulate a page or
@@ -13011,6 +13028,213 @@ box_coords(bx, &cx, &cy);
 		}
 		js_destroyheap(realm_heap);
 		fprintf(stderr, "=== Test 109 PASS: immutable identity catches stale document and ring loss is explicit ===\n");
+	}
+
+	{
+		/* Test 110: DOM and Box forensic entity graph */
+		char t110_html[] =
+			"<!DOCTYPE html><html><head><title>Test 110</title></head>"
+			"<body><div id=\"main\" class=\"hero container\"><p id=\"p1\">First</p><p id=\"p2\">Second</p></div></body></html>";
+		struct html_content t110c;
+		dom_hubbub_parser *t110p = NULL;
+		dom_document *t110doc = NULL;
+		dom_node *t110root = NULL;
+		css_select_ctx *t110ctx = NULL;
+		css_stylesheet *t110ua = NULL;
+		dom_hubbub_parser_params t110params;
+		css_stylesheet_params t110sp;
+		void *t110_box_ctx = NULL;
+		nserror t110err;
+		dom_exception t110derr;
+		char buf[16384];
+		long n;
+		dom_node *p1 = NULL;
+		dom_node *p1_clone = NULL;
+		dom_node *p1_imported = NULL;
+		dom_string *s_p1 = NULL;
+		dom_nodelist *nl = NULL;
+		uint32_t len = 0;
+		unsigned long initial_box_gen = 0;
+		unsigned long target_doc_id = 0;
+
+		fprintf(stderr, "\n=== Test 110: DOM and Box forensic entity graph ===\n");
+
+		memset(&t110params, 0, sizeof(t110params));
+		t110params.fix_enc = true;
+		t110derr = dom_hubbub_parser_create(&t110params, &t110p, &t110doc);
+		if (t110derr != DOM_HUBBUB_OK || t110p == NULL) {
+			fprintf(stderr, "FAIL: Test 110 parser create %d\n", (int)t110derr);
+			return 1;
+		}
+		if (dom_hubbub_parser_parse_chunk(t110p, (const uint8_t *)t110_html,
+				strlen(t110_html)) != DOM_HUBBUB_OK ||
+				dom_hubbub_parser_completed(t110p) != DOM_HUBBUB_OK) {
+			fprintf(stderr, "FAIL: Test 110 parse\n");
+			return 1;
+		}
+		dom_hubbub_parser_destroy(t110p);
+
+		memset(&t110c, 0, sizeof(t110c));
+		t110c.base_url = g_base_url;
+		t110c.document = t110doc;
+		t110c.quirks = DOM_DOCUMENT_QUIRKS_MODE_NONE;
+		t110c.enable_scripting = false;
+		t110c.doc_id = 11001; /* known doc_id for snapshot targeting */
+		t110c.frame_id = 1;
+		t110c.live_box_generation = 1;
+
+		if (css_select_ctx_create(&t110ctx) != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 110 select_ctx\n");
+			return 1;
+		}
+		t110c.select_ctx = t110ctx;
+
+		memset(&t110sp, 0, sizeof(t110sp));
+		t110sp.params_version = CSS_STYLESHEET_PARAMS_VERSION_1;
+		t110sp.level = CSS_LEVEL_3;
+		t110sp.charset = "UTF-8";
+		t110sp.url = "resource:default.css";
+		t110sp.title = "default";
+		t110sp.resolve = harness_css_resolve_url;
+		if (css_stylesheet_create(&t110sp, &t110ua) != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 110 stylesheet create\n");
+			return 1;
+		}
+		{
+			const char *ua_css = "html,body,div,p{display:block}";
+			(void)css_stylesheet_append_data(t110ua, (const uint8_t *)ua_css, strlen(ua_css));
+			(void)css_stylesheet_data_done(t110ua);
+		}
+		(void)css_select_ctx_append_sheet(t110ctx, t110ua, CSS_ORIGIN_UA, "screen");
+
+		t110c.media.type = CSS_MEDIA_SCREEN;
+		t110c.media.width = INTTOFIX(800);
+		t110c.media.height = INTTOFIX(600);
+		t110c.media.orientation = CSS_MEDIA_ORIENTATION_LANDSCAPE;
+		t110c.unit_len_ctx.viewport_width = INTTOFIX(800);
+		t110c.unit_len_ctx.viewport_height = INTTOFIX(600);
+		t110c.unit_len_ctx.device_dpi = INTTOFIX(96);
+		t110c.unit_len_ctx.font_size_default = INTTOFIX(16);
+		t110c.unit_len_ctx.font_size_minimum = INTTOFIX(8);
+		if (lwc_intern_string("*", 1, &t110c.universal) != lwc_error_ok) {
+			fprintf(stderr, "FAIL: Test 110 universal\n");
+			return 1;
+		}
+
+		t110c.base.status = CONTENT_STATUS_LOADING;
+		t110c.base.active = 0;
+		t110c.base.handler = &g_dummy_handler;
+		macos9_content_register((struct content *)&t110c);
+
+		if (dom_document_get_document_element(t110doc, (void *)&t110root) != DOM_NO_ERR ||
+				t110root == NULL) {
+			fprintf(stderr, "FAIL: Test 110 doc element\n");
+			return 1;
+		}
+
+		g_initial_build_done = 0;
+		g_initial_build_ok = false;
+		t110err = dom_to_box(t110root, &t110c, initial_build_cb, &t110_box_ctx);
+		dom_node_unref(t110root);
+		if (t110err != NSERROR_OK) {
+			fprintf(stderr, "FAIL: Test 110 dom_to_box=%d\n", (int)t110err);
+			return 1;
+		}
+		harness_pump_all(100000);
+		if (!g_initial_build_done || !g_initial_build_ok) {
+			fprintf(stderr, "FAIL: Test 110 build done=%d ok=%d\n",
+					g_initial_build_done, (int)g_initial_build_ok);
+			return 1;
+		}
+
+		initial_box_gen = t110c.live_box_generation;
+		target_doc_id = t110c.doc_id;
+
+		/* 1. Lookup p1 element */
+		(void) dom_string_create((const uint8_t *)"p", 1, &s_p1);
+		t110derr = dom_document_get_elements_by_tag_name(t110doc, s_p1, &nl);
+		if (t110derr != DOM_NO_ERR || nl == NULL) {
+			fprintf(stderr, "FAIL: Test 110 -- get elements by tag name\n");
+			return 1;
+		}
+		dom_string_unref(s_p1);
+
+		t110derr = dom_nodelist_get_length(nl, &len);
+		if (t110derr != DOM_NO_ERR || len < 1) {
+			fprintf(stderr, "FAIL: Test 110 -- nodelist length\n");
+			return 1;
+		}
+		t110derr = dom_nodelist_item(nl, 0, &p1);
+		dom_nodelist_unref(nl);
+		if (t110derr != DOM_NO_ERR || p1 == NULL) {
+			fprintf(stderr, "FAIL: Test 110 -- nodelist item\n");
+			return 1;
+		}
+
+		/* 2. Capture snapshot 1 via domstart */
+		n = macsurf_diag_dom_start(target_doc_id, buf, (long)sizeof(buf));
+		if (n <= 0 || strstr(buf, "complete=1") == NULL || strstr(buf, "coverage=connected_tree") == NULL) {
+			fprintf(stderr, "FAIL: Test 110 -- domstart capture failed: %s\n", buf);
+			return 1;
+		}
+
+		/* 3. Verify cloneNode leaves clone with distinct/unassigned identity */
+		t110derr = dom_node_clone_node(p1, false, &p1_clone);
+		if (t110derr != DOM_NO_ERR || p1_clone == NULL) {
+			fprintf(stderr, "FAIL: Test 110 -- clone_node failed\n");
+			return 1;
+		}
+		/* Also test importNode */
+		t110derr = dom_document_import_node(t110doc, p1, false, &p1_imported);
+		if (t110derr != DOM_NO_ERR || p1_imported == NULL) {
+			fprintf(stderr, "FAIL: Test 110 -- import_node failed\n");
+			return 1;
+		}
+
+		/* Userdata on clone and imported must not be pre-populated with p1's ID */
+		{
+			void *ud_clone = NULL;
+			void *ud_imp = NULL;
+			(void) dom_node_get_user_data(p1_clone, corestring_dom___ns_key_diag_node_id, &ud_clone);
+			(void) dom_node_get_user_data(p1_imported, corestring_dom___ns_key_diag_node_id, &ud_imp);
+			if (ud_clone != NULL || ud_imp != NULL) {
+				fprintf(stderr, "FAIL: Test 110 -- clone or imported inherited source userdata pointer\n");
+				return 1;
+			}
+		}
+
+		/* 4. Page through DOM and Box entities from snapshot 1 */
+		n = macsurf_diag_serialize_dom(buf, (long)sizeof(buf), 0, 2);
+		if (strstr(buf, "returned=2") == NULL || strstr(buf, "next_after=2") == NULL || strstr(buf, "complete=0") == NULL) {
+			fprintf(stderr, "FAIL: Test 110 -- dom paging page 1: %s\n", buf);
+			return 1;
+		}
+
+		/* 5. Simulate a mutation / reconvert publication: live_box_generation advances */
+		t110c.live_box_generation++;
+
+		/* 6. Verify page 2 of snapshot 1 remains readable and coherent, reporting snapshot_stale=1 */
+		n = macsurf_diag_serialize_dom(buf, (long)sizeof(buf), 2, 10);
+		if (strstr(buf, "snapshot_stale=1") == NULL || strstr(buf, "live_changed=1") == NULL || strstr(buf, "complete=1") == NULL) {
+			fprintf(stderr, "FAIL: Test 110 -- dom paging page 2 after mutation: %s\n", buf);
+			return 1;
+		}
+
+		/* 7. Boxes serialization */
+		n = macsurf_diag_serialize_boxes(buf, (long)sizeof(buf), 0, 10);
+		if (strstr(buf, "MSDIAG 1 boxes") == NULL || strstr(buf, "snapshot_stale=1") == NULL) {
+			fprintf(stderr, "FAIL: Test 110 -- boxes paging: %s\n", buf);
+			return 1;
+		}
+
+		/* Clean up local test nodes */
+		dom_node_unref(p1);
+		dom_node_unref(p1_clone);
+		dom_node_unref(p1_imported);
+		dom_node_unref((dom_node *)t110doc);
+		macos9_content_unregister((struct content *)&t110c);
+
+		fprintf(stderr, "=== Test 110 PASS: DOM and Box entities verified across reconvert drift ===\n");
 	}
 
 	return 0;

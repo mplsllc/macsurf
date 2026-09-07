@@ -402,4 +402,9 @@ long macsurf_diag_serialize_capabilities(char *buf, long cap);
 long macsurf_diag_serialize_css_gaps(char *buf, long cap);
 long macsurf_diag_serialize_gapreport(char *buf, long cap);
 
+/* ================== DOM and Box Forensic Entity Graph ================== */
+long macsurf_diag_dom_start(unsigned long target_doc, char *buf, long cap);
+long macsurf_diag_serialize_dom(char *buf, long cap, unsigned long after, unsigned long limit);
+long macsurf_diag_serialize_boxes(char *buf, long cap, unsigned long after, unsigned long limit);
+
 #endif /* MACSURF_DIAG_H */

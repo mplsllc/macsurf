@@ -173,3 +173,22 @@ macos9_content_token_valid(struct content *c, unsigned long token)
 
 	return (macos9_content_table[idx].gen == token) ? 1 : 0;
 }
+
+
+/* documented in macos9_content_registry.h */
+int
+macos9_content_registry_count(void)
+{
+	return MACOS9_CONTENT_REGISTRY_CAP;
+}
+
+
+/* documented in macos9_content_registry.h */
+struct content *
+macos9_content_registry_get(int idx)
+{
+	if (idx < 0 || idx >= MACOS9_CONTENT_REGISTRY_CAP)
+		return NULL;
+
+	return macos9_content_table[idx].c;
+}

@@ -10,6 +10,11 @@
 #include "content/fetch.h"	/* fetch_get_{nav_id,request_id,redirect_from} */
 #include "nsutils/time.h"
 #include "utils/nsoption.h"
+#include "utils/corestrings.h"
+#include "macos9_content_registry.h"
+#include "html/box.h"
+#include "html/private.h"
+#include "html/html.h"
 
 #include "macsurf_diag.h"
 #include "macsurf_gap.h"
@@ -2622,5 +2627,733 @@ long macsurf_diag_serialize_errors(char *buf, long cap)
 			e->op_id, e->request_id, e->name_id, e->message_id);
 		n = diag_cat(buf, cap, n, line);
 	}
+	return n;
+}
+
+/* ================== DOM and Box Forensic Entity Graph ================== */
+
+extern long macsurf_free_mem(void);
+
+/* Minimal persistent node user data: holds ONLY node_id */
+struct ms_diag_node_info {
+	unsigned long node_id;
+};
+
+static unsigned long g_diag_node_seq = 0;
+
+/* Visited box hash table for O(1) deduplication during traversal */
+struct ms_box_visited_entry {
+	struct box *b;
+	unsigned long id;
+};
+
+struct ms_box_visited_map {
+	struct ms_box_visited_entry *table;
+	unsigned long capacity;
+	unsigned long count;
+};
+
+static void ms_box_map_init(struct ms_box_visited_map *map, struct ms_box_visited_entry *storage, unsigned long cap)
+{
+	map->table = storage;
+	map->capacity = cap;
+	map->count = 0;
+	if (storage != NULL && cap > 0) {
+		memset(storage, 0, (size_t)(cap * sizeof(struct ms_box_visited_entry)));
+	}
+}
+
+static unsigned long ms_box_ptr_hash(const struct box *b, unsigned long cap)
+{
+	unsigned long v = (unsigned long) b;
+	v = ((v >> 4) ^ (v >> 9) ^ (v * 2654435761UL));
+	return v & (cap - 1);
+}
+
+static unsigned long ms_box_map_get(const struct ms_box_visited_map *map, struct box *b)
+{
+	unsigned long idx, start;
+	if (map->table == NULL || map->capacity == 0 || b == NULL) return 0;
+	start = ms_box_ptr_hash(b, map->capacity);
+	idx = start;
+	while (map->table[idx].b != NULL) {
+		if (map->table[idx].b == b) return map->table[idx].id;
+		idx = (idx + 1) & (map->capacity - 1);
+		if (idx == start) break;
+	}
+	return 0;
+}
+
+static int ms_box_map_put(struct ms_box_visited_map *map, struct box *b, unsigned long id)
+{
+	unsigned long idx, start;
+	if (map->table == NULL || map->capacity == 0 || b == NULL) return 0;
+	start = ms_box_ptr_hash(b, map->capacity);
+	idx = start;
+	while (map->table[idx].b != NULL) {
+		if (map->table[idx].b == b) return 1; /* already present */
+		idx = (idx + 1) & (map->capacity - 1);
+		if (idx == start) return 0; /* full */
+	}
+	map->table[idx].b = b;
+	map->table[idx].id = id;
+	map->count++;
+	return 1;
+}
+
+/* User-data callback strictly adhering to libdom dom_user_data_handler */
+static void ms_diag_node_data_handler(dom_node_operation operation,
+		dom_string *key, void *data, struct dom_node *src,
+		struct dom_node *dst)
+{
+	(void)key;
+	(void)src;
+	(void)dst;
+	if (operation == DOM_NODE_DELETED) {
+		if (data != NULL) {
+			free(data);
+		}
+	}
+	/* CLONED and IMPORTED: do nothing; dst gets no copied identity.
+	 * ADOPTED and RENAMED: do not allocate a second slot sharing the heap pointer. */
+}
+
+/* Ensure a node ID is assigned and attached to the DOM node */
+static unsigned long ms_diag_node_id_ensure(dom_node *node)
+{
+	struct ms_diag_node_info *info = NULL;
+	dom_exception exc;
+	void *old_data = NULL;
+
+	if (node == NULL) return 0;
+
+	exc = dom_node_get_user_data(node, corestring_dom___ns_key_diag_node_id, (void **) &info);
+	if (exc == DOM_NO_ERR && info != NULL) {
+		return info->node_id;
+	}
+
+	info = (struct ms_diag_node_info *) malloc(sizeof(struct ms_diag_node_info));
+	if (info == NULL) return 0;
+
+	g_diag_node_seq++;
+	if (g_diag_node_seq == 0) g_diag_node_seq = 1;
+	info->node_id = g_diag_node_seq;
+
+	exc = dom_node_set_user_data(node, corestring_dom___ns_key_diag_node_id,
+			info, ms_diag_node_data_handler, &old_data);
+	if (exc != DOM_NO_ERR) {
+		free(info);
+		return 0;
+	}
+	return info->node_id;
+}
+
+/* Immutable Snapshot Structures */
+
+struct ms_diag_snapshot_node {
+	unsigned long node_id;
+	unsigned long parent_node_id;
+	unsigned long box_id;
+	short node_type;
+	char tag[32];
+	char class_name[64];
+	char node_id_attr[32];
+};
+
+struct ms_diag_snapshot_box {
+	unsigned long box_id;
+	unsigned long parent_box_id;
+	unsigned long node_id;
+	short type;
+	short flags;
+	long x, y, width, height;
+	unsigned long box_ptr; /* debug token only, never dereferenced */
+};
+
+struct ms_diag_snapshot {
+	unsigned long doc_id;
+	unsigned long frame_id;
+	unsigned long nav_id;
+	unsigned long content_token;
+	unsigned long box_generation;
+	struct html_content *htmlc;
+
+	unsigned long node_count;
+	struct ms_diag_snapshot_node *nodes;
+
+	unsigned long box_count;
+	struct ms_diag_snapshot_box *boxes;
+
+	int valid;
+	int live_changed;
+};
+
+static struct ms_diag_snapshot g_dom_snapshot;
+static int g_dom_capture_in_progress = 0;
+
+static void ms_diag_snapshot_free(void)
+{
+	if (g_dom_snapshot.nodes != NULL) {
+		free(g_dom_snapshot.nodes);
+		g_dom_snapshot.nodes = NULL;
+	}
+	if (g_dom_snapshot.boxes != NULL) {
+		free(g_dom_snapshot.boxes);
+		g_dom_snapshot.boxes = NULL;
+	}
+	g_dom_snapshot.node_count = 0;
+	g_dom_snapshot.box_count = 0;
+	g_dom_snapshot.valid = 0;
+	g_dom_snapshot.live_changed = 0;
+	g_dom_snapshot.htmlc = NULL;
+}
+
+/* Count connected DOM nodes (Pass 1) */
+static void ms_diag_count_dom_nodes(dom_node *root, unsigned long *count)
+{
+	dom_node *cur;
+	dom_node *next = NULL;
+	dom_exception exc;
+
+	if (root == NULL) return;
+	cur = dom_node_ref(root);
+
+	while (cur != NULL) {
+		(*count)++;
+
+		exc = dom_node_get_first_child(cur, &next);
+		if (exc == DOM_NO_ERR && next != NULL) {
+			dom_node_unref(cur);
+			cur = next;
+			continue;
+		}
+
+		exc = dom_node_get_next_sibling(cur, &next);
+		if (exc == DOM_NO_ERR && next != NULL) {
+			dom_node_unref(cur);
+			cur = next;
+			continue;
+		}
+
+		while (cur != NULL) {
+			dom_node *parent = NULL;
+			exc = dom_node_get_parent_node(cur, &parent);
+			dom_node_unref(cur);
+			cur = parent;
+			if (cur == NULL || cur == root) {
+				if (cur != NULL) dom_node_unref(cur);
+				cur = NULL;
+				break;
+			}
+			exc = dom_node_get_next_sibling(cur, &next);
+			if (exc == DOM_NO_ERR && next != NULL) {
+				dom_node_unref(cur);
+				cur = next;
+				break;
+			}
+		}
+	}
+}
+
+/* Count unique boxes (Pass 1) */
+static void ms_diag_count_boxes(struct box *b, struct ms_box_visited_map *map, unsigned long *count)
+{
+	struct box *fl;
+
+	while (b != NULL) {
+		if (ms_box_map_get(map, b) != 0) {
+			b = b->next;
+			continue;
+		}
+		(*count)++;
+		(void) ms_box_map_put(map, b, *count);
+
+		if (b->list_marker != NULL) {
+			ms_diag_count_boxes(b->list_marker, map, count);
+		}
+		for (fl = b->float_children; fl != NULL; fl = fl->next_float) {
+			ms_diag_count_boxes(fl, map, count);
+		}
+		if (b->children != NULL) {
+			ms_diag_count_boxes(b->children, map, count);
+		}
+		b = b->next;
+	}
+}
+
+/* Fill DOM nodes (Pass 2) */
+static void ms_diag_fill_dom_nodes(dom_node *root, struct ms_diag_snapshot_node *nodes,
+		unsigned long *idx, unsigned long max_nodes)
+{
+	dom_node *cur;
+	dom_node *next = NULL;
+	dom_exception exc;
+	static dom_string *s_id = NULL;
+	static dom_string *s_class = NULL;
+
+	if (root == NULL || nodes == NULL) return;
+	if (s_id == NULL) (void) dom_string_create((const uint8_t *)"id", 2, &s_id);
+	if (s_class == NULL) (void) dom_string_create((const uint8_t *)"class", 5, &s_class);
+
+	cur = dom_node_ref(root);
+
+	while (cur != NULL && *idx < max_nodes) {
+		struct ms_diag_snapshot_node *sn = &nodes[*idx];
+		dom_node_type ntype = DOM_ELEMENT_NODE;
+		dom_string *name = NULL;
+		dom_node *parent = NULL;
+		struct box *box_for_n = NULL;
+
+		sn->node_id = ms_diag_node_id_ensure(cur);
+		(void) dom_node_get_node_type(cur, &ntype);
+		sn->node_type = (short) ntype;
+		sn->tag[0] = '\0';
+		sn->class_name[0] = '\0';
+		sn->node_id_attr[0] = '\0';
+		sn->parent_node_id = 0;
+		sn->box_id = 0;
+
+		exc = dom_node_get_node_name(cur, &name);
+		if (exc == DOM_NO_ERR && name != NULL) {
+			const char *d = dom_string_data(name);
+			if (d != NULL) {
+				strncpy(sn->tag, d, sizeof(sn->tag) - 1);
+				sn->tag[sizeof(sn->tag) - 1] = '\0';
+			}
+			dom_string_unref(name);
+		}
+
+		if (ntype == DOM_ELEMENT_NODE) {
+			dom_string *val = NULL;
+			if (s_id != NULL) {
+				exc = dom_element_get_attribute((dom_element *)cur, s_id, &val);
+				if (exc == DOM_NO_ERR && val != NULL) {
+					const char *d = dom_string_data(val);
+					if (d != NULL) {
+						strncpy(sn->node_id_attr, d, sizeof(sn->node_id_attr) - 1);
+						sn->node_id_attr[sizeof(sn->node_id_attr) - 1] = '\0';
+					}
+					dom_string_unref(val);
+				}
+			}
+			if (s_class != NULL) {
+				val = NULL;
+				exc = dom_element_get_attribute((dom_element *)cur, s_class, &val);
+				if (exc == DOM_NO_ERR && val != NULL) {
+					const char *d = dom_string_data(val);
+					if (d != NULL) {
+						strncpy(sn->class_name, d, sizeof(sn->class_name) - 1);
+						sn->class_name[sizeof(sn->class_name) - 1] = '\0';
+					}
+					dom_string_unref(val);
+				}
+			}
+		}
+
+		exc = dom_node_get_parent_node(cur, &parent);
+		if (exc == DOM_NO_ERR && parent != NULL) {
+			sn->parent_node_id = ms_diag_node_id_ensure(parent);
+			dom_node_unref(parent);
+		}
+
+		exc = dom_node_get_user_data(cur, corestring_dom___ns_key_box_node_data, (void **) &box_for_n);
+		if (exc == DOM_NO_ERR && box_for_n != NULL) {
+			/* Box ID will be resolved after boxes are filled */
+		}
+
+		(*idx)++;
+
+		exc = dom_node_get_first_child(cur, &next);
+		if (exc == DOM_NO_ERR && next != NULL) {
+			dom_node_unref(cur);
+			cur = next;
+			continue;
+		}
+
+		exc = dom_node_get_next_sibling(cur, &next);
+		if (exc == DOM_NO_ERR && next != NULL) {
+			dom_node_unref(cur);
+			cur = next;
+			continue;
+		}
+
+		while (cur != NULL) {
+			parent = NULL;
+			exc = dom_node_get_parent_node(cur, &parent);
+			dom_node_unref(cur);
+			cur = parent;
+			if (cur == NULL || cur == root) {
+				if (cur != NULL) dom_node_unref(cur);
+				cur = NULL;
+				break;
+			}
+			exc = dom_node_get_next_sibling(cur, &next);
+			if (exc == DOM_NO_ERR && next != NULL) {
+				dom_node_unref(cur);
+				cur = next;
+				break;
+			}
+		}
+	}
+}
+
+/* Fill Boxes (Pass 2) */
+static void ms_diag_fill_boxes(struct box *b, struct ms_box_visited_map *map,
+		struct ms_diag_snapshot_box *boxes, unsigned long *idx,
+		unsigned long max_boxes, unsigned long parent_box_id)
+{
+	struct box *fl;
+
+	while (b != NULL && *idx < max_boxes) {
+		unsigned long my_id = ms_box_map_get(map, b);
+		struct ms_diag_snapshot_box *sb;
+		if (my_id == 0) {
+			b = b->next;
+			continue;
+		}
+		sb = &boxes[*idx];
+		sb->box_id = my_id;
+		sb->parent_box_id = parent_box_id;
+		sb->node_id = (b->node != NULL) ? ms_diag_node_id_ensure(b->node) : 0;
+		sb->type = (short) b->type;
+		sb->flags = (short) b->flags;
+		sb->x = b->x;
+		sb->y = b->y;
+		sb->width = b->width;
+		sb->height = b->height;
+		sb->box_ptr = (unsigned long) b;
+		(*idx)++;
+
+		if (b->list_marker != NULL) {
+			ms_diag_fill_boxes(b->list_marker, map, boxes, idx, max_boxes, my_id);
+		}
+		for (fl = b->float_children; fl != NULL; fl = fl->next_float) {
+			ms_diag_fill_boxes(fl, map, boxes, idx, max_boxes, my_id);
+		}
+		if (b->children != NULL) {
+			ms_diag_fill_boxes(b->children, map, boxes, idx, max_boxes, my_id);
+		}
+		b = b->next;
+	}
+}
+
+static unsigned long ms_next_pow2(unsigned long n)
+{
+	unsigned long p = 16;
+	while (p < n && p < 1048576UL) p <<= 1;
+	return p;
+}
+
+long macsurf_diag_dom_start(unsigned long target_doc, char *buf, long cap)
+{
+	struct html_content *htmlc = NULL;
+	unsigned long node_count = 0;
+	unsigned long box_count = 0;
+	unsigned long map_cap = 0;
+	unsigned long required_bytes = 0;
+	long free_mem = 0;
+	unsigned long n_idx = 0;
+	unsigned long b_idx = 0;
+	unsigned long i;
+	int reg_cap;
+	struct ms_box_visited_map box_map;
+	struct ms_box_visited_entry *map_entries = NULL;
+	char line[256];
+	long n = 0;
+
+	if (buf == NULL || cap < 2) return 0;
+	buf[0] = '\0';
+
+	if (g_dom_capture_in_progress) {
+		snprintf(line, sizeof line,
+			"MSDIAG 1 domstart complete=0 status=error reason=reentrant\n");
+		return diag_cat(buf, cap, 0, line);
+	}
+	g_dom_capture_in_progress = 1;
+
+	if (target_doc != 0) {
+		htmlc = html_find_by_doc_id(target_doc);
+	} else {
+#ifdef __MACOS9__
+		extern struct gui_window *macos9_window_list_head(void);
+		struct gui_window *gw = macos9_window_list_head();
+		if (gw != NULL && gw->bw != NULL && gw->bw->current_content != NULL) {
+			if (content_get_type(gw->bw->current_content) == CONTENT_HTML) {
+				struct content *c = hlcache_handle_get_content(gw->bw->current_content);
+				if (c != NULL) {
+					htmlc = (struct html_content *) c;
+				}
+			}
+		}
+#endif
+	}
+
+	if (htmlc == NULL) {
+		reg_cap = macos9_content_registry_count();
+		for (i = 0; (int)i < reg_cap; i++) {
+			struct content *c = macos9_content_registry_get((int)i);
+			if (c != NULL) {
+				struct html_content *cand = (struct html_content *)c;
+				if (cand->document != NULL &&
+				    (target_doc == 0 || cand->doc_id == target_doc)) {
+					htmlc = cand;
+					break;
+				}
+			}
+		}
+	}
+
+	if (htmlc == NULL || htmlc->document == NULL) {
+		g_dom_capture_in_progress = 0;
+		snprintf(line, sizeof line,
+			"MSDIAG 1 domstart complete=0 status=error reason=not_found target_doc=%lu\n",
+			target_doc);
+		return diag_cat(buf, cap, 0, line);
+	}
+
+	/* Atomic Pass 1: count nodes and boxes without yielding */
+	ms_diag_count_dom_nodes((dom_node *) htmlc->document, &node_count);
+
+	/* Prepare visited map for box count */
+	map_cap = 1024;
+	map_entries = (struct ms_box_visited_entry *) malloc(map_cap * sizeof(struct ms_box_visited_entry));
+	if (map_entries == NULL) {
+		g_dom_capture_in_progress = 0;
+		snprintf(line, sizeof line,
+			"MSDIAG 1 domstart complete=0 status=error reason=allocation\n");
+		return diag_cat(buf, cap, 0, line);
+	}
+	ms_box_map_init(&box_map, map_entries, map_cap);
+
+	if (htmlc->layout != NULL) {
+		ms_diag_count_boxes(htmlc->layout, &box_map, &box_count);
+	}
+	free(map_entries);
+	map_entries = NULL;
+
+	/* Dynamic capacity and headroom checks */
+	map_cap = ms_next_pow2((box_count > 0 ? box_count * 2 : 16));
+	required_bytes = (unsigned long)(node_count * sizeof(struct ms_diag_snapshot_node) +
+			 box_count * sizeof(struct ms_diag_snapshot_box) +
+			 map_cap * sizeof(struct ms_box_visited_entry));
+
+	free_mem = macsurf_free_mem();
+	/* Hard diagnostic limit: 2MB total for snapshot on OS 9 */
+	if (required_bytes > 2097152UL || (free_mem > 0 && (long)required_bytes > free_mem / 2)) {
+		g_dom_capture_in_progress = 0;
+		snprintf(line, sizeof line,
+			"MSDIAG 1 domstart complete=0 status=error reason=capacity required=%lu limit=%lu nodes=%lu boxes=%lu\n",
+			required_bytes, (free_mem > 0) ? (unsigned long)(free_mem / 2) : 2097152UL,
+			node_count, box_count);
+		return diag_cat(buf, cap, 0, line);
+	}
+
+	/* Allocate snapshot structures */
+	ms_diag_snapshot_free();
+
+	g_dom_snapshot.nodes = (struct ms_diag_snapshot_node *) malloc(
+			(size_t)(node_count > 0 ? node_count * sizeof(struct ms_diag_snapshot_node) : sizeof(struct ms_diag_snapshot_node)));
+	g_dom_snapshot.boxes = (struct ms_diag_snapshot_box *) malloc(
+			(size_t)(box_count > 0 ? box_count * sizeof(struct ms_diag_snapshot_box) : sizeof(struct ms_diag_snapshot_box)));
+	map_entries = (struct ms_box_visited_entry *) malloc(
+			(size_t)(map_cap * sizeof(struct ms_box_visited_entry)));
+
+	if (g_dom_snapshot.nodes == NULL || (box_count > 0 && g_dom_snapshot.boxes == NULL) || map_entries == NULL) {
+		ms_diag_snapshot_free();
+		if (map_entries != NULL) free(map_entries);
+		g_dom_capture_in_progress = 0;
+		snprintf(line, sizeof line,
+			"MSDIAG 1 domstart complete=0 status=error reason=allocation\n");
+		return diag_cat(buf, cap, 0, line);
+	}
+
+	ms_box_map_init(&box_map, map_entries, map_cap);
+
+	/* Assign box IDs in map first */
+	if (htmlc->layout != NULL) {
+		unsigned long b_counter = 0;
+		ms_diag_count_boxes(htmlc->layout, &box_map, &b_counter);
+	}
+
+	/* Atomic Pass 2: fill snapshot */
+	n_idx = 0;
+	ms_diag_fill_dom_nodes((dom_node *) htmlc->document, g_dom_snapshot.nodes, &n_idx, node_count);
+	g_dom_snapshot.node_count = n_idx;
+
+	b_idx = 0;
+	if (htmlc->layout != NULL) {
+		ms_diag_fill_boxes(htmlc->layout, &box_map, g_dom_snapshot.boxes, &b_idx, box_count, 0);
+	}
+	g_dom_snapshot.box_count = b_idx;
+
+	/* Connect node -> box_id in snapshot */
+	for (i = 0; i < g_dom_snapshot.node_count; i++) {
+		unsigned long bid = 0;
+		/* match by node_id */
+		unsigned long k;
+		for (k = 0; k < g_dom_snapshot.box_count; k++) {
+			if (g_dom_snapshot.boxes[k].node_id == g_dom_snapshot.nodes[i].node_id) {
+				bid = g_dom_snapshot.boxes[k].box_id;
+				break;
+			}
+		}
+		g_dom_snapshot.nodes[i].box_id = bid;
+	}
+
+	free(map_entries);
+	map_entries = NULL;
+
+	g_dom_snapshot.doc_id = htmlc->doc_id;
+	g_dom_snapshot.frame_id = htmlc->frame_id;
+	g_dom_snapshot.nav_id = content_get_nav_id((struct content *) htmlc);
+	g_dom_snapshot.content_token = macos9_content_token((struct content *) htmlc);
+	g_dom_snapshot.box_generation = htmlc->live_box_generation;
+	g_dom_snapshot.htmlc = htmlc;
+	g_dom_snapshot.valid = 1;
+	g_dom_snapshot.live_changed = 0;
+
+	g_dom_capture_in_progress = 0;
+
+	snprintf(line, sizeof line,
+		"MSDIAG 1 domstart complete=1 coverage=connected_tree doc=%lu frame=%lu nav=%lu content_token=%lu box_generation=%lu nodes=%lu boxes=%lu\n",
+		g_dom_snapshot.doc_id, g_dom_snapshot.frame_id, g_dom_snapshot.nav_id,
+		g_dom_snapshot.content_token, g_dom_snapshot.box_generation,
+		g_dom_snapshot.node_count, g_dom_snapshot.box_count);
+	n = diag_cat(buf, cap, 0, line);
+	return n;
+}
+
+static void ms_diag_check_snapshot_drift(void)
+{
+	if (!g_dom_snapshot.valid || g_dom_snapshot.htmlc == NULL) return;
+	if (macos9_content_is_live((struct content *) g_dom_snapshot.htmlc)) {
+		if (g_dom_snapshot.htmlc->live_box_generation != g_dom_snapshot.box_generation ||
+		    g_dom_snapshot.htmlc->doc_id != g_dom_snapshot.doc_id) {
+			g_dom_snapshot.live_changed = 1;
+		}
+	} else {
+		g_dom_snapshot.live_changed = 1;
+	}
+}
+
+long macsurf_diag_serialize_dom(char *buf, long cap, unsigned long after, unsigned long limit)
+{
+	char line[256];
+	long n = 0;
+	unsigned long start_seq;
+	unsigned long max_return;
+	unsigned long returned = 0;
+	unsigned long next_after = after;
+	unsigned long i;
+	int complete = 0;
+	int truncated = 0;
+
+	if (buf == NULL || cap < 2) return 0;
+	buf[0] = '\0';
+
+	ms_diag_check_snapshot_drift();
+
+	if (!g_dom_snapshot.valid) {
+		snprintf(line, sizeof line,
+			"MSDIAG 1 dom complete=0 status=error reason=no_snapshot\n");
+		return diag_cat(buf, cap, 0, line);
+	}
+
+	if (limit == 0 || limit > 128) limit = 64;
+
+	n = diag_cat(buf, cap, n, "MSDIAG 1 dom\n");
+	snprintf(line, sizeof line,
+		"doc=%lu frame=%lu nav=%lu coverage=connected_tree total_nodes=%lu live_changed=%d snapshot_stale=%d\n",
+		g_dom_snapshot.doc_id, g_dom_snapshot.frame_id, g_dom_snapshot.nav_id,
+		g_dom_snapshot.node_count, g_dom_snapshot.live_changed, g_dom_snapshot.live_changed);
+	n = diag_cat(buf, cap, n, line);
+
+	start_seq = after;
+	max_return = start_seq + limit;
+	if (max_return > g_dom_snapshot.node_count) max_return = g_dom_snapshot.node_count;
+
+	for (i = start_seq; i < max_return; i++) {
+		struct ms_diag_snapshot_node *sn = &g_dom_snapshot.nodes[i];
+		snprintf(line, sizeof line,
+			"node seq=%lu id=%lu parent=%lu type=%d tag=%s id_attr=%s class=%s box=%lu\n",
+			i + 1, sn->node_id, sn->parent_node_id, (int)sn->node_type,
+			sn->tag[0] ? sn->tag : "-",
+			sn->node_id_attr[0] ? sn->node_id_attr : "-",
+			sn->class_name[0] ? sn->class_name : "-",
+			sn->box_id);
+		if (n + (long)strlen(line) >= cap - 128) {
+			truncated = 1;
+			break;
+		}
+		n = diag_cat(buf, cap, n, line);
+		returned++;
+		next_after = i + 1;
+	}
+
+	complete = (next_after >= g_dom_snapshot.node_count) ? 1 : 0;
+	snprintf(line, sizeof line,
+		"returned=%lu next_after=%lu complete=%d truncated=%d\n",
+		returned, next_after, complete, truncated);
+	n = diag_cat(buf, cap, n, line);
+	return n;
+}
+
+long macsurf_diag_serialize_boxes(char *buf, long cap, unsigned long after, unsigned long limit)
+{
+	char line[256];
+	long n = 0;
+	unsigned long start_seq;
+	unsigned long max_return;
+	unsigned long returned = 0;
+	unsigned long next_after = after;
+	unsigned long i;
+	int complete = 0;
+	int truncated = 0;
+
+	if (buf == NULL || cap < 2) return 0;
+	buf[0] = '\0';
+
+	ms_diag_check_snapshot_drift();
+
+	if (!g_dom_snapshot.valid) {
+		snprintf(line, sizeof line,
+			"MSDIAG 1 boxes complete=0 status=error reason=no_snapshot\n");
+		return diag_cat(buf, cap, 0, line);
+	}
+
+	if (limit == 0 || limit > 128) limit = 64;
+
+	n = diag_cat(buf, cap, n, "MSDIAG 1 boxes\n");
+	snprintf(line, sizeof line,
+		"doc=%lu box_generation=%lu total_boxes=%lu live_changed=%d snapshot_stale=%d\n",
+		g_dom_snapshot.doc_id, g_dom_snapshot.box_generation,
+		g_dom_snapshot.box_count, g_dom_snapshot.live_changed, g_dom_snapshot.live_changed);
+	n = diag_cat(buf, cap, n, line);
+
+	start_seq = after;
+	max_return = start_seq + limit;
+	if (max_return > g_dom_snapshot.box_count) max_return = g_dom_snapshot.box_count;
+
+	for (i = start_seq; i < max_return; i++) {
+		struct ms_diag_snapshot_box *sb = &g_dom_snapshot.boxes[i];
+		snprintf(line, sizeof line,
+			"box seq=%lu id=%lu parent=%lu node=%lu type=%d flags=0x%x x=%ld y=%ld w=%ld h=%ld ptr=0x%lx\n",
+			i + 1, sb->box_id, sb->parent_box_id, sb->node_id,
+			(int)sb->type, (unsigned int)sb->flags,
+			sb->x, sb->y, sb->width, sb->height, sb->box_ptr);
+		if (n + (long)strlen(line) >= cap - 128) {
+			truncated = 1;
+			break;
+		}
+		n = diag_cat(buf, cap, n, line);
+		returned++;
+		next_after = i + 1;
+	}
+
+	complete = (next_after >= g_dom_snapshot.box_count) ? 1 : 0;
+	snprintf(line, sizeof line,
+		"returned=%lu next_after=%lu complete=%d truncated=%d\n",
+		returned, next_after, complete, truncated);
+	n = diag_cat(buf, cap, n, line);
 	return n;
 }

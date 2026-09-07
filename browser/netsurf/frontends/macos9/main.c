@@ -1879,6 +1879,54 @@ static int macos9_diag_parse_trace_cursor(const char *verb,
 	return got_after && got_limit;
 }
 
+static int macos9_diag_parse_cursor(const char *verb, const char *prefix,
+	unsigned long *after, unsigned long *limit)
+{
+	const char *p;
+	size_t plen = strlen(prefix);
+	int got_after = 0;
+	int got_limit = 0;
+
+	if (strncmp(verb, prefix, plen) != 0 || verb[plen] != ' ') return 0;
+	p = verb + plen + 1;
+	while (*p != '\0') {
+		while (*p == ' ') p++;
+		if (*p == '\0') break;
+		if (strncmp(p, "after=", 6) == 0 && !got_after) {
+			p += 6;
+			if (!macos9_diag_parse_ulong(&p, after)) return 0;
+			got_after = 1;
+		} else if (strncmp(p, "limit=", 6) == 0 && !got_limit) {
+			p += 6;
+			if (!macos9_diag_parse_ulong(&p, limit)) return 0;
+			got_limit = 1;
+		} else {
+			return 0;
+		}
+		if (*p != '\0' && *p != ' ') return 0;
+	}
+	return got_after && got_limit;
+}
+
+static int macos9_diag_parse_domstart(const char *verb, unsigned long *doc_id)
+{
+	const char *p;
+	*doc_id = 0;
+	if (strcmp(verb, "domstart") == 0) return 1;
+	if (strncmp(verb, "domstart ", 9) != 0) return 0;
+	p = verb + 9;
+	while (*p == ' ') p++;
+	if (strncmp(p, "doc=", 4) == 0) {
+		p += 4;
+		if (!macos9_diag_parse_ulong(&p, doc_id)) return 0;
+		while (*p == ' ') p++;
+		if (*p != '\0') return 0;
+		return 1;
+	}
+	return 0;
+}
+
+
 /* MacSurf Trace: `MSdg`/`GET ` -- serialise MacSurf-owned diagnostic state into
  * the reply. Deliberately stupid: read the verb, pick a serialiser, emit text.
  * No hlcache / fetch-ring / window traversal, no state mutation. Runs on the
@@ -1897,6 +1945,9 @@ static pascal OSErr macos9_ae_diag(const AppleEvent *ae, AppleEvent *reply,
 	long n;
 	unsigned long trace_after = 0;
 	unsigned long trace_limit = 0;
+	unsigned long dom_doc_id = 0;
+	unsigned long dom_after = 0;
+	unsigned long dom_limit = 0;
 
 	(void)refcon;
 
@@ -1966,6 +2017,16 @@ static pascal OSErr macos9_ae_diag(const AppleEvent *ae, AppleEvent *reply,
 	} else if (strcmp(verb, "tracestop") == 0) {
 		macsurf_trace_disarm();
 		n = macsurf_trace_serialize(out, (long)sizeof(out));
+	} else if (macos9_diag_parse_domstart(verb, &dom_doc_id)) {
+		n = macsurf_diag_dom_start(dom_doc_id, out, (long)sizeof(out));
+	} else if (strcmp(verb, "dom") == 0) {
+		n = macsurf_diag_serialize_dom(out, (long)sizeof(out), 0, 64);
+	} else if (macos9_diag_parse_cursor(verb, "dom", &dom_after, &dom_limit)) {
+		n = macsurf_diag_serialize_dom(out, (long)sizeof(out), dom_after, dom_limit);
+	} else if (strcmp(verb, "boxes") == 0) {
+		n = macsurf_diag_serialize_boxes(out, (long)sizeof(out), 0, 64);
+	} else if (macos9_diag_parse_cursor(verb, "boxes", &dom_after, &dom_limit)) {
+		n = macsurf_diag_serialize_boxes(out, (long)sizeof(out), dom_after, dom_limit);
 	} else {
 		macsurf_debug_log_writef("LIFE AE MSdg unknown verb=%s", verb);
 		return errAEEventNotHandled;
