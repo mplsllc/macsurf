@@ -16,6 +16,11 @@
 #include "html/private.h"
 #include "html/html.h"
 
+#ifdef __MACOS9__
+#include "macos9.h"		/* struct gui_window -- Mac-only full definition */
+#include "desktop/browser_private.h"	/* struct browser_window fields */
+#endif
+
 #include "macsurf_diag.h"
 #include "macsurf_gap.h"
 #include "macsurf_trace.h"	/* Milestone 1c: mirror lifecycle to the ring */
@@ -3044,6 +3049,66 @@ static unsigned long ms_next_pow2(unsigned long n)
 	return p;
 }
 
+#ifdef __MACOS9__
+static struct html_content *ms_diag_find_in_bw(struct browser_window *bw,
+	unsigned long doc_id)
+{
+	struct html_content *found = NULL;
+	struct content *c;
+	struct html_content *hc;
+	int i;
+
+	if (bw == NULL) return NULL;
+	if (bw->current_content != NULL) {
+		if (content_get_type(bw->current_content) == CONTENT_HTML) {
+			c = hlcache_handle_get_content(bw->current_content);
+			if (c != NULL) {
+				hc = (struct html_content *) c;
+				if (hc->doc_id == doc_id)
+					return hc;
+			}
+		}
+	}
+	if (bw->loading_content != NULL) {
+		if (content_get_type(bw->loading_content) == CONTENT_HTML) {
+			c = hlcache_handle_get_content(bw->loading_content);
+			if (c != NULL) {
+				hc = (struct html_content *) c;
+				if (hc->doc_id == doc_id)
+					return hc;
+			}
+		}
+	}
+	if (bw->children != NULL) {
+		for (i = 0; i < bw->rows * bw->cols; i++) {
+			found = ms_diag_find_in_bw(&bw->children[i], doc_id);
+			if (found != NULL) return found;
+		}
+	}
+	if (bw->iframes != NULL) {
+		for (i = 0; i < bw->iframe_count; i++) {
+			found = ms_diag_find_in_bw(&bw->iframes[i], doc_id);
+			if (found != NULL) return found;
+		}
+	}
+	return NULL;
+}
+
+static struct html_content *ms_diag_find_by_doc_id(unsigned long doc_id)
+{
+	struct gui_window *gw;
+	struct html_content *found;
+
+	if (doc_id == 0) return NULL;
+	for (gw = macos9_window_list_head(); gw != NULL; gw = gw->next) {
+		found = ms_diag_find_in_bw(gw->bw, doc_id);
+		if (found != NULL)
+			return found;
+	}
+	return NULL;
+}
+#endif /* __MACOS9__ */
+
 long macsurf_diag_dom_start(unsigned long target_doc, char *buf, long cap)
 {
 	struct html_content *htmlc = NULL;
@@ -3056,6 +3121,8 @@ long macsurf_diag_dom_start(unsigned long target_doc, char *buf, long cap)
 	unsigned long b_idx = 0;
 	unsigned long i;
 	int reg_cap;
+	struct content *reg_c;
+	struct html_content *reg_cand;
 	struct ms_box_visited_map box_map;
 	struct ms_box_visited_entry *map_entries = NULL;
 	char line[256];
@@ -3072,17 +3139,21 @@ long macsurf_diag_dom_start(unsigned long target_doc, char *buf, long cap)
 	g_dom_capture_in_progress = 1;
 
 	if (target_doc != 0) {
-		htmlc = html_find_by_doc_id(target_doc);
+#ifdef __MACOS9__
+		htmlc = ms_diag_find_by_doc_id(target_doc);
+#endif
 	} else {
 #ifdef __MACOS9__
-		extern struct gui_window *macos9_window_list_head(void);
-		struct gui_window *gw = macos9_window_list_head();
-		if (gw != NULL && gw->bw != NULL && gw->bw->current_content != NULL) {
-			if (content_get_type(gw->bw->current_content) == CONTENT_HTML) {
-				struct content *c = hlcache_handle_get_content(gw->bw->current_content);
-				if (c != NULL) {
+		{
+			struct content *c;
+			struct gui_window *gw = macos9_window_list_head();
+			if (gw != NULL && gw->bw != NULL &&
+					gw->bw->current_content != NULL &&
+					content_get_type(gw->bw->current_content) == CONTENT_HTML) {
+				c = hlcache_handle_get_content(
+					gw->bw->current_content);
+				if (c != NULL)
 					htmlc = (struct html_content *) c;
-				}
 			}
 		}
 #endif
@@ -3091,14 +3162,13 @@ long macsurf_diag_dom_start(unsigned long target_doc, char *buf, long cap)
 	if (htmlc == NULL) {
 		reg_cap = macos9_content_registry_count();
 		for (i = 0; (int)i < reg_cap; i++) {
-			struct content *c = macos9_content_registry_get((int)i);
-			if (c != NULL) {
-				struct html_content *cand = (struct html_content *)c;
-				if (cand->document != NULL &&
-				    (target_doc == 0 || cand->doc_id == target_doc)) {
-					htmlc = cand;
-					break;
-				}
+			reg_c = macos9_content_registry_get((int)i);
+			if (reg_c == NULL) continue;
+			reg_cand = (struct html_content *)reg_c;
+			if (reg_cand->document != NULL &&
+			    (target_doc == 0 || reg_cand->doc_id == target_doc)) {
+				htmlc = reg_cand;
+				break;
 			}
 		}
 	}
