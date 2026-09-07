@@ -1075,6 +1075,30 @@ macos9_reconvert_cb(void *p)
 				g_consecutive_cosmetic++;
 			else
 				g_consecutive_cosmetic = 0;
+
+			/* Cadence is a property of the completed batch, not of each
+			 * individual DOM write.  A scroll handler can toggle several
+			 * classes in one synchronous turn; advancing here prevents that
+			 * one turn from multiplying 400ms through to 6400ms before its
+			 * first reconvert has even run. */
+			if (!any_structural) {
+				if (g_reconvert_debounce_ms < RECONVERT_DEBOUNCE_MAX_MS) {
+					g_reconvert_debounce_ms *= 2;
+					if (g_reconvert_debounce_ms >
+						RECONVERT_DEBOUNCE_MAX_MS) {
+						g_reconvert_debounce_ms =
+							RECONVERT_DEBOUNCE_MAX_MS;
+					}
+					if (g_reconvert_debounce_ms ==
+						RECONVERT_DEBOUNCE_MAX_MS)
+						macsurf_debug_log_writef(
+							"LIFE reconvert cosmetic-only, debounce "
+							"capped at %dms",
+							g_reconvert_debounce_ms);
+				}
+			} else {
+				g_reconvert_debounce_ms = RECONVERT_DEBOUNCE_MS;
+			}
 		}
 
 		/* fixes925 - dump the census for the batch this reconvert answers.
@@ -1206,29 +1230,14 @@ macos9_js_mark_dom_dirty_node(struct content *c, void *node, int kind)
 		ms_prov.pass = 0;
 	}
 
-	/* fixes1024 - cadence control, decided by WHAT changed. */
-	if (macos9_reconvert_kind_is_cosmetic(kind)) {
-		if (g_reconvert_debounce_ms < RECONVERT_DEBOUNCE_MAX_MS) {
-			g_reconvert_debounce_ms *= 2;
-			if (g_reconvert_debounce_ms > RECONVERT_DEBOUNCE_MAX_MS)
-				g_reconvert_debounce_ms =
-					RECONVERT_DEBOUNCE_MAX_MS;
-			/* fixes1032 - log only on reaching the CAP. The
-			 * cosmetic/structural pair flapped 108 times in one
-			 * session, which is 108 flushed writes to say the
-			 * cadence is working. */
-			if (g_reconvert_debounce_ms == RECONVERT_DEBOUNCE_MAX_MS)
-				macsurf_debug_log_writef(
-					"LIFE reconvert cosmetic-only, debounce "
-					"capped at %dms", g_reconvert_debounce_ms);
-		}
-	} else if (g_reconvert_debounce_ms != RECONVERT_DEBOUNCE_MS) {
-		g_reconvert_debounce_ms = RECONVERT_DEBOUNCE_MS;   /* silent */
-	}
-	/* fixes1135 -- structural mutation resets the cosmetic-suppression
-	 * counter so the page can converge after the animation stops. */
-	if (!macos9_reconvert_kind_is_cosmetic(kind))
+	/* Cosmetic cadence advances only when the pending batch completes.
+	 * Doing so per mark makes one six-class scroll callback wait 6400ms
+	 * instead of the intended initial 400ms.  Structural changes still end
+	 * a cosmetic run immediately, so the following batch starts normally. */
+	if (!macos9_reconvert_kind_is_cosmetic(kind)) {
+		g_reconvert_debounce_ms = RECONVERT_DEBOUNCE_MS;
 		g_consecutive_cosmetic = 0;
+	}
 
 	/* R1.4 - start the batch clock on the first mark of a batch. A
 	 * non-zero tick means a batch is in flight, so later marks in the
