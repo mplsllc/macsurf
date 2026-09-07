@@ -950,11 +950,15 @@ macos9_reconvert_cb(void *p)
 			 * a real fallback reconvert.  Never suppress it merely because
 			 * two earlier cosmetic batches ran: a multi-style batch can
 			 * contain geometry (for example parent colour plus child width).
-			 * Keep the animation-churn cap for the unsupported precise class
-			 * case only. */
+			 *
+			 * A class-only timer batch is different.  Its pending slot becomes
+			 * multi as soon as it touches a second node, but that is still the
+			 * cosmetic loop fixes1135 was meant to cap.  Requiring multi == 0
+			 * accidentally let the 68kmla scroll handler rebuild the whole
+			 * document for every 2-4 class changes. */
 			if (!any_structural &&
-			    g_pending[i].multi == 0 &&
 			    g_pending[i].kind == MACOS9_DOMMUT_SETATTR_CLASS &&
+			    g_mut_counts[MACOS9_DOMMUT_SETATTR_STYLE] == 0 &&
 			    g_consecutive_cosmetic >=
 			    RECONVERT_COSMETIC_MAX_CONSECUTIVE) {
 				macsurf_debug_log_writef(
