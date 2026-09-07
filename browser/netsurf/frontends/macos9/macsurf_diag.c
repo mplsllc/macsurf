@@ -541,6 +541,9 @@ static unsigned long g_task_seq;
 #define MS_TASK_RING_N   128
 #define MS_NAME_MAX      40
 
+static long ms_diag_history_header(char *buf, long cap, long n,
+	const char *history, unsigned long total, int capacity);
+
 struct ms_diag_script {
 	unsigned long id;		/* 0 == empty */
 	unsigned long nav_id;
@@ -725,6 +728,8 @@ long macsurf_diag_serialize_scripts(char *buf, long cap)
 	}
 	buf[0] = '\0';
 	n = diag_cat(buf, cap, n, "MSDIAG 1 scripts\n");
+	n = ms_diag_history_header(buf, cap, n, "scripts", g_script_seq,
+		MS_SCRIPT_RING_N);
 	for (i = 0; i < MS_SCRIPT_RING_N; i++) {
 		int idx = (g_script_ring_head - 1 - i + 2 * MS_SCRIPT_RING_N)
 			% MS_SCRIPT_RING_N;

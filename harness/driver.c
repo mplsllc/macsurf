@@ -12831,6 +12831,27 @@ box_coords(bx, &cx, &cy);
 		fprintf(stderr, "=== Test 102 PASS: contracts retain negative state and settle conservatively ===\n");
 	}
 
+	/* --- Test 102a: script execution history must disclose rotation ------- */
+	{
+		char scripts[16384];
+		char name[32];
+		int i;
+		fprintf(stderr, "\n=== Test 102a: script history loss accounting ===\n");
+		for (i = 0; i < 65; i++) {
+			struct ms_diag_scope scope;
+			snprintf(name, sizeof(name), "history-script-%d", i);
+			ms_diag_script_enter(&scope, 601, MS_SCRIPT_CLASSIC, name);
+			ms_diag_script_leave(&scope, MS_SCR_DONE);
+		}
+		(void)macsurf_diag_serialize_scripts(scripts, (long)sizeof(scripts));
+		if (strstr(scripts, "history=scripts records_total=65 capacity=64 first_available=2 latest=65 overwritten=1") == NULL ||
+				strstr(scripts, "name=history-script-0") != NULL ||
+				strstr(scripts, "name=history-script-64") == NULL) {
+			fprintf(stderr, "FAIL: Test 102a script history loss contract\n"); return 1;
+		}
+		fprintf(stderr, "=== Test 102a PASS: script history loss is explicit ===\n");
+	}
+
 	/* --- Test 103: Phase 3 capability/CSS gap aggregates --------------- */
 	{
 		char caps[16384], cssg[16384], caps_again[16384];
