@@ -3,7 +3,7 @@
  *
  * MacSurf Trace: the compact universal event ring. Dev-mode only -- nothing is
  * recorded unless the ring is armed via `MSdg GET tracestart`. Every entry is
- * pointer-free integers: a timestamp, the live causal ids (pulled from
+ * pointer-free integers: a per-capture sequence number, a timestamp, the live causal ids (pulled from
  * macsurf_diag's ambient scope), a category/event/state/reason tuple, and a
  * two-slot u32 payload (`a`/`b`) for category-specific values (old/new bits,
  * mutation count, job count, ...). No strings, no formatting, no log write on
@@ -66,7 +66,15 @@ int  macsurf_trace_armed(void);
 void macsurf_trace_emit(int cat, int event, int state, int reason,
 	unsigned long a, unsigned long b);
 
-/* `MSdg GET trace`: newest-first dump of the ring (or a "disarmed" note). */
+/* `MSdg GET trace`: backwards-compatible dump of the current trace window.
+ *
+ * `MSdg GET trace after=<event_seq> limit=<n>` is the host-drained v2
+ * flight-recorder interface.  It emits events in chronological order, never
+ * hides an overwritten range, and says when the reply capacity stopped a page
+ * early.  The caller resumes from the returned `next_after` value.
+ */
 long macsurf_trace_serialize(char *buf, long cap);
+long macsurf_trace_serialize_since(char *buf, long cap,
+	unsigned long after, unsigned long limit);
 
 #endif /* MACSURF_TRACE_H */

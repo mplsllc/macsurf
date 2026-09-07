@@ -11,8 +11,13 @@
 /* All writers run on the cooperative main / notifier context; no locking. */
 
 #define MS_TRACE_RING_N 256
+#define MS_TRACE_DEFAULT_LIMIT 64
+/* Keep room for the v2 cursor footer even when an individual event line is
+ * unusually long.  A partial reply is useful only when it says it is partial. */
+#define MS_TRACE_FOOTER_RESERVE 128
 
 struct ms_trace_entry {
+	unsigned long seq;
 	unsigned long ts;
 	unsigned long nav, doc, frame, script, task, batch, pass, paint;
 	unsigned short category, event, state, reason;
@@ -34,6 +39,11 @@ static unsigned long ms_trace_now(void) { return g_trace_total; }
 
 void macsurf_trace_arm(unsigned long cat_mask, int level)
 {
+	/* `tracestart` begins one controlled forensic capture.  Keeping a prior
+	 * armed session here would make `after=0` silently blend reproductions. */
+	memset(g_trace_ring, 0, sizeof(g_trace_ring));
+	g_trace_head = 0;
+	g_trace_total = 0;
 	g_trace_mask = cat_mask;
 	g_trace_level = level;
 	g_trace_armed_flag = 1;
@@ -71,7 +81,9 @@ void macsurf_trace_emit(int cat, int event, int state, int reason,
 	e = &g_trace_ring[g_trace_head];
 	g_trace_head = (g_trace_head + 1) % MS_TRACE_RING_N;
 	g_trace_total++;
+	if (g_trace_total == 0) g_trace_total = 1;
 
+	e->seq = g_trace_total;
 	e->ts = ms_trace_now();
 	e->nav = prov.nav;
 	e->doc = prov.doc;
@@ -160,10 +172,11 @@ long macsurf_trace_serialize(char *buf, long cap)
 			continue;
 		}
 		snprintf(line, sizeof line,
-			"ts=%lu cat=%s ev=%d st=%d rs=%d nav=%lu frame=%lu "
+		"seq=%lu ts=%lu cat=%s ev=%d st=%d rs=%d nav=%lu frame=%lu "
 			"doc=%lu script=%lu task=%lu batch=%lu pass=%lu "
 			"paint=%lu a=%lu b=%lu\n",
-			(unsigned long) e->ts, ms_trace_cat_s((int) e->category),
+			(unsigned long) e->seq, (unsigned long) e->ts,
+			ms_trace_cat_s((int) e->category),
 			(int) e->event, (int) e->state, (int) e->reason,
 			(unsigned long) e->nav, (unsigned long) e->frame,
 			(unsigned long) e->doc, (unsigned long) e->script,
@@ -183,5 +196,121 @@ long macsurf_trace_serialize(char *buf, long cap)
 		snprintf(line, sizeof line, "more=%d\n", scanned - emitted);
 		n = ms_trace_cat_append(buf, cap, n, line);
 	}
+	return n;
+}
+
+/* The v1 dump above is intentionally retained for old host tools.  New tools
+ * must use this cursor form: it is chronological, and every way a capture can
+ * be incomplete is an explicit field rather than an inference from a short
+ * reply. */
+long macsurf_trace_serialize_since(char *buf, long cap,
+	unsigned long after, unsigned long limit)
+{
+	char line[240];
+	long n = 0;
+	unsigned long latest;
+	unsigned long retained;
+	unsigned long first;
+	unsigned long want;
+	unsigned long seq;
+	unsigned long next_after;
+	unsigned long returned = 0;
+	unsigned long max_return;
+	int oldest_idx;
+	int truncated = 0;
+	int lost = 0;
+
+	if (buf == NULL || cap < 2) {
+		return 0;
+	}
+	buf[0] = '\0';
+
+	latest = g_trace_total;
+	retained = latest;
+	if (retained > MS_TRACE_RING_N) retained = MS_TRACE_RING_N;
+	first = (retained == 0) ? 0 : latest - retained + 1;
+	if (limit == 0) limit = MS_TRACE_DEFAULT_LIMIT;
+	if (limit > MS_TRACE_RING_N) limit = MS_TRACE_RING_N;
+
+	n = ms_trace_cat_append(buf, cap, n, "MSDIAG 2 trace\n");
+	snprintf(line, sizeof line, "armed=%d\n", g_trace_armed_flag);
+	n = ms_trace_cat_append(buf, cap, n, line);
+	snprintf(line, sizeof line, "mask=%lu\n", (unsigned long)g_trace_mask);
+	n = ms_trace_cat_append(buf, cap, n, line);
+	snprintf(line, sizeof line, "level=%d\n", g_trace_level);
+	n = ms_trace_cat_append(buf, cap, n, line);
+	snprintf(line, sizeof line, "ring_capacity=%d\n", MS_TRACE_RING_N);
+	n = ms_trace_cat_append(buf, cap, n, line);
+	snprintf(line, sizeof line, "first_available=%lu\n", first);
+	n = ms_trace_cat_append(buf, cap, n, line);
+	snprintf(line, sizeof line, "latest=%lu\n", latest);
+	n = ms_trace_cat_append(buf, cap, n, line);
+	snprintf(line, sizeof line, "after=%lu\n", after);
+	n = ms_trace_cat_append(buf, cap, n, line);
+	snprintf(line, sizeof line, "limit=%lu\n", limit);
+	n = ms_trace_cat_append(buf, cap, n, line);
+
+	/* `after=0` means the host wants the first event.  If that event has
+	 * already been overwritten, report the exact missing interval too. */
+	want = after;
+	if (want < latest) want++;
+	if (first != 0 && want < first) {
+		lost = 1;
+		snprintf(line, sizeof line, "lost_from=%lu\n", want);
+		n = ms_trace_cat_append(buf, cap, n, line);
+		snprintf(line, sizeof line, "lost_to=%lu\n", first - 1);
+		n = ms_trace_cat_append(buf, cap, n, line);
+		want = first;
+	}
+	snprintf(line, sizeof line, "lost=%d\n", lost);
+	n = ms_trace_cat_append(buf, cap, n, line);
+
+	next_after = after;
+	max_return = want + limit;
+	if (max_return < want || max_return > latest + 1) max_return = latest + 1;
+	if (first != 0 && want <= latest) {
+		oldest_idx = (g_trace_head - (int)retained + 2 * MS_TRACE_RING_N)
+			% MS_TRACE_RING_N;
+		for (seq = want; seq < max_return; seq++) {
+			int idx = (oldest_idx + (int)(seq - first)) % MS_TRACE_RING_N;
+			struct ms_trace_entry *e = &g_trace_ring[idx];
+
+			/* A sequence check protects the reader against a future change to
+			 * ring bookkeeping: never return a plausible but wrong record. */
+			if (e->seq != seq) {
+				lost = 1;
+				break;
+			}
+			snprintf(line, sizeof line,
+				"event seq=%lu ts=%lu cat=%s ev=%d st=%d rs=%d nav=%lu "
+				"frame=%lu doc=%lu script=%lu task=%lu batch=%lu pass=%lu "
+				"paint=%lu a=%lu b=%lu\n",
+				(unsigned long)e->seq, (unsigned long)e->ts,
+				ms_trace_cat_s((int)e->category), (int)e->event,
+				(int)e->state, (int)e->reason, (unsigned long)e->nav,
+				(unsigned long)e->frame, (unsigned long)e->doc,
+				(unsigned long)e->script, (unsigned long)e->task,
+				(unsigned long)e->batch, (unsigned long)e->pass,
+				(unsigned long)e->paint, (unsigned long)e->a,
+				(unsigned long)e->b);
+			if (n + (long)strlen(line) >= cap - MS_TRACE_FOOTER_RESERVE) {
+				truncated = 1;
+				break;
+			}
+			n = ms_trace_cat_append(buf, cap, n, line);
+			returned++;
+			next_after = seq;
+		}
+	}
+
+	snprintf(line, sizeof line, "returned=%lu\n", returned);
+	n = ms_trace_cat_append(buf, cap, n, line);
+	snprintf(line, sizeof line, "next_after=%lu\n", next_after);
+	n = ms_trace_cat_append(buf, cap, n, line);
+	snprintf(line, sizeof line, "complete=%d\n",
+		(next_after >= latest) ? 1 : 0);
+	n = ms_trace_cat_append(buf, cap, n, line);
+	snprintf(line, sizeof line, "truncated=%d\n", truncated);
+	n = ms_trace_cat_append(buf, cap, n, line);
 	return n;
 }

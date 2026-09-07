@@ -71,6 +71,7 @@ extern int macsurf_imgdims_lookup(struct nsurl *url, int *w, int *h);	/* fixes92
 
 #include "macos9_content_registry.h"
 #include "macsurf_diag.h"
+#include "macsurf_trace.h"
 #include "macsurf_capability.h"
 
 extern int html_reconvert_content(struct content *c);
@@ -12569,6 +12570,7 @@ box_coords(bx, &cx, &cy);
 	 * network stack in the Linux harness. */
 	{
 		char p0[4096], p1[4096], p2[4096], settle[1024], ops[4096], timers[2048];
+		char trace[16384], trace_short[512];
 		char readiness[2048];
 		char needle[128];
 		unsigned long op;
@@ -12762,6 +12764,44 @@ box_coords(bx, &cx, &cy);
 			fprintf(stderr, "FAIL: Test 102 conservative settled state\n");
 			return 1;
 		}
+
+		/* The flight recorder is host-drained in chronological pages.  Once
+		 * its bounded RAM window rolls, the exact unavailable range must be
+		 * reported; a short AppleEvent reply must say it stopped early too. */
+		macsurf_trace_arm(0UL, 2);
+		for (ti = 0; ti < 260; ti++) {
+			macsurf_trace_emit(MS_TC_LAYOUT, MS_TE_LAYOUT_DONE, 0, 0,
+				(unsigned long)ti, 0);
+		}
+		(void)macsurf_trace_serialize_since(trace, (long)sizeof(trace), 0, 8);
+		if (strstr(trace, "MSDIAG 2 trace\n") == NULL ||
+				strstr(trace, "ring_capacity=256\n") == NULL ||
+				strstr(trace, "lost=1\n") == NULL ||
+				strstr(trace, "lost_from=1\n") == NULL ||
+				strstr(trace, "lost_to=4\n") == NULL ||
+				strstr(trace, "event seq=5 ") == NULL ||
+				strstr(trace, "event seq=12 ") == NULL ||
+				strstr(trace, "returned=8\nnext_after=12\n") == NULL ||
+				strstr(trace, "complete=0\ntruncated=0\n") == NULL) {
+			fprintf(stderr, "FAIL: Test 102 trace cursor/loss accounting\n");
+			return 1;
+		}
+		(void)macsurf_trace_serialize_since(trace, (long)sizeof(trace), 12, 2);
+		if (strstr(trace, "lost=0\n") == NULL ||
+				strstr(trace, "event seq=13 ") == NULL ||
+				strstr(trace, "event seq=14 ") == NULL ||
+				strstr(trace, "returned=2\nnext_after=14\n") == NULL) {
+			fprintf(stderr, "FAIL: Test 102 trace cursor resume\n");
+			return 1;
+		}
+		(void)macsurf_trace_serialize_since(trace_short,
+				(long)sizeof(trace_short), 14, 4);
+		if (strstr(trace_short, "truncated=1\n") == NULL ||
+				strstr(trace_short, "complete=0\n") == NULL) {
+			fprintf(stderr, "FAIL: Test 102 trace reply truncation\n");
+			return 1;
+		}
+		macsurf_trace_disarm();
 		fprintf(stderr, "=== Test 102 PASS: contracts retain negative state and settle conservatively ===\n");
 	}
 

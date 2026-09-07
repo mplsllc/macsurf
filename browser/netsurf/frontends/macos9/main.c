@@ -1827,7 +1827,59 @@ static pascal OSErr macos9_ae_print_docs(const AppleEvent *ae, AppleEvent *reply
 	return errAEEventNotHandled;
 }
 
-/* MacSurf Trace: `MSdg`/`GET ` -- serialise a FROZEN diagnostic snapshot into
+/* Parse the cursor form without strtoul: the AppleEvent verb is untrusted
+ * text, and this keeps the protocol parser small and C89/Carbon-lib friendly. */
+static int macos9_diag_parse_ulong(const char **p, unsigned long *out)
+{
+	const char *s = *p;
+	unsigned long value = 0;
+	unsigned long max = ~0UL;
+	int digits = 0;
+
+	while (*s >= '0' && *s <= '9') {
+		unsigned long digit = (unsigned long)(*s - '0');
+		if (value > (max - digit) / 10UL) return 0;
+		value = value * 10UL + digit;
+		s++;
+		digits = 1;
+	}
+	if (!digits) return 0;
+	*p = s;
+	*out = value;
+	return 1;
+}
+
+/* Accept only `trace after=<event_seq> limit=<n>` tokens.  Exact `trace`
+ * remains the v1 compatibility view, so old host tools keep working. */
+static int macos9_diag_parse_trace_cursor(const char *verb,
+	unsigned long *after, unsigned long *limit)
+{
+	const char *p;
+	int got_after = 0;
+	int got_limit = 0;
+
+	if (strncmp(verb, "trace ", 6) != 0) return 0;
+	p = verb + 6;
+	while (*p != '\0') {
+		while (*p == ' ') p++;
+		if (*p == '\0') break;
+		if (strncmp(p, "after=", 6) == 0 && !got_after) {
+			p += 6;
+			if (!macos9_diag_parse_ulong(&p, after)) return 0;
+			got_after = 1;
+		} else if (strncmp(p, "limit=", 6) == 0 && !got_limit) {
+			p += 6;
+			if (!macos9_diag_parse_ulong(&p, limit)) return 0;
+			got_limit = 1;
+		} else {
+			return 0;
+		}
+		if (*p != '\0' && *p != ' ') return 0;
+	}
+	return got_after && got_limit;
+}
+
+/* MacSurf Trace: `MSdg`/`GET ` -- serialise MacSurf-owned diagnostic state into
  * the reply. Deliberately stupid: read the verb, pick a serialiser, emit text.
  * No hlcache / fetch-ring / window traversal, no state mutation. Runs on the
  * main thread from the WNE loop, same context as macos9_ae_get_url. */
@@ -1837,12 +1889,14 @@ static pascal OSErr macos9_ae_diag(const AppleEvent *ae, AppleEvent *reply,
 	DescType rt;
 	Size actual = 0;
 	OSErr err;
-	char verb[32];
+	char verb[64];
 	/* static: `layout` / `trace` replies run to ~16 KB and the OS 9 main
 	 * stack should not carry that. The AE handler is only entered from the
 	 * cooperative event loop, one query at a time -- no reentrancy. */
 	static char out[16384];
 	long n;
+	unsigned long trace_after = 0;
+	unsigned long trace_limit = 0;
 
 	(void)refcon;
 
@@ -1876,6 +1930,10 @@ static pascal OSErr macos9_ae_diag(const AppleEvent *ae, AppleEvent *reply,
 		n = macsurf_diag_serialize_layout(out, (long)sizeof(out));
 	} else if (strcmp(verb, "trace") == 0) {
 		n = macsurf_trace_serialize(out, (long)sizeof(out));
+	} else if (macos9_diag_parse_trace_cursor(verb, &trace_after,
+			&trace_limit)) {
+		n = macsurf_trace_serialize_since(out, (long)sizeof(out),
+			trace_after, trace_limit);
 	} else if (strcmp(verb, "modules") == 0) {
 		n = macsurf_diag_serialize_modules(out, (long)sizeof(out));
 	} else if (strcmp(verb, "io") == 0) {
