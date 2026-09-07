@@ -12982,6 +12982,141 @@ box_coords(bx, &cx, &cy);
 		fprintf(stderr, "=== Test 102b PASS: per-script execution ledger is granular and monotonic ===\n");
 	}
 
+	/* --- Test 102c: script source discovery and lifecycle ledger ------- */
+	{
+		char sources[16384];
+		char scripts[16384];
+		char page[16384];
+		struct ms_diag_scope scope;
+		unsigned long sid1, sid2, sid3, sid4, sid5, sid6;
+		int i;
+
+		fprintf(stderr, "\n=== Test 102c: script source discovery and lifecycle ledger ===\n");
+
+		/* 1. Inline classic source executed successfully */
+		sid1 = ms_diag_source_create(701, 101);
+		ms_diag_source_set_classification(sid1,
+			MS_SRC_KIND_CLASSIC, MS_SRC_DECL_CLASSIC, MS_SRC_TREAT_DIRECT,
+			MS_SRC_SCHED_INLINE, 0, NULL);
+		ms_diag_source_set_inline_details(sid1, 64, 0x11112222UL);
+		ms_diag_script_enter(&scope, 701, MS_SCRIPT_CLASSIC, "inline_test_102c");
+		ms_diag_script_set_provenance(&scope, 1, 101);
+		ms_diag_script_set_source_id(&scope, sid1);
+		ms_diag_script_set_source(&scope, MS_SCR_SRC_INLINE, 1, 64, 0x11112222UL);
+		ms_diag_source_note_execution(sid1, scope.my_id);
+		ms_diag_script_leave(&scope, MS_SCR_DONE);
+
+		(void)macsurf_diag_serialize_sources(sources, (long)sizeof(sources));
+		(void)macsurf_diag_serialize_scripts(scripts, (long)sizeof(scripts));
+
+		if (strstr(sources, "coverage=discovered_sources\n") == NULL ||
+				strstr(sources, "kind=classic declared_kind=classic treatment=direct schedule=inline blocking=0 state=executed reason=ok") == NULL ||
+				strstr(sources, "len=64 hash=11112222 url=-") == NULL) {
+			fprintf(stderr, "FAIL: Test 102c inline source execution entry\n"); return 1;
+		}
+		{
+			char expected_join[64];
+			snprintf(expected_join, sizeof(expected_join), "source=%lu", sid1);
+			if (strstr(scripts, expected_join) == NULL) {
+				fprintf(stderr, "FAIL: Test 102c script-to-source join\n"); return 1;
+			}
+			snprintf(expected_join, sizeof(expected_join), "script=%lu", scope.my_id);
+			if (strstr(sources, expected_join) == NULL) {
+				fprintf(stderr, "FAIL: Test 102c source-to-script join\n"); return 1;
+			}
+		}
+
+		/* 2. External script: full lifecycle (classified -> queued -> fetching -> done -> executed) */
+		sid2 = ms_diag_source_create(701, 101);
+		ms_diag_source_set_classification(sid2,
+			MS_SRC_KIND_CLASSIC, MS_SRC_DECL_CLASSIC, MS_SRC_TREAT_DIRECT,
+			MS_SRC_SCHED_ASYNC, 0, "https://example.com/app.js");
+		ms_diag_source_note_fetch_start(sid2, 0);
+		ms_diag_source_note_fetch_done(sid2, 1024, 0x33334444UL);
+		ms_diag_script_enter(&scope, 701, MS_SCRIPT_CLASSIC, "https://example.com/app.js");
+		ms_diag_script_set_provenance(&scope, 1, 101);
+		ms_diag_script_set_source_id(&scope, sid2);
+		ms_diag_script_set_source(&scope, MS_SCR_SRC_EXTERNAL, 2, 1024, 0x33334444UL);
+		ms_diag_source_note_execution(sid2, scope.my_id);
+		ms_diag_script_leave(&scope, MS_SCR_DONE);
+
+		(void)macsurf_diag_serialize_sources(sources, (long)sizeof(sources));
+		if (strstr(sources, "schedule=async blocking=0 state=executed reason=ok") == NULL ||
+				strstr(sources, "len=1024 hash=33334444 url=https://example.com/app.js") == NULL) {
+			fprintf(stderr, "FAIL: Test 102c external source execution entry\n"); return 1;
+		}
+
+		/* 3. Discovered external source with network error before execution attempt */
+		sid3 = ms_diag_source_create(701, 101);
+		ms_diag_source_set_classification(sid3,
+			MS_SRC_KIND_CLASSIC, MS_SRC_DECL_CLASSIC, MS_SRC_TREAT_DIRECT,
+			MS_SRC_SCHED_SYNC, 1, "https://example.com/404.js");
+		ms_diag_source_note_terminal(sid3, MS_SRC_STATE_FETCH_FAILED, MS_SRC_REASON_NETWORK_ERROR);
+
+		(void)macsurf_diag_serialize_sources(sources, (long)sizeof(sources));
+		if (strstr(sources, "schedule=sync blocking=1 state=fetch_failed reason=network_error script=0") == NULL ||
+				strstr(sources, "url=https://example.com/404.js") == NULL) {
+			fprintf(stderr, "FAIL: Test 102c fetch-failed source entry (script=0)\n"); return 1;
+		}
+
+		/* 4. Discovered source skipped due to unsupported MIME (e.g. application/json) */
+		sid4 = ms_diag_source_create(701, 101);
+		ms_diag_source_set_classification(sid4,
+			MS_SRC_KIND_CLASSIC, MS_SRC_DECL_CLASSIC, MS_SRC_TREAT_DIRECT,
+			MS_SRC_SCHED_INLINE, 0, NULL);
+		ms_diag_source_set_inline_details(sid4, 42, 0x55556666UL);
+		ms_diag_source_note_terminal(sid4, MS_SRC_STATE_SKIPPED, MS_SRC_REASON_MIME_UNSUPPORTED);
+
+		(void)macsurf_diag_serialize_sources(sources, (long)sizeof(sources));
+		if (strstr(sources, "schedule=inline blocking=0 state=skipped reason=mime_unsupported script=0 request=0 len=42 hash=55556666") == NULL) {
+			fprintf(stderr, "FAIL: Test 102c mime-unsupported skipped source entry\n"); return 1;
+		}
+
+		/* 5. Discovered source skipped due to no JS context */
+		sid5 = ms_diag_source_create(701, 101);
+		ms_diag_source_note_terminal(sid5, MS_SRC_STATE_SKIPPED, MS_SRC_REASON_NO_JS_CONTEXT);
+
+		(void)macsurf_diag_serialize_sources(sources, (long)sizeof(sources));
+		if (strstr(sources, "kind=classic declared_kind=unknown treatment=direct schedule=unknown blocking=0 state=skipped reason=no_js_context script=0") == NULL) {
+			fprintf(stderr, "FAIL: Test 102c no-js-context source entry\n"); return 1;
+		}
+
+		/* 6. Document destroyed while source pending (teardown cancellation) & monotonicity */
+		sid6 = ms_diag_source_create(701, 101);
+		ms_diag_source_set_classification(sid6,
+			MS_SRC_KIND_CLASSIC, MS_SRC_DECL_CLASSIC, MS_SRC_TREAT_DIRECT,
+			MS_SRC_SCHED_DEFER, 0, "https://example.com/defer.js");
+		ms_diag_source_note_fetch_done(sid6, 500, 0x77778888UL);
+		ms_diag_source_note_terminal(sid6, MS_SRC_STATE_CANCELLED, MS_SRC_REASON_DOCUMENT_DESTROYED);
+
+		/* Verify monotonicity: subsequent terminal note must be ignored */
+		ms_diag_source_note_terminal(sid6, MS_SRC_STATE_EXECUTED, MS_SRC_REASON_OK);
+
+		(void)macsurf_diag_serialize_sources(sources, (long)sizeof(sources));
+		if (strstr(sources, "schedule=defer blocking=0 state=cancelled reason=document_destroyed script=0 request=0 len=500 hash=77778888") == NULL) {
+			fprintf(stderr, "FAIL: Test 102c document destroyed cancellation & monotonicity\n"); return 1;
+		}
+
+		/* 7. Rollover & paged cursor query */
+		for (i = 0; i < 140; i++) {
+			unsigned long s = ms_diag_source_create(701, 101);
+			ms_diag_source_set_classification(s,
+				MS_SRC_KIND_CLASSIC, MS_SRC_DECL_CLASSIC, MS_SRC_TREAT_DIRECT,
+				MS_SRC_SCHED_INLINE, 0, NULL);
+			ms_diag_source_note_terminal(s, MS_SRC_STATE_SKIPPED, MS_SRC_REASON_EMPTY);
+		}
+
+		(void)macsurf_diag_serialize_sources_since(page, (long)sizeof(page), 0, 10);
+		if (strstr(page, "MSDIAG 2 sources\n") == NULL ||
+				strstr(page, "coverage=discovered_sources\n") == NULL ||
+				strstr(page, "lost_from=") == NULL ||
+				strstr(page, "returned=10\n") == NULL) {
+			fprintf(stderr, "FAIL: Test 102c paged source query with loss reporting\n"); return 1;
+		}
+
+		fprintf(stderr, "=== Test 102c PASS: script source outcomes are granular and monotonic ===\n");
+	}
+
 	/* --- Test 103: Phase 3 capability/CSS gap aggregates --------------- */
 	{
 		char caps[16384], cssg[16384], caps_again[16384];

@@ -555,6 +555,7 @@ struct ms_diag_script {
 	unsigned long heap_id;
 	unsigned long ctx_gen;
 	unsigned long task_id;
+	unsigned long source_id;
 	unsigned long inline_ordinal;
 	unsigned long source_len;
 	unsigned long source_hash;
@@ -579,6 +580,37 @@ struct ms_diag_task {
 	short capped;			/* microtask: cap hit */
 	char name[MS_NAME_MAX];		/* event type, else "" */
 };
+
+#define MS_SOURCE_RING_N 128
+#define MS_SOURCE_DEFAULT_LIMIT 16
+#define MS_SOURCE_FOOTER_RESERVE 256
+#define MS_SOURCE_URL_MAX 64
+#define MS_SOURCE_ACTIVE_MAX 128
+
+struct ms_diag_source {
+	unsigned long id;		/* 0 == empty */
+	unsigned long nav_id;
+	unsigned long doc_id;
+	unsigned long byte_len;
+	unsigned long hash;
+	unsigned long script_id;
+	unsigned long req_id;
+	short kind;			/* enum ms_source_kind */
+	short declared_kind;		/* enum ms_source_declared_kind */
+	short treatment;		/* enum ms_source_treatment */
+	short schedule;			/* enum ms_source_schedule */
+	short blocking;			/* 1 if Hubbub paused */
+	short state;			/* enum ms_source_state */
+	short reason;			/* enum ms_source_reason */
+	short active;			/* 1 if not yet terminal */
+	char url[MS_SOURCE_URL_MAX];
+};
+
+static unsigned long g_source_seq;
+static struct ms_diag_source g_source_ring[MS_SOURCE_RING_N];
+static int g_source_ring_head;
+static struct ms_diag_source g_source_active[MS_SOURCE_ACTIVE_MAX];
+static int g_source_active_count;
 
 #define MS_SCRIPT_ACTIVE_MAX 8
 static struct ms_diag_script g_script_active[MS_SCRIPT_ACTIVE_MAX];
@@ -607,6 +639,33 @@ static void ms_name_copy(char *dst, const char *src)
 	dst[i] = '\0';
 }
 
+static void ms_url_copy(char *dst, const char *src)
+{
+	int i = 0;
+	if (src == NULL) {
+		dst[0] = '\0';
+		return;
+	}
+	while (src[i] != '\0' && i < MS_SOURCE_URL_MAX - 1) {
+		char c = src[i];
+		dst[i] = (c == ' ' || c == '\n' || c == '\r' || c == '=') ? '_' : c;
+		i++;
+	}
+	dst[i] = '\0';
+}
+
+static struct ms_diag_source *ms_diag_find_active_source(unsigned long source_id)
+{
+	int i;
+	if (source_id == 0) return NULL;
+	for (i = 0; i < g_source_active_count; i++) {
+		if (g_source_active[i].id == source_id) {
+			return &g_source_active[i];
+		}
+	}
+	return NULL;
+}
+
 static struct ms_diag_script *ms_diag_find_active_script(unsigned long script_id)
 {
 	int i;
@@ -617,6 +676,220 @@ static struct ms_diag_script *ms_diag_find_active_script(unsigned long script_id
 		}
 	}
 	return NULL;
+}
+
+unsigned long ms_diag_source_create(unsigned long nav_id, unsigned long doc_id)
+{
+	struct ms_diag_source *e;
+	struct ms_diag_source *act = NULL;
+	unsigned long sid;
+
+	sid = ++g_source_seq;
+	if (g_source_seq == 0) {
+		sid = g_source_seq = 1;
+	}
+
+	if (g_source_active_count < MS_SOURCE_ACTIVE_MAX) {
+		act = &g_source_active[g_source_active_count++];
+		memset(act, 0, sizeof(*act));
+	} else {
+		act = &g_source_active[0];
+	}
+
+	act->id = sid;
+	act->nav_id = nav_id != 0 ? nav_id : ms_diag_cur_nav();
+	act->doc_id = doc_id != 0 ? doc_id : ms_diag_cur_doc();
+	act->kind = (short) MS_SRC_KIND_CLASSIC;
+	act->declared_kind = (short) MS_SRC_DECL_UNKNOWN;
+	act->treatment = (short) MS_SRC_TREAT_DIRECT;
+	act->schedule = (short) MS_SRC_SCHED_UNKNOWN;
+	act->state = (short) MS_SRC_STATE_DISCOVERED;
+	act->reason = (short) MS_SRC_REASON_NONE;
+	act->active = 1;
+
+	e = &g_source_ring[g_source_ring_head];
+	g_source_ring_head = (g_source_ring_head + 1) % MS_SOURCE_RING_N;
+	*e = *act;
+
+	return sid;
+}
+
+void ms_diag_source_set_classification(unsigned long source_id,
+	int kind, int declared_kind, int treatment, int schedule,
+	int blocking, const char *url)
+{
+	struct ms_diag_source *act;
+	int i;
+	if (source_id == 0) return;
+	act = ms_diag_find_active_source(source_id);
+	if (act != NULL) {
+		act->kind = (short) kind;
+		act->declared_kind = (short) declared_kind;
+		act->treatment = (short) treatment;
+		act->schedule = (short) schedule;
+		act->blocking = (short) (blocking ? 1 : 0);
+		if (act->state == MS_SRC_STATE_DISCOVERED) {
+			act->state = (short) MS_SRC_STATE_CLASSIFIED;
+		}
+		if (url != NULL && url[0] != '\0') {
+			ms_url_copy(act->url, url);
+		}
+	}
+	for (i = 0; i < MS_SOURCE_RING_N; i++) {
+		if (g_source_ring[i].id == source_id) {
+			g_source_ring[i].kind = (short) kind;
+			g_source_ring[i].declared_kind = (short) declared_kind;
+			g_source_ring[i].treatment = (short) treatment;
+			g_source_ring[i].schedule = (short) schedule;
+			g_source_ring[i].blocking = (short) (blocking ? 1 : 0);
+			if (g_source_ring[i].state == MS_SRC_STATE_DISCOVERED) {
+				g_source_ring[i].state = (short) MS_SRC_STATE_CLASSIFIED;
+			}
+			if (url != NULL && url[0] != '\0') {
+				ms_url_copy(g_source_ring[i].url, url);
+			}
+			break;
+		}
+	}
+}
+
+void ms_diag_source_set_inline_details(unsigned long source_id,
+	unsigned long byte_len, unsigned long hash)
+{
+	struct ms_diag_source *act;
+	int i;
+	if (source_id == 0) return;
+	act = ms_diag_find_active_source(source_id);
+	if (act != NULL) {
+		act->byte_len = byte_len;
+		act->hash = hash;
+	}
+	for (i = 0; i < MS_SOURCE_RING_N; i++) {
+		if (g_source_ring[i].id == source_id) {
+			g_source_ring[i].byte_len = byte_len;
+			g_source_ring[i].hash = hash;
+			break;
+		}
+	}
+}
+
+void ms_diag_source_note_fetch_start(unsigned long source_id,
+	unsigned long req_id)
+{
+	struct ms_diag_source *act;
+	int i;
+	if (source_id == 0) return;
+	act = ms_diag_find_active_source(source_id);
+	if (act != NULL) {
+		act->req_id = req_id;
+		act->state = (short) MS_SRC_STATE_FETCHING;
+	}
+	for (i = 0; i < MS_SOURCE_RING_N; i++) {
+		if (g_source_ring[i].id == source_id) {
+			g_source_ring[i].req_id = req_id;
+			g_source_ring[i].state = (short) MS_SRC_STATE_FETCHING;
+			break;
+		}
+	}
+}
+
+void ms_diag_source_note_fetch_done(unsigned long source_id,
+	unsigned long byte_len, unsigned long hash)
+{
+	struct ms_diag_source *act;
+	int i;
+	if (source_id == 0) return;
+	act = ms_diag_find_active_source(source_id);
+	if (act != NULL) {
+		act->byte_len = byte_len;
+		act->hash = hash;
+		act->state = (short) MS_SRC_STATE_FETCH_DONE;
+	}
+	for (i = 0; i < MS_SOURCE_RING_N; i++) {
+		if (g_source_ring[i].id == source_id) {
+			g_source_ring[i].byte_len = byte_len;
+			g_source_ring[i].hash = hash;
+			g_source_ring[i].state = (short) MS_SRC_STATE_FETCH_DONE;
+			break;
+		}
+	}
+}
+
+void ms_diag_source_note_execution(unsigned long source_id,
+	unsigned long script_id)
+{
+	struct ms_diag_source *act;
+	int i;
+	if (source_id == 0) return;
+	act = ms_diag_find_active_source(source_id);
+	if (act != NULL) {
+		act->script_id = script_id;
+		act->state = (short) MS_SRC_STATE_EXECUTED;
+		act->reason = (short) MS_SRC_REASON_OK;
+		act->active = 0;
+	}
+	for (i = 0; i < MS_SOURCE_RING_N; i++) {
+		if (g_source_ring[i].id == source_id) {
+			g_source_ring[i].script_id = script_id;
+			g_source_ring[i].state = (short) MS_SRC_STATE_EXECUTED;
+			g_source_ring[i].reason = (short) MS_SRC_REASON_OK;
+			g_source_ring[i].active = 0;
+			break;
+		}
+	}
+	if (act != NULL) {
+		for (i = 0; i < g_source_active_count; i++) {
+			if (g_source_active[i].id == source_id) {
+				int rem = g_source_active_count - 1 - i;
+				if (rem > 0) {
+					memmove(&g_source_active[i], &g_source_active[i + 1],
+						rem * sizeof(struct ms_diag_source));
+				}
+				g_source_active_count--;
+				break;
+			}
+		}
+	}
+}
+
+void ms_diag_source_note_terminal(unsigned long source_id,
+	int state, int reason)
+{
+	struct ms_diag_source *act;
+	int i;
+	if (source_id == 0) return;
+	act = ms_diag_find_active_source(source_id);
+	if (act != NULL) {
+		/* Monotonic: cannot transition away from terminal states */
+		if (act->active != 0) {
+			act->state = (short) state;
+			act->reason = (short) reason;
+			act->active = 0;
+		}
+	}
+	for (i = 0; i < MS_SOURCE_RING_N; i++) {
+		if (g_source_ring[i].id == source_id) {
+			if (g_source_ring[i].active != 0) {
+				g_source_ring[i].state = (short) state;
+				g_source_ring[i].reason = (short) reason;
+				g_source_ring[i].active = 0;
+			}
+			break;
+		}
+	}
+	if (act != NULL) {
+		for (i = 0; i < g_source_active_count; i++) {
+			if (g_source_active[i].id == source_id) {
+				int rem = g_source_active_count - 1 - i;
+				if (rem > 0) {
+					memmove(&g_source_active[i], &g_source_active[i + 1],
+						rem * sizeof(struct ms_diag_source));
+				}
+				g_source_active_count--;
+				break;
+			}
+		}
+	}
 }
 
 void ms_diag_script_enter(struct ms_diag_scope *s, unsigned long nav_id,
@@ -708,6 +981,24 @@ void ms_diag_script_set_source(struct ms_diag_scope *s,
 			g_script_ring[i].inline_ordinal = ordinal;
 			g_script_ring[i].source_len = len;
 			g_script_ring[i].source_hash = hash;
+			break;
+		}
+	}
+}
+
+void ms_diag_script_set_source_id(struct ms_diag_scope *s,
+	unsigned long source_id)
+{
+	struct ms_diag_script *act;
+	int i;
+	if (s == NULL || s->my_id == 0) return;
+	act = ms_diag_find_active_script(s->my_id);
+	if (act != NULL) {
+		act->source_id = source_id;
+	}
+	for (i = 0; i < MS_SCRIPT_RING_N; i++) {
+		if (g_script_ring[i].id == s->my_id) {
+			g_script_ring[i].source_id = source_id;
 			break;
 		}
 	}
@@ -1028,6 +1319,73 @@ static const char *ms_task_kind_s(int k)
 	}
 }
 
+const char *ms_source_kind_s(int v)
+{
+	return (v == MS_SRC_KIND_MODULE) ? "module" : "classic";
+}
+
+const char *ms_source_declared_kind_s(int v)
+{
+	switch (v) {
+	case MS_SRC_DECL_MODULE:  return "module";
+	case MS_SRC_DECL_CLASSIC: return "classic";
+	default:                  return "unknown";
+	}
+}
+
+const char *ms_source_treatment_s(int v)
+{
+	switch (v) {
+	case MS_SRC_TREAT_DIRECT:           return "direct";
+	case MS_SRC_TREAT_CLASSIC_FALLBACK: return "classic_fallback";
+	case MS_SRC_TREAT_SKIPPED:          return "skipped";
+	default:                            return "unknown";
+	}
+}
+
+const char *ms_source_schedule_s(int v)
+{
+	switch (v) {
+	case MS_SRC_SCHED_SYNC:          return "sync";
+	case MS_SRC_SCHED_ASYNC:         return "async";
+	case MS_SRC_SCHED_DEFER:         return "defer";
+	case MS_SRC_SCHED_INLINE:        return "inline";
+	case MS_SRC_SCHED_MODULE_INLINE: return "module_inline";
+	default:                         return "unknown";
+	}
+}
+
+const char *ms_source_state_s(int v)
+{
+	switch (v) {
+	case MS_SRC_STATE_DISCOVERED:   return "discovered";
+	case MS_SRC_STATE_CLASSIFIED:   return "classified";
+	case MS_SRC_STATE_FETCH_QUEUED: return "fetch_queued";
+	case MS_SRC_STATE_FETCHING:     return "fetching";
+	case MS_SRC_STATE_FETCH_DONE:   return "fetch_done";
+	case MS_SRC_STATE_FETCH_FAILED: return "fetch_failed";
+	case MS_SRC_STATE_EXECUTED:     return "executed";
+	case MS_SRC_STATE_SKIPPED:      return "skipped";
+	case MS_SRC_STATE_CANCELLED:    return "cancelled";
+	default:                        return "unknown";
+	}
+}
+
+const char *ms_source_reason_s(int v)
+{
+	switch (v) {
+	case MS_SRC_REASON_OK:                  return "ok";
+	case MS_SRC_REASON_NO_JS_CONTEXT:       return "no_js_context";
+	case MS_SRC_REASON_MIME_UNSUPPORTED:    return "mime_unsupported";
+	case MS_SRC_REASON_NETWORK_ERROR:       return "network_error";
+	case MS_SRC_REASON_EMPTY:               return "empty";
+	case MS_SRC_REASON_DOCUMENT_DESTROYED:  return "document_destroyed";
+	case MS_SRC_REASON_NAVIGATION_REPLACED: return "navigation_replaced";
+	case MS_SRC_REASON_EXEC_FAILED:         return "exec_failed";
+	default:                                return "none";
+	}
+}
+
 long macsurf_diag_serialize_scripts(char *buf, long cap)
 {
 	char line[288];
@@ -1050,10 +1408,11 @@ long macsurf_diag_serialize_scripts(char *buf, long cap)
 			continue;
 		}
 		snprintf(line, sizeof line,
-			"script=%lu nav=%lu frame=%lu doc=%lu realm=%lu heap=%lu ctx_gen=%lu "
+			"script=%lu source=%lu nav=%lu frame=%lu doc=%lu realm=%lu heap=%lu ctx_gen=%lu "
 			"task=%lu kind=%s source_kind=%s ord=%lu len=%lu hash=%08lx "
 			"compile=%s compile_us=%ld execute=%s run_us=%ld state=%s reason=%s error=%lu name=%s\n",
-			(unsigned long) e->id, (unsigned long) e->nav_id,
+			(unsigned long) e->id, (unsigned long) e->source_id,
+			(unsigned long) e->nav_id,
 			(unsigned long) e->frame_id, (unsigned long) e->doc_id,
 			(unsigned long) e->realm_id, (unsigned long) e->heap_id,
 			(unsigned long) e->ctx_gen, (unsigned long) e->task_id,
@@ -1150,10 +1509,11 @@ long macsurf_diag_serialize_scripts_since(char *buf, long cap,
 				break;
 			}
 			snprintf(line, sizeof(line),
-				"script=%lu nav=%lu frame=%lu doc=%lu realm=%lu heap=%lu ctx_gen=%lu "
+				"script=%lu source=%lu nav=%lu frame=%lu doc=%lu realm=%lu heap=%lu ctx_gen=%lu "
 				"task=%lu kind=%s source_kind=%s ord=%lu len=%lu hash=%08lx "
 				"compile=%s compile_us=%ld execute=%s run_us=%ld state=%s reason=%s error=%lu name=%s\n",
-				(unsigned long) e->id, (unsigned long) e->nav_id,
+				(unsigned long) e->id, (unsigned long) e->source_id,
+				(unsigned long) e->nav_id,
 				(unsigned long) e->frame_id, (unsigned long) e->doc_id,
 				(unsigned long) e->realm_id, (unsigned long) e->heap_id,
 				(unsigned long) e->ctx_gen, (unsigned long) e->task_id,
@@ -1167,6 +1527,158 @@ long macsurf_diag_serialize_scripts_since(char *buf, long cap,
 				(unsigned long) e->error_id,
 				e->name[0] ? e->name : "-");
 			if (n + (long)strlen(line) >= cap - MS_SCRIPT_FOOTER_RESERVE) {
+				truncated = 1;
+				break;
+			}
+			n = diag_cat(buf, cap, n, line);
+			returned++;
+			next_after = seq;
+		}
+	}
+	snprintf(line, sizeof(line), "lost=%d\nreturned=%lu\nnext_after=%lu\n"
+		"complete=%d\ntruncated=%d\n", lost, returned, next_after,
+		next_after >= latest ? 1 : 0, truncated);
+	n = diag_cat(buf, cap, n, line);
+	return n;
+}
+
+long macsurf_diag_serialize_sources(char *buf, long cap)
+{
+	char line[288];
+	long n = 0;
+	int i;
+
+	if (buf == NULL || cap < 2) {
+		return 0;
+	}
+	buf[0] = '\0';
+	n = diag_cat(buf, cap, n, "MSDIAG 1 sources\n");
+	n = ms_diag_history_header(buf, cap, n, "sources", g_source_seq,
+		MS_SOURCE_RING_N);
+	n = diag_cat(buf, cap, n, "coverage=discovered_sources\n");
+	for (i = 0; i < MS_SOURCE_RING_N; i++) {
+		int idx = (g_source_ring_head - 1 - i + 2 * MS_SOURCE_RING_N)
+			% MS_SOURCE_RING_N;
+		struct ms_diag_source *e = &g_source_ring[idx];
+		if (e->id == 0 || n >= cap - 1) {
+			continue;
+		}
+		snprintf(line, sizeof(line),
+			"source=%lu nav=%lu doc=%lu kind=%s declared_kind=%s "
+			"treatment=%s schedule=%s blocking=%d state=%s reason=%s "
+			"script=%lu request=%lu len=%lu hash=%08lx url=%s\n",
+			(unsigned long) e->id, (unsigned long) e->nav_id,
+			(unsigned long) e->doc_id,
+			ms_source_kind_s(e->kind),
+			ms_source_declared_kind_s(e->declared_kind),
+			ms_source_treatment_s(e->treatment),
+			ms_source_schedule_s(e->schedule),
+			(int) e->blocking,
+			ms_source_state_s(e->state),
+			ms_source_reason_s(e->reason),
+			(unsigned long) e->script_id,
+			(unsigned long) e->req_id,
+			(unsigned long) e->byte_len,
+			(unsigned long) e->hash,
+			e->url[0] ? e->url : "-");
+		n = diag_cat(buf, cap, n, line);
+	}
+	return n;
+}
+
+long macsurf_diag_serialize_sources_since(char *buf, long cap,
+	unsigned long after, unsigned long limit)
+{
+	char line[288];
+	long n = 0;
+	unsigned long latest;
+	unsigned long retained;
+	unsigned long first;
+	unsigned long want = 0;
+	unsigned long seq;
+	unsigned long max_return = 0;
+	unsigned long next_after;
+	unsigned long returned = 0;
+	unsigned long lost_from = 0;
+	unsigned long lost_to = 0;
+	int oldest_idx;
+	int have_wanted = 0;
+	int lost = 0;
+	int truncated = 0;
+
+	if (buf == NULL || cap < 2) return 0;
+	buf[0] = '\0';
+	latest = g_source_seq;
+	retained = latest;
+	if (retained > MS_SOURCE_RING_N) retained = MS_SOURCE_RING_N;
+	first = retained == 0 ? 0 : latest - retained + 1;
+	if (limit == 0) limit = MS_SOURCE_DEFAULT_LIMIT;
+	if (limit > MS_SOURCE_RING_N) limit = MS_SOURCE_RING_N;
+
+	n = diag_cat(buf, cap, n, "MSDIAG 2 sources\n");
+	n = ms_diag_history_header(buf, cap, n, "sources", latest,
+		MS_SOURCE_RING_N);
+	n = diag_cat(buf, cap, n, "coverage=discovered_sources\n");
+	snprintf(line, sizeof(line), "requested_after=%lu\nlimit=%lu\n",
+		after, limit);
+	n = diag_cat(buf, cap, n, line);
+
+	if (after < latest) {
+		want = after + 1;
+		have_wanted = 1;
+	}
+	if (have_wanted && first != 0 && want < first) {
+		lost = 1;
+		lost_from = want;
+		lost_to = first - 1;
+		snprintf(line, sizeof(line), "lost_from=%lu\nlost_to=%lu\n",
+			lost_from, lost_to);
+		n = diag_cat(buf, cap, n, line);
+		want = first;
+	}
+	next_after = after;
+	if (have_wanted && first != 0 && want <= latest) {
+		max_return = want + limit;
+		if (max_return < want || max_return > latest + 1) {
+			max_return = latest + 1;
+		}
+		oldest_idx = (g_source_ring_head - (int)retained +
+			2 * MS_SOURCE_RING_N) % MS_SOURCE_RING_N;
+		for (seq = want; seq < max_return; seq++) {
+			int idx = (oldest_idx + (int)(seq - first)) % MS_SOURCE_RING_N;
+			struct ms_diag_source *e = &g_source_ring[idx];
+
+			if (e->id != seq) {
+				lost = 1;
+				if (lost_from == 0) {
+					lost_from = seq;
+					lost_to = seq;
+					snprintf(line, sizeof(line),
+						"lost_from=%lu\nlost_to=%lu\n", lost_from,
+						lost_to);
+					n = diag_cat(buf, cap, n, line);
+				}
+				break;
+			}
+			snprintf(line, sizeof(line),
+				"source=%lu nav=%lu doc=%lu kind=%s declared_kind=%s "
+				"treatment=%s schedule=%s blocking=%d state=%s reason=%s "
+				"script=%lu request=%lu len=%lu hash=%08lx url=%s\n",
+				(unsigned long) e->id, (unsigned long) e->nav_id,
+				(unsigned long) e->doc_id,
+				ms_source_kind_s(e->kind),
+				ms_source_declared_kind_s(e->declared_kind),
+				ms_source_treatment_s(e->treatment),
+				ms_source_schedule_s(e->schedule),
+				(int) e->blocking,
+				ms_source_state_s(e->state),
+				ms_source_reason_s(e->reason),
+				(unsigned long) e->script_id,
+				(unsigned long) e->req_id,
+				(unsigned long) e->byte_len,
+				(unsigned long) e->hash,
+				e->url[0] ? e->url : "-");
+			if (n + (long)strlen(line) >= cap - MS_SOURCE_FOOTER_RESERVE) {
 				truncated = 1;
 				break;
 			}

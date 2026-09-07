@@ -142,6 +142,56 @@ enum ms_script_term_reason { MS_TERM_REASON_NONE = 0, MS_TERM_REASON_OK,
 enum ms_task_kind    { MS_TASK_NONE = 0, MS_TASK_TIMER, MS_TASK_EVENT,
 		       MS_TASK_XHR, MS_TASK_MICROTASK };
 
+enum ms_source_kind {
+	MS_SRC_KIND_CLASSIC = 0,
+	MS_SRC_KIND_MODULE
+};
+
+enum ms_source_declared_kind {
+	MS_SRC_DECL_CLASSIC = 0,
+	MS_SRC_DECL_MODULE,
+	MS_SRC_DECL_UNKNOWN
+};
+
+enum ms_source_treatment {
+	MS_SRC_TREAT_DIRECT = 0,
+	MS_SRC_TREAT_CLASSIC_FALLBACK,
+	MS_SRC_TREAT_SKIPPED
+};
+
+enum ms_source_schedule {
+	MS_SRC_SCHED_SYNC = 0,
+	MS_SRC_SCHED_ASYNC,
+	MS_SRC_SCHED_DEFER,
+	MS_SRC_SCHED_INLINE,
+	MS_SRC_SCHED_MODULE_INLINE,
+	MS_SRC_SCHED_UNKNOWN
+};
+
+enum ms_source_state {
+	MS_SRC_STATE_DISCOVERED = 0,
+	MS_SRC_STATE_CLASSIFIED,
+	MS_SRC_STATE_FETCH_QUEUED,
+	MS_SRC_STATE_FETCHING,
+	MS_SRC_STATE_FETCH_DONE,
+	MS_SRC_STATE_FETCH_FAILED,
+	MS_SRC_STATE_EXECUTED,
+	MS_SRC_STATE_SKIPPED,
+	MS_SRC_STATE_CANCELLED
+};
+
+enum ms_source_reason {
+	MS_SRC_REASON_NONE = 0,
+	MS_SRC_REASON_OK,
+	MS_SRC_REASON_NO_JS_CONTEXT,
+	MS_SRC_REASON_MIME_UNSUPPORTED,
+	MS_SRC_REASON_NETWORK_ERROR,
+	MS_SRC_REASON_EMPTY,
+	MS_SRC_REASON_DOCUMENT_DESTROYED,
+	MS_SRC_REASON_NAVIGATION_REPLACED,
+	MS_SRC_REASON_EXEC_FAILED
+};
+
 /* Saved outer scope; scoped push/pop, NOT bare assignment. */
 struct ms_diag_scope {
 	unsigned long prev_script;
@@ -165,12 +215,38 @@ void ms_diag_script_note_execute(unsigned long script_id,
 	int result, long run_us, unsigned long error_id);
 void ms_diag_script_leave(struct ms_diag_scope *s, int state);
 
+void ms_diag_script_set_source_id(struct ms_diag_scope *s,
+	unsigned long source_id);
+
 const char *ms_script_kind_s(int v);
 const char *ms_script_state_s(int v);
 const char *ms_script_source_s(int v);
 const char *ms_compile_result_s(int v);
 const char *ms_execute_result_s(int v);
 const char *ms_script_term_reason_s(int v);
+
+/* --- source discovery & lifecycle ledger --- */
+unsigned long ms_diag_source_create(unsigned long nav_id, unsigned long doc_id);
+void ms_diag_source_set_classification(unsigned long source_id,
+	int kind, int declared_kind, int treatment, int schedule,
+	int blocking, const char *url);
+void ms_diag_source_set_inline_details(unsigned long source_id,
+	unsigned long byte_len, unsigned long hash);
+void ms_diag_source_note_fetch_start(unsigned long source_id,
+	unsigned long req_id);
+void ms_diag_source_note_fetch_done(unsigned long source_id,
+	unsigned long byte_len, unsigned long hash);
+void ms_diag_source_note_execution(unsigned long source_id,
+	unsigned long script_id);
+void ms_diag_source_note_terminal(unsigned long source_id,
+	int state, int reason);
+
+const char *ms_source_kind_s(int v);
+const char *ms_source_declared_kind_s(int v);
+const char *ms_source_treatment_s(int v);
+const char *ms_source_schedule_s(int v);
+const char *ms_source_state_s(int v);
+const char *ms_source_reason_s(int v);
 
 /* --- task scope: wrap the JS_Call at a timer/event/xhr/microtask boundary ---
  * Returns the allocated task id, or 0 when it INHERITED the current task
@@ -197,6 +273,9 @@ long macsurf_diag_serialize_scripts(char *buf, long cap);
  * `after` is the last execution attempt the reader retained; the result says
  * explicitly when that cursor predates the bounded ring. */
 long macsurf_diag_serialize_scripts_since(char *buf, long cap,
+	unsigned long after, unsigned long limit);
+long macsurf_diag_serialize_sources(char *buf, long cap);
+long macsurf_diag_serialize_sources_since(char *buf, long cap,
 	unsigned long after, unsigned long limit);
 long macsurf_diag_serialize_tasks(char *buf, long cap);
 

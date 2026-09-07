@@ -103,6 +103,7 @@ struct html_script {
 	bool ready_exec;
 	bool async;
 	bool defer;
+	unsigned long source_id;
 };
 
 

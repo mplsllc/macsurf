@@ -229,6 +229,11 @@ nserror html_script_exec(html_content *c, bool allow_defer)
 					(int) content_get_type(s->data.handle),
 					nsurl_access(
 						hlcache_handle_get_url(s->data.handle)));
+				if (s->source_id != 0) {
+					ms_diag_source_note_terminal(s->source_id,
+						MS_SRC_STATE_SKIPPED,
+						MS_SRC_REASON_MIME_UNSUPPORTED);
+				}
 				continue; /* unsupported type */
 			}
 
@@ -264,14 +269,19 @@ nserror html_script_exec(html_content *c, bool allow_defer)
 					int rc;
 					unsigned long ord = (unsigned long) (i + 1);
 					unsigned long h = ms_script_compute_hash(data, size);
+					unsigned long sid = s->source_id;
 					ms_diag_script_enter(&scr,
 						content_get_nav_id(&c->base),
 						MS_SCRIPT_CLASSIC,
 						nsurl_access(hlcache_handle_get_url(s->data.handle)));
+					ms_diag_script_set_source_id(&scr, sid);
 					ms_diag_script_set_provenance(&scr,
 						c->frame_id, c->doc_id);
 					ms_diag_script_set_source(&scr,
 						MS_SCR_SRC_EXTERNAL, ord, (unsigned long) size, h);
+					if (sid != 0) {
+						ms_diag_source_note_execution(sid, scr.my_id);
+					}
 					rc = script_handler(c->js_thread, data, size,
 					       nsurl_access(hlcache_handle_get_url(s->data.handle)));
 					ms_diag_script_leave(&scr,
@@ -374,6 +384,7 @@ convert_script_async_cb(hlcache_handle *script,
 	html_content *parent = pw;
 	unsigned int i;
 	struct html_script *s;
+	unsigned long sid = 0;
 
 	/* fixes535: registry-membership liveness guard FIRST, before any field of
 	 * parent is read.  Not live => the html_content was torn down; the script
@@ -392,15 +403,26 @@ convert_script_async_cb(hlcache_handle *script,
 	}
 
 	assert(i != parent->scripts_count);
+	sid = s->source_id;
 
 	switch (event->type) {
 	case CONTENT_MSG_LOADING:
+		if (sid != 0) {
+			ms_diag_source_note_fetch_start(sid, 0);
+		}
 		break;
 
 	case CONTENT_MSG_READY:
+		if (sid != 0) {
+			ms_diag_source_note_fetch_start(sid, 0);
+		}
 		break;
 
-	case CONTENT_MSG_DONE:
+	case CONTENT_MSG_DONE: {
+		size_t fsize = 0;
+		const uint8_t *fdata;
+		unsigned long fh = 0;
+
 		NSLOG(netsurf, INFO, "script %d done '%s'", i,
 		      nsurl_access(hlcache_handle_get_url(script)));
 		parent->base.active--;
@@ -413,7 +435,16 @@ convert_script_async_cb(hlcache_handle *script,
 				nsurl_access(hlcache_handle_get_url(script)));
 		}
 
+		fdata = content_get_source_data(script, &fsize);
+		if (fdata != NULL && fsize > 0) {
+			fh = ms_script_compute_hash(fdata, fsize);
+		}
+		if (sid != 0) {
+			ms_diag_source_note_fetch_done(sid, (unsigned long)fsize, fh);
+		}
+
 		break;
+	}
 
 	case CONTENT_MSG_ERROR:
 		NSLOG(netsurf, INFO, "script %s failed: %s",
@@ -426,6 +457,12 @@ convert_script_async_cb(hlcache_handle *script,
 				"LIFE SPIPE X ord=%ld url=%s err=%s", (long) (i + 1),
 				nsurl_access(hlcache_handle_get_url(script)),
 				event->data.errordata.errormsg);
+		}
+
+		if (sid != 0) {
+			ms_diag_source_note_terminal(sid,
+				MS_SRC_STATE_FETCH_FAILED,
+				MS_SRC_REASON_NETWORK_ERROR);
 		}
 
 		/* fixes869 (#295) - fire `error` at the element so a loader waiting
@@ -480,6 +517,7 @@ convert_script_defer_cb(hlcache_handle *script,
 	html_content *parent = pw;
 	unsigned int i;
 	struct html_script *s;
+	unsigned long sid = 0;
 
 	/* fixes535: registry-membership liveness guard FIRST (see async cb). */
 	if (macos9_content_is_live(&parent->base) == 0) {
@@ -495,10 +533,26 @@ convert_script_defer_cb(hlcache_handle *script,
 	}
 
 	assert(i != parent->scripts_count);
+	sid = s->source_id;
 
 	switch (event->type) {
+	case CONTENT_MSG_LOADING:
+		if (sid != 0) {
+			ms_diag_source_note_fetch_start(sid, 0);
+		}
+		break;
 
-	case CONTENT_MSG_DONE:
+	case CONTENT_MSG_READY:
+		if (sid != 0) {
+			ms_diag_source_note_fetch_start(sid, 0);
+		}
+		break;
+
+	case CONTENT_MSG_DONE: {
+		size_t fsize = 0;
+		const uint8_t *fdata;
+		unsigned long fh = 0;
+
 		NSLOG(netsurf, INFO, "script %d done '%s'", i,
 		      nsurl_access(hlcache_handle_get_url(script)));
 		parent->base.active--;
@@ -511,7 +565,16 @@ convert_script_defer_cb(hlcache_handle *script,
 				nsurl_access(hlcache_handle_get_url(script)));
 		}
 
+		fdata = content_get_source_data(script, &fsize);
+		if (fdata != NULL && fsize > 0) {
+			fh = ms_script_compute_hash(fdata, fsize);
+		}
+		if (sid != 0) {
+			ms_diag_source_note_fetch_done(sid, (unsigned long)fsize, fh);
+		}
+
 		break;
+	}
 
 	case CONTENT_MSG_ERROR:
 		NSLOG(netsurf, INFO, "script %s failed: %s",
@@ -524,6 +587,12 @@ convert_script_defer_cb(hlcache_handle *script,
 				"LIFE SPIPE X ord=%ld url=%s err=%s", (long) (i + 1),
 				nsurl_access(hlcache_handle_get_url(script)),
 				event->data.errordata.errormsg);
+		}
+
+		if (sid != 0) {
+			ms_diag_source_note_terminal(sid,
+				MS_SRC_STATE_FETCH_FAILED,
+				MS_SRC_REASON_NETWORK_ERROR);
 		}
 
 		/* fixes869 (#295) - fire `error` at the element so a loader waiting
@@ -769,6 +838,7 @@ convert_script_sync_cb(hlcache_handle *script,
 	struct html_script *s;
 	script_handler_t *script_handler;
 	unsigned int active_sync_scripts = 0;
+	unsigned long sid = 0;
 
 	/* fixes582 DIAG: unconditional entry probe + heap state. Pins whether the
 	 * LAST script's DONE even reaches this callback (vs hanging in the content
@@ -820,9 +890,26 @@ convert_script_sync_cb(hlcache_handle *script,
 	}
 
 	assert(i != parent->scripts_count);
+	sid = s->source_id;
 
 	switch (event->type) {
-	case CONTENT_MSG_DONE:
+	case CONTENT_MSG_LOADING:
+		if (sid != 0) {
+			ms_diag_source_note_fetch_start(sid, 0);
+		}
+		break;
+
+	case CONTENT_MSG_READY:
+		if (sid != 0) {
+			ms_diag_source_note_fetch_start(sid, 0);
+		}
+		break;
+
+	case CONTENT_MSG_DONE: {
+		size_t fsize = 0;
+		const uint8_t *fdata;
+		unsigned long fh = 0;
+
 		NSLOG(netsurf, INFO, "script %d done '%s'", i,
 		      nsurl_access(hlcache_handle_get_url(script)));
 		parent->base.active--;
@@ -833,6 +920,14 @@ convert_script_sync_cb(hlcache_handle *script,
 			macsurf_debug_log_writef(
 				"LIFE SPIPE D ord=%ld url=%s", (long) (i + 1),
 				nsurl_access(hlcache_handle_get_url(script)));
+		}
+
+		fdata = content_get_source_data(s->data.handle, &fsize);
+		if (fdata != NULL && fsize > 0) {
+			fh = ms_script_compute_hash(fdata, fsize);
+		}
+		if (sid != 0) {
+			ms_diag_source_note_fetch_done(sid, (unsigned long)fsize, fh);
 		}
 
 		s->already_started = true;
@@ -860,16 +955,27 @@ convert_script_sync_cb(hlcache_handle *script,
 					content_get_nav_id(&parent->base),
 					MS_SCRIPT_CLASSIC,
 					nsurl_access(hlcache_handle_get_url(s->data.handle)));
+				ms_diag_script_set_source_id(&scr, sid);
 				ms_diag_script_set_provenance(&scr,
 					parent->frame_id, parent->doc_id);
 				ms_diag_script_set_source(&scr,
 					MS_SCR_SRC_EXTERNAL, ord, (unsigned long) size, h);
+				if (sid != 0) {
+					ms_diag_source_note_execution(sid, scr.my_id);
+				}
 				rc = script_handler(parent->js_thread, data, size,
 				       nsurl_access(hlcache_handle_get_url(s->data.handle)));
 				ms_diag_script_leave(&scr,
 					rc ? MS_SCR_DONE : MS_SCR_RUN_FAIL);
 			}
 		} else {
+			if (sid != 0) {
+				ms_diag_source_note_terminal(sid,
+					MS_SRC_STATE_SKIPPED,
+					(parent->js_thread == NULL) ?
+						MS_SRC_REASON_NO_JS_CONTEXT :
+						MS_SRC_REASON_MIME_UNSUPPORTED);
+			}
 			macsurf_debug_log_writef(
 				"LIFE script_exec: SKIP(sync) handler=%p "
 				"js_thread=%p content_type=%d url=%s",
@@ -919,6 +1025,7 @@ convert_script_sync_cb(hlcache_handle *script,
 			(long) (i + 1));
 
 		break;
+	}
 
 	case CONTENT_MSG_ERROR:
 		NSLOG(netsurf, INFO, "script %s failed: %s",
@@ -931,6 +1038,12 @@ convert_script_sync_cb(hlcache_handle *script,
 				"LIFE SPIPE X ord=%ld url=%s err=%s", (long) (i + 1),
 				nsurl_access(hlcache_handle_get_url(script)),
 				event->data.errordata.errormsg);
+		}
+
+		if (sid != 0) {
+			ms_diag_source_note_terminal(sid,
+				MS_SRC_STATE_FETCH_FAILED,
+				MS_SRC_REASON_NETWORK_ERROR);
 		}
 
 		/* fixes515: NULL before release so a reentrant callback finds
@@ -974,7 +1087,10 @@ static dom_hubbub_error
 exec_src_script(html_content *c,
 		dom_node *node,
 		dom_string *mimetype,
-		dom_string *src)
+		dom_string *src,
+		unsigned long source_id,
+		int declared_kind,
+		int treatment)
 {
 	nserror ns_error;
 	nsurl *joined;
@@ -986,11 +1102,18 @@ exec_src_script(html_content *c,
 	hlcache_handle_callback script_cb;
 	dom_hubbub_error ret = DOM_HUBBUB_OK;
 	dom_exception exc; /* returned by libdom functions */
+	int schedule;
+	int blocking;
 
 	/* src url */
 	ns_error = nsurl_join(c->base_url, dom_string_data(src), &joined);
 	if (ns_error != NSERROR_OK) {
 		content_broadcast_error(&c->base, NSERROR_NOMEM, NULL);
+		if (source_id != 0) {
+			ms_diag_source_note_terminal(source_id,
+				MS_SRC_STATE_SKIPPED,
+				MS_SRC_REASON_NETWORK_ERROR);
+		}
 		return DOM_HUBBUB_NOMEM;
 	}
 
@@ -1017,6 +1140,12 @@ exec_src_script(html_content *c,
 	 */
 	exc = dom_element_has_attribute(node, corestring_dom_async, &async);
 	if (exc != DOM_NO_ERR) {
+		nsurl_unref(joined);
+		if (source_id != 0) {
+			ms_diag_source_note_terminal(source_id,
+				MS_SRC_STATE_SKIPPED,
+				MS_SRC_REASON_NETWORK_ERROR);
+		}
 		return DOM_HUBBUB_OK; /* dom error */
 	}
 
@@ -1030,11 +1159,19 @@ exec_src_script(html_content *c,
 		/* asyncronous script */
 		script_type = HTML_SCRIPT_ASYNC;
 		script_cb = convert_script_async_cb;
+		schedule = MS_SRC_SCHED_ASYNC;
+		blocking = 0;
 
 	} else {
 		exc = dom_element_has_attribute(node,
 						corestring_dom_defer, &defer);
 		if (exc != DOM_NO_ERR) {
+			nsurl_unref(joined);
+			if (source_id != 0) {
+				ms_diag_source_note_terminal(source_id,
+					MS_SRC_STATE_SKIPPED,
+					MS_SRC_REASON_NETWORK_ERROR);
+			}
 			return DOM_HUBBUB_OK; /* dom error */
 		}
 
@@ -1042,19 +1179,42 @@ exec_src_script(html_content *c,
 			/* defered script */
 			script_type = HTML_SCRIPT_DEFER;
 			script_cb = convert_script_defer_cb;
+			schedule = MS_SRC_SCHED_DEFER;
+			blocking = 0;
 		} else {
 			/* syncronous script */
 			script_type = HTML_SCRIPT_SYNC;
 			script_cb = convert_script_sync_cb;
+			schedule = MS_SRC_SCHED_SYNC;
+			blocking = 1;
 		}
+	}
+
+	if (source_id != 0) {
+		int src_kind = (declared_kind == MS_SRC_DECL_MODULE && treatment != MS_SRC_TREAT_CLASSIC_FALLBACK) ?
+			MS_SRC_KIND_MODULE : MS_SRC_KIND_CLASSIC;
+		ms_diag_source_set_classification(source_id,
+			src_kind,
+			declared_kind,
+			treatment,
+			schedule,
+			blocking,
+			nsurl_access(joined));
 	}
 
 	nscript = html_process_new_script(c, mimetype, script_type);
 	if (nscript == NULL) {
 		nsurl_unref(joined);
 		content_broadcast_error(&c->base, NSERROR_NOMEM, NULL);
+		if (source_id != 0) {
+			ms_diag_source_note_terminal(source_id,
+				MS_SRC_STATE_SKIPPED,
+				MS_SRC_REASON_EMPTY);
+		}
 		return DOM_HUBBUB_NOMEM;
 	}
+
+	nscript->source_id = source_id;
 
 	/* fixes869 (#295) - remember the element so html_script_exec can fire
 	 * `load` at it (and convert_script_async_cb `error`).  Only worth it for a
@@ -1107,7 +1267,15 @@ exec_src_script(html_content *c,
 		/* mark duff script fetch as already started */
 		nscript->already_started = true;
 		NSLOG(netsurf, INFO, "Fetch failed with error %d", ns_error);
+		if (source_id != 0) {
+			ms_diag_source_note_terminal(source_id,
+				MS_SRC_STATE_FETCH_FAILED,
+				MS_SRC_REASON_NETWORK_ERROR);
+		}
 	} else {
+		if (source_id != 0) {
+			ms_diag_source_note_fetch_start(source_id, 0);
+		}
 		/* update base content active fetch count */
 		c->base.active++;
 		NSLOG(netsurf, INFO, "%d fetches active", c->base.active);
@@ -1152,7 +1320,8 @@ exec_src_script(html_content *c,
 }
 
 static dom_hubbub_error
-exec_inline_script(html_content *c, dom_node *node, dom_string *mimetype)
+exec_inline_script(html_content *c, dom_node *node, dom_string *mimetype,
+	unsigned long source_id)
 {
 	dom_string *script;
 	dom_exception exc; /* returned by libdom functions */
@@ -1160,27 +1329,58 @@ exec_inline_script(html_content *c, dom_node *node, dom_string *mimetype)
 	script_handler_t *script_handler;
 	struct html_script *nscript;
 
+	if (source_id != 0) {
+		ms_diag_source_set_classification(source_id,
+			MS_SRC_KIND_CLASSIC,
+			MS_SRC_DECL_CLASSIC,
+			MS_SRC_TREAT_DIRECT,
+			MS_SRC_SCHED_INLINE,
+			0,
+			NULL);
+	}
+
 	/* does not appear to be a src so script is inline content */
 	exc = dom_node_get_text_content(node, &script);
 	if ((exc != DOM_NO_ERR) || (script == NULL)) {
+		if (source_id != 0) {
+			ms_diag_source_note_terminal(source_id,
+				MS_SRC_STATE_SKIPPED,
+				MS_SRC_REASON_EMPTY);
+		}
 		return DOM_HUBBUB_OK; /* no contents, skip */
 	}
 
 	nscript = html_process_new_script(c, mimetype, HTML_SCRIPT_INLINE);
 	if (nscript == NULL) {
 		dom_string_unref(script);
-
+		if (source_id != 0) {
+			ms_diag_source_note_terminal(source_id,
+				MS_SRC_STATE_SKIPPED,
+				MS_SRC_REASON_EMPTY);
+		}
 		content_broadcast_error(&c->base, NSERROR_NOMEM, NULL);
 		return DOM_HUBBUB_NOMEM;
-
 	}
 
+	nscript->source_id = source_id;
 	nscript->data.string = script;
 	nscript->already_started = true;
+
+	if (source_id != 0) {
+		size_t slen0 = dom_string_byte_length(script);
+		const unsigned char *sdata0 = (const unsigned char *) dom_string_data(script);
+		unsigned long h0 = ms_script_compute_hash(sdata0, slen0);
+		ms_diag_source_set_inline_details(source_id, (unsigned long) slen0, h0);
+	}
 
 	/* ensure script handler for content type */
 	exc = dom_string_intern(mimetype, &lwcmimetype);
 	if (exc != DOM_NO_ERR) {
+		if (source_id != 0) {
+			ms_diag_source_note_terminal(source_id,
+				MS_SRC_STATE_SKIPPED,
+				MS_SRC_REASON_MIME_UNSUPPORTED);
+		}
 		return DOM_HUBBUB_DOM;
 	}
 
@@ -1196,10 +1396,14 @@ exec_inline_script(html_content *c, dom_node *node, dom_string *mimetype)
 		unsigned long h = ms_script_compute_hash(sdata, slen);
 		ms_diag_script_enter(&scr, content_get_nav_id(&c->base),
 			MS_SCRIPT_CLASSIC, "inline");
+		ms_diag_script_set_source_id(&scr, source_id);
 		ms_diag_script_set_provenance(&scr,
 			c->frame_id, c->doc_id);
 		ms_diag_script_set_source(&scr,
 			MS_SCR_SRC_INLINE, ord, (unsigned long) slen, h);
+		if (source_id != 0) {
+			ms_diag_source_note_execution(source_id, scr.my_id);
+		}
 		rc = script_handler(c->js_thread,
 			       (const uint8_t *)sdata,
 			       slen,
@@ -1211,6 +1415,11 @@ exec_inline_script(html_content *c, dom_node *node, dom_string *mimetype)
 		 * CONTENT_JS (e.g. type="application/json" data islands,
 		 * common in modern bundlers) never runs and, until now,
 		 * nothing said so. */
+		if (source_id != 0) {
+			ms_diag_source_note_terminal(source_id,
+				MS_SRC_STATE_SKIPPED,
+				MS_SRC_REASON_MIME_UNSUPPORTED);
+		}
 		macsurf_debug_log_writef(
 			"LIFE script_exec: SKIP inline unsupported "
 			"mimetype=%s len=%ld",
@@ -1274,8 +1483,11 @@ html_process_script(void *ctx, dom_node *node)
 	dom_exception exc; /* returned by libdom functions */
 	dom_string *src, *mimetype;
 	dom_hubbub_error err = DOM_HUBBUB_OK;
+	unsigned long sid;
 
 	g_script_tags_seen++;   /* fixes1239 - every callback, no early return skips this */
+
+	sid = ms_diag_source_create(content_get_nav_id(&c->base), c->doc_id);
 
 	/* ensure javascript context is available */
 	/* We should only ever be here if scripting was enabled for this
@@ -1289,6 +1501,9 @@ html_process_script(void *ctx, dom_node *node)
 		NSLOG(netsurf, INFO, "javascript context %p ", c->js_thread);
 		if (c->js_thread == NULL) {
 			/* no context and it could not be created, abort */
+			ms_diag_source_note_terminal(sid,
+				MS_SRC_STATE_SKIPPED,
+				MS_SRC_REASON_NO_JS_CONTEXT);
 			return DOM_HUBBUB_OK;
 		}
 	}
@@ -1318,6 +1533,13 @@ html_process_script(void *ctx, dom_node *node)
 				dom_string *modsrc;
 				dom_exception mexc;
 				g_script_tags_inline++;   /* fixes1239 */
+				ms_diag_source_set_classification(sid,
+					MS_SRC_KIND_MODULE,
+					MS_SRC_DECL_MODULE,
+					MS_SRC_TREAT_DIRECT,
+					MS_SRC_SCHED_MODULE_INLINE,
+					0,
+					NULL);
 				mexc = dom_node_get_text_content(
 					node, &modsrc);
 				if (mexc == DOM_NO_ERR &&
@@ -1333,13 +1555,17 @@ html_process_script(void *ctx, dom_node *node)
 						size_t slen = dom_string_byte_length(modsrc);
 						const unsigned char *sdata = (const unsigned char *) dom_string_data(modsrc);
 						unsigned long h = ms_script_compute_hash(sdata, slen);
+						ms_diag_source_set_inline_details(sid,
+							(unsigned long) slen, h);
 						ms_diag_script_enter(&scr,
 							content_get_nav_id(&c->base),
 							MS_SCRIPT_MODULE, "inline-module");
+						ms_diag_script_set_source_id(&scr, sid);
 						ms_diag_script_set_provenance(&scr,
 							c->frame_id, c->doc_id);
 						ms_diag_script_set_source(&scr,
 							MS_SCR_SRC_INLINE, 0, (unsigned long) slen, h);
+						ms_diag_source_note_execution(sid, scr.my_id);
 						rc = js_exec_module(c->js_thread,
 							(const unsigned char *) sdata,
 							slen,
@@ -1349,6 +1575,9 @@ html_process_script(void *ctx, dom_node *node)
 					}
 					dom_string_unref(modsrc);
 				} else {
+					ms_diag_source_note_terminal(sid,
+						MS_SRC_STATE_SKIPPED,
+						MS_SRC_REASON_EMPTY);
 					macsurf_debug_log_writef(
 						"LIFE script: module inline "
 						"FAILED mexc=%d modsrc=%p",
@@ -1368,7 +1597,9 @@ html_process_script(void *ctx, dom_node *node)
 			dom_string_unref(mimetype);
 			mimetype = dom_string_ref(
 				corestring_dom_text_javascript);
-			err = exec_src_script(c, node, mimetype, src);
+			err = exec_src_script(c, node, mimetype, src, sid,
+				MS_SRC_DECL_MODULE,
+				MS_SRC_TREAT_CLASSIC_FALLBACK);
 			dom_string_unref(src);
 			dom_string_unref(mimetype);
 			return err;
@@ -1378,10 +1609,12 @@ html_process_script(void *ctx, dom_node *node)
 	exc = dom_element_get_attribute(node, corestring_dom_src, &src);
 	if (exc != DOM_NO_ERR || src == NULL) {
 		g_script_tags_inline++;   /* fixes1239 */
-		err = exec_inline_script(c, node, mimetype);
+		err = exec_inline_script(c, node, mimetype, sid);
 	} else {
 		g_script_tags_external++;   /* fixes1239 */
-		err = exec_src_script(c, node, mimetype, src);
+		err = exec_src_script(c, node, mimetype, src, sid,
+			MS_SRC_DECL_CLASSIC,
+			MS_SRC_TREAT_DIRECT);
 		dom_string_unref(src);
 	}
 
@@ -1467,6 +1700,11 @@ nserror html_script_free(html_content *html)
 		case HTML_SCRIPT_ASYNC:
 			/* fallthrough */
 		case HTML_SCRIPT_DEFER:
+			if (scripts[i].source_id != 0) {
+				ms_diag_source_note_terminal(scripts[i].source_id,
+					MS_SRC_STATE_CANCELLED,
+					MS_SRC_REASON_DOCUMENT_DESTROYED);
+			}
 			if (scripts[i].data.handle != NULL) {
 				/* fixes499e/501x - NULL the handle BEFORE release
 				 * (via the safe wrapper). Without this, a second
