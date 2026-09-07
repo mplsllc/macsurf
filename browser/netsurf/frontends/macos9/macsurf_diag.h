@@ -127,6 +127,18 @@ long macsurf_diag_serialize_warnings(char *buf, long cap);
 enum ms_script_kind  { MS_SCRIPT_CLASSIC = 0, MS_SCRIPT_MODULE };
 enum ms_script_state { MS_SCR_RUNNING = 0, MS_SCR_DONE, MS_SCR_COMPILE_FAIL,
 		       MS_SCR_RUN_FAIL, MS_SCR_SKIPPED };
+enum ms_script_source { MS_SCR_SRC_UNAVAILABLE = 0, MS_SCR_SRC_INLINE,
+			MS_SCR_SRC_EXTERNAL };
+enum ms_compile_result { MS_COMPILE_NOT_REACHED = 0, MS_COMPILE_OK,
+			 MS_COMPILE_FAILED, MS_COMPILE_UNAVAILABLE };
+enum ms_execute_result { MS_EXEC_NOT_STARTED = 0, MS_EXEC_OK,
+			 MS_EXEC_FAILED, MS_EXEC_CANCELLED,
+			 MS_EXEC_UNAVAILABLE };
+enum ms_script_term_reason { MS_TERM_REASON_NONE = 0, MS_TERM_REASON_OK,
+			     MS_TERM_REASON_COMPILE_FAILED,
+			     MS_TERM_REASON_RUNTIME_FAILED,
+			     MS_TERM_REASON_NAV_REPLACED,
+			     MS_TERM_REASON_CANCELLED };
 enum ms_task_kind    { MS_TASK_NONE = 0, MS_TASK_TIMER, MS_TASK_EVENT,
 		       MS_TASK_XHR, MS_TASK_MICROTASK };
 
@@ -140,7 +152,25 @@ struct ms_diag_scope {
 /* --- script scope: wrap the top-level eval in js_exec / js_exec_module --- */
 void ms_diag_script_enter(struct ms_diag_scope *s, unsigned long nav_id,
 	int kind, const char *name);
+void ms_diag_script_set_provenance(struct ms_diag_scope *s,
+	unsigned long frame_id, unsigned long doc_id);
+void ms_diag_script_set_source(struct ms_diag_scope *s,
+	int source_kind, unsigned long ordinal, unsigned long len,
+	unsigned long hash);
+void ms_diag_script_note_realm(unsigned long script_id,
+	unsigned long realm_id, unsigned long heap_id, unsigned long ctx_gen);
+void ms_diag_script_note_compile(unsigned long script_id,
+	int result, long compile_us, unsigned long error_id);
+void ms_diag_script_note_execute(unsigned long script_id,
+	int result, long run_us, unsigned long error_id);
 void ms_diag_script_leave(struct ms_diag_scope *s, int state);
+
+const char *ms_script_kind_s(int v);
+const char *ms_script_state_s(int v);
+const char *ms_script_source_s(int v);
+const char *ms_compile_result_s(int v);
+const char *ms_execute_result_s(int v);
+const char *ms_script_term_reason_s(int v);
 
 /* --- task scope: wrap the JS_Call at a timer/event/xhr/microtask boundary ---
  * Returns the allocated task id, or 0 when it INHERITED the current task
@@ -207,7 +237,7 @@ enum ms_error_kind {
 unsigned long ms_diag_operation_begin(int kind, int quality);
 void ms_diag_operation_record(unsigned long op_id, int kind, int phase,
 	int result, int reason, int quality, unsigned long request_id);
-void ms_diag_error_record(unsigned long op_id, unsigned long request_id,
+unsigned long ms_diag_error_record(unsigned long op_id, unsigned long request_id,
 	int kind, int boundary, int reason, const char *name, const char *message);
 long macsurf_diag_serialize_operations(char *buf, long cap);
 long macsurf_diag_serialize_errors(char *buf, long cap);

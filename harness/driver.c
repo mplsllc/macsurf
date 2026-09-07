@@ -12888,6 +12888,100 @@ box_coords(bx, &cx, &cy);
 		fprintf(stderr, "=== Test 102a PASS: script history loss is explicit ===\n");
 	}
 
+	/* --- Test 102b: per-script execution ledger and provenance ------------ */
+	{
+		char scripts[16384];
+		char page[16384];
+		struct ms_diag_scope scope;
+		struct ms_diag_scope outer_scope;
+		char name[32];
+		int i;
+
+		fprintf(stderr, "\n=== Test 102b: per-script execution ledger ===\n");
+
+		/* 1. Successful inline execution with provenance and realm attribution */
+		ms_diag_script_enter(&scope, 601, MS_SCRIPT_CLASSIC, "ledger_inline_ok");
+		ms_diag_script_set_provenance(&scope, 11, 12);
+		ms_diag_script_set_source(&scope, MS_SCR_SRC_INLINE, 1, 16, 0x12345678UL);
+		ms_diag_script_note_realm(scope.my_id, 21, 22, 23);
+		ms_diag_script_note_compile(scope.my_id, MS_COMPILE_OK, 100, 0);
+		ms_diag_script_note_execute(scope.my_id, MS_EXEC_OK, 200, 0);
+		ms_diag_script_leave(&scope, MS_SCR_DONE);
+
+		(void)macsurf_diag_serialize_scripts(scripts, (long)sizeof(scripts));
+		if (strstr(scripts, "coverage=execution_attempts\n") == NULL ||
+				strstr(scripts, "name=ledger_inline_ok") == NULL ||
+				strstr(scripts, "frame=11 doc=12 realm=21 heap=22 ctx_gen=23") == NULL ||
+				strstr(scripts, "source_kind=inline ord=1 len=16 hash=12345678") == NULL ||
+				strstr(scripts, "compile=ok compile_us=100 execute=ok run_us=200 state=done reason=ok error=0") == NULL) {
+			fprintf(stderr, "FAIL: Test 102b positive execution ledger entry\n"); return 1;
+		}
+
+		/* 2. Parse / compile failure with error id join */
+		ms_diag_script_enter(&scope, 601, MS_SCRIPT_CLASSIC, "ledger_syntax_fail");
+		ms_diag_script_set_provenance(&scope, 11, 12);
+		ms_diag_script_set_source(&scope, MS_SCR_SRC_INLINE, 2, 24, 0x87654321UL);
+		ms_diag_script_note_compile(scope.my_id, MS_COMPILE_FAILED, 80, 77);
+		ms_diag_script_leave(&scope, MS_SCR_COMPILE_FAIL);
+
+		(void)macsurf_diag_serialize_scripts(scripts, (long)sizeof(scripts));
+		if (strstr(scripts, "name=ledger_syntax_fail") == NULL ||
+				strstr(scripts, "compile=failed compile_us=80 execute=not_started run_us=0 state=compile_fail reason=compile_failed error=77") == NULL) {
+			fprintf(stderr, "FAIL: Test 102b compile failure ledger entry\n"); return 1;
+		}
+
+		/* 3. Runtime failure with error id join */
+		ms_diag_script_enter(&scope, 601, MS_SCRIPT_CLASSIC, "ledger_runtime_fail");
+		ms_diag_script_set_provenance(&scope, 11, 12);
+		ms_diag_script_set_source(&scope, MS_SCR_SRC_INLINE, 3, 32, 0xabcdef01UL);
+		ms_diag_script_note_compile(scope.my_id, MS_COMPILE_OK, 90, 0);
+		ms_diag_script_note_execute(scope.my_id, MS_EXEC_FAILED, 300, 88);
+		ms_diag_script_leave(&scope, MS_SCR_RUN_FAIL);
+
+		(void)macsurf_diag_serialize_scripts(scripts, (long)sizeof(scripts));
+		if (strstr(scripts, "name=ledger_runtime_fail") == NULL ||
+				strstr(scripts, "compile=ok compile_us=90 execute=failed run_us=300 state=run_fail reason=runtime_failed error=88") == NULL) {
+			fprintf(stderr, "FAIL: Test 102b runtime failure ledger entry\n"); return 1;
+		}
+
+		/* 4. Monotonicity: specific engine compile failure cannot be downgraded to run_fail */
+		ms_diag_script_enter(&scope, 601, MS_SCRIPT_CLASSIC, "ledger_monotonic");
+		ms_diag_script_note_compile(scope.my_id, MS_COMPILE_FAILED, 50, 99);
+		/* generic wrapper leave with MS_SCR_RUN_FAIL must not overwrite compile failure */
+		ms_diag_script_leave(&scope, MS_SCR_RUN_FAIL);
+
+		(void)macsurf_diag_serialize_scripts(scripts, (long)sizeof(scripts));
+		if (strstr(scripts, "name=ledger_monotonic") == NULL ||
+				strstr(scripts, "compile=failed compile_us=50 execute=not_started run_us=0 state=compile_fail reason=compile_failed error=99") == NULL) {
+			fprintf(stderr, "FAIL: Test 102b monotonicity preserved\n"); return 1;
+		}
+
+		/* 5. Active execution safety under ring rollover */
+		ms_diag_script_enter(&outer_scope, 601, MS_SCRIPT_CLASSIC, "outer_active");
+		ms_diag_script_set_source(&outer_scope, MS_SCR_SRC_EXTERNAL, 1, 100, 0x11223344UL);
+		for (i = 0; i < 65; i++) {
+			struct ms_diag_scope inner_scope;
+			snprintf(name, sizeof(name), "inner-%d", i);
+			ms_diag_script_enter(&inner_scope, 601, MS_SCRIPT_CLASSIC, name);
+			ms_diag_script_leave(&inner_scope, MS_SCR_DONE);
+		}
+		ms_diag_script_note_compile(outer_scope.my_id, MS_COMPILE_OK, 40, 0);
+		ms_diag_script_note_execute(outer_scope.my_id, MS_EXEC_OK, 500, 0);
+		ms_diag_script_leave(&outer_scope, MS_SCR_DONE);
+
+		/* 6. Paged ledger reading */
+		(void)macsurf_diag_serialize_scripts_since(page, (long)sizeof(page),
+			outer_scope.my_id - 10, 5);
+		if (strstr(page, "MSDIAG 2 scripts\n") == NULL ||
+				strstr(page, "coverage=execution_attempts\n") == NULL ||
+				strstr(page, "returned=5\n") == NULL ||
+				strstr(page, "compile=ok") == NULL) {
+			fprintf(stderr, "FAIL: Test 102b paged ledger access\n"); return 1;
+		}
+
+		fprintf(stderr, "=== Test 102b PASS: per-script execution ledger is granular and monotonic ===\n");
+	}
+
 	/* --- Test 103: Phase 3 capability/CSS gap aggregates --------------- */
 	{
 		char caps[16384], cssg[16384], caps_again[16384];

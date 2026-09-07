@@ -95,6 +95,17 @@ struct macos9_unpause_payload {
 };
 
 
+static unsigned long ms_script_compute_hash(const unsigned char *data, size_t len)
+{
+	unsigned long hash = 5381UL;
+	size_t i;
+	if (data == NULL) return 0;
+	for (i = 0; i < len; i++) {
+		hash = ((hash << 5) + hash) + (unsigned long) data[i];
+	}
+	return hash;
+}
+
 static script_handler_t *select_script_handler(content_type ctype)
 {
 	if (ctype == CONTENT_JS) {
@@ -251,10 +262,16 @@ nserror html_script_exec(html_content *c, bool allow_defer)
 				{
 					struct ms_diag_scope scr;
 					int rc;
+					unsigned long ord = (unsigned long) (i + 1);
+					unsigned long h = ms_script_compute_hash(data, size);
 					ms_diag_script_enter(&scr,
 						content_get_nav_id(&c->base),
 						MS_SCRIPT_CLASSIC,
 						nsurl_access(hlcache_handle_get_url(s->data.handle)));
+					ms_diag_script_set_provenance(&scr,
+						c->frame_id, c->doc_id);
+					ms_diag_script_set_source(&scr,
+						MS_SCR_SRC_EXTERNAL, ord, (unsigned long) size, h);
 					rc = script_handler(c->js_thread, data, size,
 					       nsurl_access(hlcache_handle_get_url(s->data.handle)));
 					ms_diag_script_leave(&scr,
@@ -837,10 +854,16 @@ convert_script_sync_cb(hlcache_handle *script,
 			{
 				struct ms_diag_scope scr;
 				int rc;
+				unsigned long ord = (unsigned long) (i + 1);
+				unsigned long h = ms_script_compute_hash(data, size);
 				ms_diag_script_enter(&scr,
 					content_get_nav_id(&parent->base),
 					MS_SCRIPT_CLASSIC,
 					nsurl_access(hlcache_handle_get_url(s->data.handle)));
+				ms_diag_script_set_provenance(&scr,
+					parent->frame_id, parent->doc_id);
+				ms_diag_script_set_source(&scr,
+					MS_SCR_SRC_EXTERNAL, ord, (unsigned long) size, h);
 				rc = script_handler(parent->js_thread, data, size,
 				       nsurl_access(hlcache_handle_get_url(s->data.handle)));
 				ms_diag_script_leave(&scr,
@@ -1167,11 +1190,19 @@ exec_inline_script(html_content *c, dom_node *node, dom_string *mimetype)
 	if (script_handler != NULL) {
 		struct ms_diag_scope scr;
 		int rc;
+		size_t slen = dom_string_byte_length(script);
+		const unsigned char *sdata = (const unsigned char *) dom_string_data(script);
+		unsigned long ord = (unsigned long) c->scripts_count;
+		unsigned long h = ms_script_compute_hash(sdata, slen);
 		ms_diag_script_enter(&scr, content_get_nav_id(&c->base),
 			MS_SCRIPT_CLASSIC, "inline");
+		ms_diag_script_set_provenance(&scr,
+			c->frame_id, c->doc_id);
+		ms_diag_script_set_source(&scr,
+			MS_SCR_SRC_INLINE, ord, (unsigned long) slen, h);
 		rc = script_handler(c->js_thread,
-			       (const uint8_t *)dom_string_data(script),
-			       dom_string_byte_length(script),
+			       (const uint8_t *)sdata,
+			       slen,
 			       "?inline script?");
 		ms_diag_script_leave(&scr, rc ? MS_SCR_DONE : MS_SCR_RUN_FAIL);
 	} else {
@@ -1299,13 +1330,19 @@ html_process_script(void *ctx, dom_node *node)
 					{
 						struct ms_diag_scope scr;
 						int rc;
+						size_t slen = dom_string_byte_length(modsrc);
+						const unsigned char *sdata = (const unsigned char *) dom_string_data(modsrc);
+						unsigned long h = ms_script_compute_hash(sdata, slen);
 						ms_diag_script_enter(&scr,
 							content_get_nav_id(&c->base),
 							MS_SCRIPT_MODULE, "inline-module");
+						ms_diag_script_set_provenance(&scr,
+							c->frame_id, c->doc_id);
+						ms_diag_script_set_source(&scr,
+							MS_SCR_SRC_INLINE, 0, (unsigned long) slen, h);
 						rc = js_exec_module(c->js_thread,
-							(const unsigned char *)
-								dom_string_data(modsrc),
-							dom_string_byte_length(modsrc),
+							(const unsigned char *) sdata,
+							slen,
 							"?inline module?");
 						ms_diag_script_leave(&scr,
 							rc ? MS_SCR_DONE : MS_SCR_RUN_FAIL);

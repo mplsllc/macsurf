@@ -75,6 +75,10 @@ long macsurf_diag_serialize_gaps(char *buf, long cap);
  */
 long macsurf_diag_serialize_network(char *buf, long cap);
 
+/* ============================ Realm inventory ============================
+ * One record per live QuickJS realm plus a bounded pointer-free retirement
+ * history. Values marked `unavailable` in the reply are intentionally not
+ * guessed from process-global state. */
 enum ms_realm_state {
 	MS_REALM_LIVE = 0,
 	MS_REALM_NAVIGATION_REQUESTED,
@@ -83,18 +87,26 @@ enum ms_realm_state {
 };
 long macsurf_diag_serialize_realms(char *buf, long cap);
 
+/* ===================== Realm lifetime invariant events ====================
+ * Bounded, integer-only forensic records written at native->JS ownership
+ * boundaries.  `work_id` identifies the native continuation (XHR slot or
+ * timer); queued identity is immutable and live identity is sampled only at
+ * the boundary being checked. */
 enum ms_realm_invariant_kind {
-	MS_RI_DEFERRED_CALLBACK = 0, MS_RI_REALM_CTX_NOT_REGISTERED,
+	MS_RI_DEFERRED_CALLBACK = 0,
+	MS_RI_REALM_CTX_NOT_REGISTERED,
 	MS_RI_CALLBACK_DOC_GENERATION_MISMATCH,
 	MS_RI_TIMER_REALM_OWNER_MISMATCH,
-	MS_RI_PENDING_WORK_ON_RETIRED_REALM, MS_RI_REALM_RUNTIME_MISMATCH
+	MS_RI_PENDING_WORK_ON_RETIRED_REALM,
+	MS_RI_REALM_RUNTIME_MISMATCH
 };
 enum ms_realm_invariant_state {
 	MS_RIS_QUEUED = 0, MS_RIS_DELIVERED, MS_RIS_CANCELLED_DOCUMENT_DESTROYED,
 	MS_RIS_CANCELLED_NAVIGATION_REPLACED, MS_RIS_CANCELLED_REALM_RETIRED,
 	MS_RIS_REJECTED_CTX_GENERATION_MISMATCH,
 	MS_RIS_REJECTED_RUNTIME_REALM_MISMATCH,
-	MS_RIS_CALLBACK_INVALIDATED_DOCUMENT, MS_RIS_CALLBACK_INVALIDATED_REALM,
+	MS_RIS_CALLBACK_INVALIDATED_DOCUMENT,
+	MS_RIS_CALLBACK_INVALIDATED_REALM,
 	MS_RIS_CALLBACK_REQUESTED_NAVIGATION
 };
 void ms_diag_realm_invariant_record(int kind, int state,
@@ -115,6 +127,18 @@ long macsurf_diag_serialize_warnings(char *buf, long cap);
 enum ms_script_kind  { MS_SCRIPT_CLASSIC = 0, MS_SCRIPT_MODULE };
 enum ms_script_state { MS_SCR_RUNNING = 0, MS_SCR_DONE, MS_SCR_COMPILE_FAIL,
 		       MS_SCR_RUN_FAIL, MS_SCR_SKIPPED };
+enum ms_script_source { MS_SCR_SRC_UNAVAILABLE = 0, MS_SCR_SRC_INLINE,
+			MS_SCR_SRC_EXTERNAL };
+enum ms_compile_result { MS_COMPILE_NOT_REACHED = 0, MS_COMPILE_OK,
+			 MS_COMPILE_FAILED, MS_COMPILE_UNAVAILABLE };
+enum ms_execute_result { MS_EXEC_NOT_STARTED = 0, MS_EXEC_OK,
+			 MS_EXEC_FAILED, MS_EXEC_CANCELLED,
+			 MS_EXEC_UNAVAILABLE };
+enum ms_script_term_reason { MS_TERM_REASON_NONE = 0, MS_TERM_REASON_OK,
+			     MS_TERM_REASON_COMPILE_FAILED,
+			     MS_TERM_REASON_RUNTIME_FAILED,
+			     MS_TERM_REASON_NAV_REPLACED,
+			     MS_TERM_REASON_CANCELLED };
 enum ms_task_kind    { MS_TASK_NONE = 0, MS_TASK_TIMER, MS_TASK_EVENT,
 		       MS_TASK_XHR, MS_TASK_MICROTASK };
 
@@ -128,7 +152,25 @@ struct ms_diag_scope {
 /* --- script scope: wrap the top-level eval in js_exec / js_exec_module --- */
 void ms_diag_script_enter(struct ms_diag_scope *s, unsigned long nav_id,
 	int kind, const char *name);
+void ms_diag_script_set_provenance(struct ms_diag_scope *s,
+	unsigned long frame_id, unsigned long doc_id);
+void ms_diag_script_set_source(struct ms_diag_scope *s,
+	int source_kind, unsigned long ordinal, unsigned long len,
+	unsigned long hash);
+void ms_diag_script_note_realm(unsigned long script_id,
+	unsigned long realm_id, unsigned long heap_id, unsigned long ctx_gen);
+void ms_diag_script_note_compile(unsigned long script_id,
+	int result, long compile_us, unsigned long error_id);
+void ms_diag_script_note_execute(unsigned long script_id,
+	int result, long run_us, unsigned long error_id);
 void ms_diag_script_leave(struct ms_diag_scope *s, int state);
+
+const char *ms_script_kind_s(int v);
+const char *ms_script_state_s(int v);
+const char *ms_script_source_s(int v);
+const char *ms_compile_result_s(int v);
+const char *ms_execute_result_s(int v);
+const char *ms_script_term_reason_s(int v);
 
 /* --- task scope: wrap the JS_Call at a timer/event/xhr/microtask boundary ---
  * Returns the allocated task id, or 0 when it INHERITED the current task
@@ -151,6 +193,11 @@ unsigned long ms_diag_cur_task(void);
 unsigned long ms_diag_cur_nav(void);
 
 long macsurf_diag_serialize_scripts(char *buf, long cap);
+/* `scripts after=<script_id> limit=<n>` is the paged, chronological form.
+ * `after` is the last execution attempt the reader retained; the result says
+ * explicitly when that cursor predates the bounded ring. */
+long macsurf_diag_serialize_scripts_since(char *buf, long cap,
+	unsigned long after, unsigned long limit);
 long macsurf_diag_serialize_tasks(char *buf, long cap);
 
 /* ================= Browser API operation / error diagnostics =================
@@ -190,7 +237,7 @@ enum ms_error_kind {
 unsigned long ms_diag_operation_begin(int kind, int quality);
 void ms_diag_operation_record(unsigned long op_id, int kind, int phase,
 	int result, int reason, int quality, unsigned long request_id);
-void ms_diag_error_record(unsigned long op_id, unsigned long request_id,
+unsigned long ms_diag_error_record(unsigned long op_id, unsigned long request_id,
 	int kind, int boundary, int reason, const char *name, const char *message);
 long macsurf_diag_serialize_operations(char *buf, long cap);
 long macsurf_diag_serialize_errors(char *buf, long cap);
@@ -378,13 +425,22 @@ enum ms_io_event_type {
 	MS_IO_QUERY,
 	MS_IO_CHECK,
 	MS_IO_CALLBACK,
-	MS_IO_SKIP,
-	MS_IO_UNOBSERVE,
-	MS_IO_DISCONNECT
+	MS_IO_SKIP,       /* timer fired but el already unobserved */
+	MS_IO_UNOBSERVE,  /* unobserve() called */
+	MS_IO_DISCONNECT  /* disconnect() called */
 };
 
 void ms_diag_io_record(unsigned long io_id, int ev_type, const char *target_name,
 	long x, long y, long w, long h, int intersecting, int ratio_pct, int entries);
 long macsurf_diag_serialize_io(char *buf, long cap);
+long macsurf_diag_serialize_capabilities(char *buf, long cap);
+long macsurf_diag_serialize_css_gaps(char *buf, long cap);
+long macsurf_diag_serialize_gapreport(char *buf, long cap);
+long macsurf_diag_serialize_javascript(char *buf, long cap);
+
+/* ================== DOM and Box Forensic Entity Graph ================== */
+long macsurf_diag_dom_start(unsigned long target_doc, char *buf, long cap);
+long macsurf_diag_serialize_dom(char *buf, long cap, unsigned long after, unsigned long limit);
+long macsurf_diag_serialize_boxes(char *buf, long cap, unsigned long after, unsigned long limit);
 
 #endif /* MACSURF_DIAG_H */

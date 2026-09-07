@@ -16341,6 +16341,9 @@ unsigned char js_exec(struct jsthread *thread,
 	JSValue val;
 	int ok;
 	char *src;
+	int compile_failed = 0;
+	long diag_c_us = 0;
+	long diag_r_us = 0;
 
 	/* fixes847 (#167 S1 census gap) - the other half of the js_exec
 	 * visibility fix below: if thread/ctx is NULL, js_exec bails before
@@ -16653,6 +16656,12 @@ unsigned char js_exec(struct jsthread *thread,
 		long c_us;
 		long r_us = 0;
 		JSValue fn;
+		unsigned long cur_sid = ms_diag_cur_script();
+		struct qjs_realm_identity r_id;
+
+		if (cur_sid != 0 && macsurf_qjs_realm_identity(thread->ctx, &r_id)) {
+			ms_diag_script_note_realm(cur_sid, r_id.realm_id, r_id.heap_id, r_id.ctx_gen);
+		}
 
 		fn = JS_Eval(thread->ctx, src, txtlen,
 				name ? name : "<script>",
@@ -16660,6 +16669,7 @@ unsigned char js_exec(struct jsthread *thread,
 				JS_EVAL_FLAG_COMPILE_ONLY);
 		t_mid = macos9_micros();
 		c_us = (long)(t_mid - t_js);
+		diag_c_us = c_us;
 		if (JS_IsException(fn)) {
 			/* Syntax error: fn IS the exception value, which is
 			 * what plain JS_Eval would have returned. Propagate it
@@ -16667,15 +16677,25 @@ unsigned char js_exec(struct jsthread *thread,
 			 * to before -- a failed compile must not start looking
 			 * like a different kind of failure. */
 			val = fn;
+			compile_failed = 1;
 			ms_diag_js_event_hit(MS_JS_EVENT_PARSE_FAILED);
 			/* R1.3 - compile failed; nothing ran. */
 			qjs_census_note(name, (long)txtlen, ctype,
 					0, 0, c_us, 0);
 		} else {
+			if (cur_sid != 0) {
+				ms_diag_script_note_compile(cur_sid, MS_COMPILE_OK, c_us, 0);
+			}
 			val = JS_EvalFunction(thread->ctx, fn);
-			if (JS_IsException(val))
-				ms_diag_js_event_hit(MS_JS_EVENT_RUNTIME_FAILED);
 			r_us = (long)(macos9_micros() - t_mid);
+			diag_r_us = r_us;
+			if (JS_IsException(val)) {
+				ms_diag_js_event_hit(MS_JS_EVENT_RUNTIME_FAILED);
+			} else {
+				if (cur_sid != 0) {
+					ms_diag_script_note_execute(cur_sid, MS_EXEC_OK, r_us, 0);
+				}
+			}
 			/* R1.3 - compiled ok; ran to completion or threw. */
 			qjs_census_note(name, (long)txtlen, ctype,
 					JS_IsException(val) ? 0 : 1,
@@ -16689,8 +16709,22 @@ unsigned char js_exec(struct jsthread *thread,
 	free(src);
 	ok = !JS_IsException(val);
 	if (!ok) {
+		unsigned long err_id = 0;
+		unsigned long cur_sid = ms_diag_cur_script();
 		JSValue exc = JS_GetException(thread->ctx);
 		const char *estr = JS_ToCString(thread->ctx, exc);
+
+		err_id = ms_diag_error_record(0, 0, MS_ERR_JS_EXCEPTION,
+			0, MS_OPR_NONE,
+			compile_failed ? "SyntaxError" : "Error",
+			estr ? estr : (compile_failed ? "Syntax error" : "Runtime error"));
+		if (cur_sid != 0) {
+			if (compile_failed) {
+				ms_diag_script_note_compile(cur_sid, MS_COMPILE_FAILED, diag_c_us, err_id);
+			} else {
+				ms_diag_script_note_execute(cur_sid, MS_EXEC_FAILED, diag_r_us, err_id);
+			}
+		}
 		/* fixes843b (#167 S1 census) - "err" (lowercase) never matched the
 		 * crash-only log gate's "ERROR" (uppercase) keyword, so every JS
 		 * exception on every page has been silently invisible in a normal
@@ -16825,6 +16859,13 @@ unsigned char js_exec_module(struct jsthread *thread,
 		extern double macos9_micros(void);
 		double t0 = macos9_micros();
 		long mus;
+		unsigned long cur_sid = ms_diag_cur_script();
+		struct qjs_realm_identity r_id;
+
+		if (cur_sid != 0 && macsurf_qjs_realm_identity(ctx, &r_id)) {
+			ms_diag_script_note_realm(cur_sid, r_id.realm_id, r_id.heap_id, r_id.ctx_gen);
+		}
+
 		val = JS_Eval(ctx, src, txtlen,
 			name ? name : "<module>",
 			JS_EVAL_TYPE_MODULE);
@@ -16838,10 +16879,26 @@ unsigned char js_exec_module(struct jsthread *thread,
 		qjs_census_note(name, (long)txtlen, SCRIPT_CENSUS_MODULE,
 				ok ? 1 : 0, ok ? 1 : 0, 0, mus);
 		if (!ok) {
+			unsigned long err_id = 0;
 			JSValue exc = JS_GetException(ctx);
+			const char *estr = JS_ToCString(ctx, exc);
+
+			err_id = ms_diag_error_record(0, 0, MS_ERR_JS_EXCEPTION,
+				0, MS_OPR_NONE,
+				"ModuleError", estr ? estr : "Module error");
+			if (estr) JS_FreeCString(ctx, estr);
+			if (cur_sid != 0) {
+				ms_diag_script_note_compile(cur_sid, MS_COMPILE_OK, 0, 0);
+				ms_diag_script_note_execute(cur_sid, MS_EXEC_FAILED, mus, err_id);
+			}
 			qjs_log_exc(ctx, exc, "exec module err",
 				name ? name : "<module>");
 			JS_FreeValue(ctx, exc);
+		} else {
+			if (cur_sid != 0) {
+				ms_diag_script_note_compile(cur_sid, MS_COMPILE_OK, 0, 0);
+				ms_diag_script_note_execute(cur_sid, MS_EXEC_OK, mus, 0);
+			}
 		}
 		JS_FreeValue(ctx, val);
 		macsurf_debug_log_writef(

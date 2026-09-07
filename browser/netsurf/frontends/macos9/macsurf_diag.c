@@ -549,8 +549,25 @@ static long ms_diag_history_header(char *buf, long cap, long n,
 struct ms_diag_script {
 	unsigned long id;		/* 0 == empty */
 	unsigned long nav_id;
+	unsigned long frame_id;
+	unsigned long doc_id;
+	unsigned long realm_id;
+	unsigned long heap_id;
+	unsigned long ctx_gen;
+	unsigned long task_id;
+	unsigned long inline_ordinal;
+	unsigned long source_len;
+	unsigned long source_hash;
+	unsigned long error_id;
+	long compile_us;
+	long run_us;
 	short kind;			/* enum ms_script_kind */
+	short source_kind;		/* enum ms_script_source */
 	short state;			/* enum ms_script_state */
+	short compile_result;		/* enum ms_compile_result */
+	short execute_result;		/* enum ms_execute_result */
+	short terminal_reason;		/* enum ms_script_term_reason */
+	short active;			/* 1 if currently executing */
 	char name[MS_NAME_MAX];
 };
 struct ms_diag_task {
@@ -562,6 +579,12 @@ struct ms_diag_task {
 	short capped;			/* microtask: cap hit */
 	char name[MS_NAME_MAX];		/* event type, else "" */
 };
+
+#define MS_SCRIPT_ACTIVE_MAX 8
+static struct ms_diag_script g_script_active[MS_SCRIPT_ACTIVE_MAX];
+static int g_script_active_count;
+static struct ms_diag_script g_script_active_saved;
+static unsigned long g_script_active_evicted_count;
 
 static struct ms_diag_script g_script_ring[MS_SCRIPT_RING_N];
 static int g_script_ring_head;
@@ -584,10 +607,23 @@ static void ms_name_copy(char *dst, const char *src)
 	dst[i] = '\0';
 }
 
+static struct ms_diag_script *ms_diag_find_active_script(unsigned long script_id)
+{
+	int i;
+	if (script_id == 0) return NULL;
+	for (i = 0; i < g_script_active_count; i++) {
+		if (g_script_active[i].id == script_id) {
+			return &g_script_active[i];
+		}
+	}
+	return NULL;
+}
+
 void ms_diag_script_enter(struct ms_diag_scope *s, unsigned long nav_id,
 	int kind, const char *name)
 {
 	struct ms_diag_script *e;
+	struct ms_diag_script *act = NULL;
 
 	s->prev_script = g_cur_script;
 	s->prev_task = g_cur_task;
@@ -596,13 +632,34 @@ void ms_diag_script_enter(struct ms_diag_scope *s, unsigned long nav_id,
 		s->my_id = g_script_seq = 1;
 	}
 
+	if (g_script_active_count < MS_SCRIPT_ACTIVE_MAX) {
+		act = &g_script_active[g_script_active_count++];
+		memset(act, 0, sizeof(*act));
+	} else {
+		act = &g_script_active[0];
+	}
+
+	act->id = s->my_id;
+	act->nav_id = nav_id;
+	act->frame_id = ms_diag_cur_frame();
+	act->doc_id = ms_diag_cur_doc();
+	act->task_id = ms_diag_cur_task();
+	act->kind = (short) kind;
+	act->source_kind = (short) MS_SCR_SRC_UNAVAILABLE;
+	act->state = (short) MS_SCR_RUNNING;
+	act->compile_result = (short) MS_COMPILE_NOT_REACHED;
+	act->execute_result = (short) MS_EXEC_NOT_STARTED;
+	act->terminal_reason = (short) MS_TERM_REASON_NONE;
+	act->active = 1;
+	ms_name_copy(act->name, name);
+
 	e = &g_script_ring[g_script_ring_head];
+	if (e->active) {
+		g_script_active_saved = *e;
+		g_script_active_evicted_count++;
+	}
 	g_script_ring_head = (g_script_ring_head + 1) % MS_SCRIPT_RING_N;
-	e->id = s->my_id;
-	e->nav_id = nav_id;
-	e->kind = (short) kind;
-	e->state = (short) MS_SCR_RUNNING;
-	ms_name_copy(e->name, name);
+	*e = *act;
 
 	g_cur_script = s->my_id;
 	if (nav_id != 0) {
@@ -611,15 +668,229 @@ void ms_diag_script_enter(struct ms_diag_scope *s, unsigned long nav_id,
 	ms_diag_progress(MS_PROGRESS_SCRIPT);
 }
 
-void ms_diag_script_leave(struct ms_diag_scope *s, int state)
+void ms_diag_script_set_provenance(struct ms_diag_scope *s,
+	unsigned long frame_id, unsigned long doc_id)
 {
+	struct ms_diag_script *act;
 	int i;
+	if (s == NULL || s->my_id == 0) return;
+	act = ms_diag_find_active_script(s->my_id);
+	if (act != NULL) {
+		if (frame_id != 0) act->frame_id = frame_id;
+		if (doc_id != 0) act->doc_id = doc_id;
+	}
 	for (i = 0; i < MS_SCRIPT_RING_N; i++) {
 		if (g_script_ring[i].id == s->my_id) {
-			g_script_ring[i].state = (short) state;
+			if (frame_id != 0) g_script_ring[i].frame_id = frame_id;
+			if (doc_id != 0) g_script_ring[i].doc_id = doc_id;
 			break;
 		}
 	}
+}
+
+void ms_diag_script_set_source(struct ms_diag_scope *s,
+	int source_kind, unsigned long ordinal, unsigned long len,
+	unsigned long hash)
+{
+	struct ms_diag_script *act;
+	int i;
+	if (s == NULL || s->my_id == 0) return;
+	act = ms_diag_find_active_script(s->my_id);
+	if (act != NULL) {
+		act->source_kind = (short) source_kind;
+		act->inline_ordinal = ordinal;
+		act->source_len = len;
+		act->source_hash = hash;
+	}
+	for (i = 0; i < MS_SCRIPT_RING_N; i++) {
+		if (g_script_ring[i].id == s->my_id) {
+			g_script_ring[i].source_kind = (short) source_kind;
+			g_script_ring[i].inline_ordinal = ordinal;
+			g_script_ring[i].source_len = len;
+			g_script_ring[i].source_hash = hash;
+			break;
+		}
+	}
+}
+
+void ms_diag_script_note_realm(unsigned long script_id,
+	unsigned long realm_id, unsigned long heap_id, unsigned long ctx_gen)
+{
+	struct ms_diag_script *act;
+	int i;
+	if (script_id == 0) return;
+	act = ms_diag_find_active_script(script_id);
+	if (act != NULL) {
+		act->realm_id = realm_id;
+		act->heap_id = heap_id;
+		act->ctx_gen = ctx_gen;
+	}
+	for (i = 0; i < MS_SCRIPT_RING_N; i++) {
+		if (g_script_ring[i].id == script_id) {
+			g_script_ring[i].realm_id = realm_id;
+			g_script_ring[i].heap_id = heap_id;
+			g_script_ring[i].ctx_gen = ctx_gen;
+			break;
+		}
+	}
+}
+
+void ms_diag_script_note_compile(unsigned long script_id,
+	int result, long compile_us, unsigned long error_id)
+{
+	struct ms_diag_script *act;
+	int i;
+	if (script_id == 0) return;
+	act = ms_diag_find_active_script(script_id);
+	if (act != NULL) {
+		act->compile_result = (short) result;
+		act->compile_us = compile_us;
+		if (error_id != 0) act->error_id = error_id;
+		if (result == MS_COMPILE_FAILED) {
+			act->execute_result = (short) MS_EXEC_NOT_STARTED;
+			act->terminal_reason = (short) MS_TERM_REASON_COMPILE_FAILED;
+			act->state = (short) MS_SCR_COMPILE_FAIL;
+		} else if (result == MS_COMPILE_OK) {
+			act->terminal_reason = (short) MS_TERM_REASON_OK;
+		}
+	}
+	for (i = 0; i < MS_SCRIPT_RING_N; i++) {
+		if (g_script_ring[i].id == script_id) {
+			g_script_ring[i].compile_result = (short) result;
+			g_script_ring[i].compile_us = compile_us;
+			if (error_id != 0) g_script_ring[i].error_id = error_id;
+			if (result == MS_COMPILE_FAILED) {
+				g_script_ring[i].execute_result = (short) MS_EXEC_NOT_STARTED;
+				g_script_ring[i].terminal_reason = (short) MS_TERM_REASON_COMPILE_FAILED;
+				g_script_ring[i].state = (short) MS_SCR_COMPILE_FAIL;
+			} else if (result == MS_COMPILE_OK) {
+				g_script_ring[i].terminal_reason = (short) MS_TERM_REASON_OK;
+			}
+			break;
+		}
+	}
+}
+
+void ms_diag_script_note_execute(unsigned long script_id,
+	int result, long run_us, unsigned long error_id)
+{
+	struct ms_diag_script *act;
+	int i;
+	if (script_id == 0) return;
+	act = ms_diag_find_active_script(script_id);
+	if (act != NULL) {
+		act->execute_result = (short) result;
+		act->run_us = run_us;
+		if (error_id != 0) act->error_id = error_id;
+		if (result == MS_EXEC_FAILED) {
+			act->terminal_reason = (short) MS_TERM_REASON_RUNTIME_FAILED;
+			act->state = (short) MS_SCR_RUN_FAIL;
+		} else if (result == MS_EXEC_OK) {
+			act->terminal_reason = (short) MS_TERM_REASON_OK;
+			act->state = (short) MS_SCR_DONE;
+		}
+	}
+	for (i = 0; i < MS_SCRIPT_RING_N; i++) {
+		if (g_script_ring[i].id == script_id) {
+			g_script_ring[i].execute_result = (short) result;
+			g_script_ring[i].run_us = run_us;
+			if (error_id != 0) g_script_ring[i].error_id = error_id;
+			if (result == MS_EXEC_FAILED) {
+				g_script_ring[i].terminal_reason = (short) MS_TERM_REASON_RUNTIME_FAILED;
+				g_script_ring[i].state = (short) MS_SCR_RUN_FAIL;
+			} else if (result == MS_EXEC_OK) {
+				g_script_ring[i].terminal_reason = (short) MS_TERM_REASON_OK;
+				g_script_ring[i].state = (short) MS_SCR_DONE;
+			}
+			break;
+		}
+	}
+}
+
+void ms_diag_script_leave(struct ms_diag_scope *s, int state)
+{
+	struct ms_diag_script *act = ms_diag_find_active_script(s->my_id);
+	int i;
+	int ring_idx = -1;
+
+	for (i = 0; i < MS_SCRIPT_RING_N; i++) {
+		if (g_script_ring[i].id == s->my_id) {
+			ring_idx = i;
+			break;
+		}
+	}
+
+	if (act != NULL) {
+		if (act->compile_result == MS_COMPILE_FAILED) {
+			act->state = (short) MS_SCR_COMPILE_FAIL;
+			act->execute_result = (short) MS_EXEC_NOT_STARTED;
+			act->terminal_reason = (short) MS_TERM_REASON_COMPILE_FAILED;
+		} else if (act->execute_result == MS_EXEC_FAILED) {
+			act->state = (short) MS_SCR_RUN_FAIL;
+			act->terminal_reason = (short) MS_TERM_REASON_RUNTIME_FAILED;
+		} else if (state == MS_SCR_DONE) {
+			if (act->compile_result == MS_COMPILE_FAILED) {
+				act->state = (short) MS_SCR_COMPILE_FAIL;
+				act->terminal_reason = (short) MS_TERM_REASON_COMPILE_FAILED;
+			} else if (act->execute_result == MS_EXEC_FAILED) {
+				act->state = (short) MS_SCR_RUN_FAIL;
+				act->terminal_reason = (short) MS_TERM_REASON_RUNTIME_FAILED;
+			} else {
+				act->state = (short) MS_SCR_DONE;
+				if (act->compile_result == MS_COMPILE_NOT_REACHED)
+					act->compile_result = (short) MS_COMPILE_OK;
+				if (act->execute_result == MS_EXEC_NOT_STARTED)
+					act->execute_result = (short) MS_EXEC_OK;
+				act->terminal_reason = (short) MS_TERM_REASON_OK;
+			}
+		} else if (state == MS_SCR_RUN_FAIL) {
+			if (act->compile_result == MS_COMPILE_FAILED) {
+				act->state = (short) MS_SCR_COMPILE_FAIL;
+				act->terminal_reason = (short) MS_TERM_REASON_COMPILE_FAILED;
+			} else {
+				act->state = (short) MS_SCR_RUN_FAIL;
+				if (act->compile_result == MS_COMPILE_NOT_REACHED)
+					act->compile_result = (short) MS_COMPILE_OK;
+				if (act->execute_result == MS_EXEC_NOT_STARTED)
+					act->execute_result = (short) MS_EXEC_FAILED;
+				act->terminal_reason = (short) MS_TERM_REASON_RUNTIME_FAILED;
+			}
+		} else if (state == MS_SCR_COMPILE_FAIL) {
+			act->state = (short) MS_SCR_COMPILE_FAIL;
+			act->compile_result = (short) MS_COMPILE_FAILED;
+			act->execute_result = (short) MS_EXEC_NOT_STARTED;
+			act->terminal_reason = (short) MS_TERM_REASON_COMPILE_FAILED;
+		} else if (state == MS_SCR_SKIPPED) {
+			act->state = (short) MS_SCR_SKIPPED;
+			act->compile_result = (short) MS_COMPILE_NOT_REACHED;
+			act->execute_result = (short) MS_EXEC_NOT_STARTED;
+			act->terminal_reason = (short) MS_TERM_REASON_CANCELLED;
+		}
+		act->active = 0;
+
+		if (ring_idx >= 0) {
+			g_script_ring[ring_idx] = *act;
+		} else {
+			g_script_active_saved = *act;
+			g_script_active_evicted_count++;
+		}
+
+		for (i = 0; i < g_script_active_count; i++) {
+			if (g_script_active[i].id == s->my_id) {
+				int rem = g_script_active_count - 1 - i;
+				if (rem > 0) {
+					memmove(&g_script_active[i], &g_script_active[i + 1],
+						rem * sizeof(struct ms_diag_script));
+				}
+				g_script_active_count--;
+				break;
+			}
+		}
+	} else if (ring_idx >= 0) {
+		g_script_ring[ring_idx].state = (short) state;
+		g_script_ring[ring_idx].active = 0;
+	}
+
 	g_cur_script = s->prev_script;
 	g_cur_task = s->prev_task;
 	ms_diag_progress(MS_PROGRESS_SCRIPT);
@@ -694,11 +965,11 @@ unsigned long ms_diag_cur_script(void) { return g_cur_script; }
 unsigned long ms_diag_cur_task(void)   { return g_cur_task; }
 unsigned long ms_diag_cur_nav(void)    { return g_cur_nav; }
 
-static const char *ms_script_kind_s(int k)
+const char *ms_script_kind_s(int k)
 {
 	return (k == MS_SCRIPT_MODULE) ? "module" : "classic";
 }
-static const char *ms_script_state_s(int st)
+const char *ms_script_state_s(int st)
 {
 	switch (st) {
 	case MS_SCR_DONE:         return "done";
@@ -706,6 +977,44 @@ static const char *ms_script_state_s(int st)
 	case MS_SCR_RUN_FAIL:     return "run_fail";
 	case MS_SCR_SKIPPED:      return "skipped";
 	default:                  return "running";
+	}
+}
+const char *ms_script_source_s(int v)
+{
+	switch (v) {
+	case MS_SCR_SRC_INLINE:   return "inline";
+	case MS_SCR_SRC_EXTERNAL: return "external";
+	default:                  return "unavailable";
+	}
+}
+const char *ms_compile_result_s(int v)
+{
+	switch (v) {
+	case MS_COMPILE_OK:          return "ok";
+	case MS_COMPILE_FAILED:      return "failed";
+	case MS_COMPILE_NOT_REACHED: return "not_reached";
+	default:                     return "unavailable";
+	}
+}
+const char *ms_execute_result_s(int v)
+{
+	switch (v) {
+	case MS_EXEC_OK:          return "ok";
+	case MS_EXEC_FAILED:      return "failed";
+	case MS_EXEC_NOT_STARTED: return "not_started";
+	case MS_EXEC_CANCELLED:   return "cancelled";
+	default:                  return "unavailable";
+	}
+}
+const char *ms_script_term_reason_s(int v)
+{
+	switch (v) {
+	case MS_TERM_REASON_OK:             return "ok";
+	case MS_TERM_REASON_COMPILE_FAILED: return "compile_failed";
+	case MS_TERM_REASON_RUNTIME_FAILED: return "runtime_failed";
+	case MS_TERM_REASON_NAV_REPLACED:   return "navigation_replaced";
+	case MS_TERM_REASON_CANCELLED:      return "cancelled";
+	default:                            return "none";
 	}
 }
 static const char *ms_task_kind_s(int k)
@@ -721,7 +1030,7 @@ static const char *ms_task_kind_s(int k)
 
 long macsurf_diag_serialize_scripts(char *buf, long cap)
 {
-	char line[128];
+	char line[288];
 	long n = 0;
 	int i;
 
@@ -732,6 +1041,7 @@ long macsurf_diag_serialize_scripts(char *buf, long cap)
 	n = diag_cat(buf, cap, n, "MSDIAG 1 scripts\n");
 	n = ms_diag_history_header(buf, cap, n, "scripts", g_script_seq,
 		MS_SCRIPT_RING_N);
+	n = diag_cat(buf, cap, n, "coverage=execution_attempts\n");
 	for (i = 0; i < MS_SCRIPT_RING_N; i++) {
 		int idx = (g_script_ring_head - 1 - i + 2 * MS_SCRIPT_RING_N)
 			% MS_SCRIPT_RING_N;
@@ -740,9 +1050,21 @@ long macsurf_diag_serialize_scripts(char *buf, long cap)
 			continue;
 		}
 		snprintf(line, sizeof line,
-			"script=%lu nav=%lu kind=%s state=%s name=%s\n",
+			"script=%lu nav=%lu frame=%lu doc=%lu realm=%lu heap=%lu ctx_gen=%lu "
+			"task=%lu kind=%s source_kind=%s ord=%lu len=%lu hash=%08lx "
+			"compile=%s compile_us=%ld execute=%s run_us=%ld state=%s reason=%s error=%lu name=%s\n",
 			(unsigned long) e->id, (unsigned long) e->nav_id,
-			ms_script_kind_s(e->kind), ms_script_state_s(e->state),
+			(unsigned long) e->frame_id, (unsigned long) e->doc_id,
+			(unsigned long) e->realm_id, (unsigned long) e->heap_id,
+			(unsigned long) e->ctx_gen, (unsigned long) e->task_id,
+			ms_script_kind_s(e->kind), ms_script_source_s(e->source_kind),
+			(unsigned long) e->inline_ordinal, (unsigned long) e->source_len,
+			(unsigned long) e->source_hash,
+			ms_compile_result_s(e->compile_result), e->compile_us,
+			ms_execute_result_s(e->execute_result), e->run_us,
+			ms_script_state_s(e->state),
+			ms_script_term_reason_s(e->terminal_reason),
+			(unsigned long) e->error_id,
 			e->name[0] ? e->name : "-");
 		n = diag_cat(buf, cap, n, line);
 	}
@@ -756,7 +1078,7 @@ long macsurf_diag_serialize_scripts(char *buf, long cap)
 long macsurf_diag_serialize_scripts_since(char *buf, long cap,
 	unsigned long after, unsigned long limit)
 {
-	char line[192];
+	char line[288];
 	long n = 0;
 	unsigned long latest;
 	unsigned long retained;
@@ -785,6 +1107,7 @@ long macsurf_diag_serialize_scripts_since(char *buf, long cap,
 	n = diag_cat(buf, cap, n, "MSDIAG 2 scripts\n");
 	n = ms_diag_history_header(buf, cap, n, "scripts", latest,
 		MS_SCRIPT_RING_N);
+	n = diag_cat(buf, cap, n, "coverage=execution_attempts\n");
 	snprintf(line, sizeof(line), "requested_after=%lu\nlimit=%lu\n",
 		after, limit);
 	n = diag_cat(buf, cap, n, line);
@@ -827,9 +1150,21 @@ long macsurf_diag_serialize_scripts_since(char *buf, long cap,
 				break;
 			}
 			snprintf(line, sizeof(line),
-				"script=%lu nav=%lu kind=%s state=%s name=%s\n",
-				e->id, e->nav_id, ms_script_kind_s(e->kind),
+				"script=%lu nav=%lu frame=%lu doc=%lu realm=%lu heap=%lu ctx_gen=%lu "
+				"task=%lu kind=%s source_kind=%s ord=%lu len=%lu hash=%08lx "
+				"compile=%s compile_us=%ld execute=%s run_us=%ld state=%s reason=%s error=%lu name=%s\n",
+				(unsigned long) e->id, (unsigned long) e->nav_id,
+				(unsigned long) e->frame_id, (unsigned long) e->doc_id,
+				(unsigned long) e->realm_id, (unsigned long) e->heap_id,
+				(unsigned long) e->ctx_gen, (unsigned long) e->task_id,
+				ms_script_kind_s(e->kind), ms_script_source_s(e->source_kind),
+				(unsigned long) e->inline_ordinal, (unsigned long) e->source_len,
+				(unsigned long) e->source_hash,
+				ms_compile_result_s(e->compile_result), e->compile_us,
+				ms_execute_result_s(e->execute_result), e->run_us,
 				ms_script_state_s(e->state),
+				ms_script_term_reason_s(e->terminal_reason),
+				(unsigned long) e->error_id,
 				e->name[0] ? e->name : "-");
 			if (n + (long)strlen(line) >= cap - MS_SCRIPT_FOOTER_RESERVE) {
 				truncated = 1;
@@ -2706,7 +3041,7 @@ static unsigned long ms_diag_error_text_id(struct ms_diag_error_text *table,
 	return table[*count - 1].id;
 }
 
-void ms_diag_error_record(unsigned long op_id, unsigned long request_id,
+unsigned long ms_diag_error_record(unsigned long op_id, unsigned long request_id,
 	int kind, int boundary, int reason, const char *name, const char *message)
 {
 	struct ms_diag_error *e = &g_err_ring[g_err_ring_head];
@@ -2725,6 +3060,7 @@ void ms_diag_error_record(unsigned long op_id, unsigned long request_id,
 	e->kind = (unsigned char)kind;
 	e->boundary = (unsigned char)boundary;
 	e->reason = (unsigned char)reason;
+	return e->id;
 }
 
 long macsurf_diag_serialize_operations(char *buf, long cap)
