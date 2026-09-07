@@ -60,7 +60,6 @@
 #include "desktop/gui_internal.h"
 
 #include "html/html.h"
-#include "html/private.h"
 #include "macsurf_debug.h"
 #include "macsurf_diag.h"	/* MacSurf Trace 1c: doc_id + render-stage records */
 #include "frontends/macos9/macos9_transition.h"
@@ -73,230 +72,11 @@
  * Used in html_close/html_destroy to cancel every scheduled callback keyed
  * on this html_content (deferred_parser_unpause, html_css_process_modified_
  * styles, ...) before any parser/content state is torn down. */
-extern unsigned long macos9_content_token(struct content *c);
-extern int macos9_content_token_valid(struct content *c, unsigned long token);
-
-static int html_content_token_valid(struct content *c, unsigned long token)
-{
 #ifdef __MACOS9__
-	return macos9_content_token_valid(c, token);
-#else
-	if (token == 0)
-		return 1;
-	return macos9_content_token_valid(c, token);
-#endif
-}
-
-#ifdef __MACOS9__
-extern nserror macos9_schedule(int t, void (*callback)(void *p), void *p);
 extern void macos9_schedule_cancel_owner(void *p);
 #else
-#define macos9_schedule(t, callback, p) NSERROR_OK
 #define macos9_schedule_cancel_owner(p) ((void)0)
 #endif
-
-struct html_page_js_payload {
-	html_content *c;
-	unsigned long token;
-	uint32_t doc_generation;
-};
-
-static int g_html_reconvert_depth = 0;
-
-static void html_page_js_delivery_cb(void *p);
-
-static void html_page_js_queue(html_content *c, uint32_t events)
-{
-	struct html_page_js_payload *pl;
-
-	if (c == NULL || c->aborted || c->js_thread == NULL)
-		return;
-
-	c->page_js_pending |= events;
-
-	if (c->page_js_scheduled)
-		return;
-
-	pl = (struct html_page_js_payload *)malloc(sizeof(*pl));
-	if (pl == NULL)
-		return;
-
-	pl->c = c;
-	pl->token = macos9_content_token(&c->base);
-	pl->doc_generation = c->doc_generation;
-
-	c->page_js_payload = pl;
-	c->page_js_scheduled = true;
-
-#ifdef __MACOS9__
-	(void) macos9_schedule(0, html_page_js_delivery_cb, pl);
-#else
-	if (g_html_reconvert_depth == 0) {
-		html_page_js_delivery_cb(pl);
-	}
-#endif
-}
-
-static void html_page_js_delivery_cb(void *p)
-{
-	struct html_page_js_payload *pl = (struct html_page_js_payload *)p;
-	html_content *c;
-	unsigned long token;
-	uint32_t gen;
-	uint32_t batch;
-
-	if (pl == NULL)
-		return;
-
-	c = pl->c;
-	token = pl->token;
-	gen = pl->doc_generation;
-	if (c != NULL && c->page_js_payload == pl)
-		c->page_js_payload = NULL;
-	free(pl);
-
-	/* 1. Validate content token at entry */
-	if (html_content_token_valid(&c->base, token) == 0)
-		return;
-
-	c->page_js_scheduled = false;
-
-	if (c->aborted || c->doc_generation != gen || c->js_thread == NULL) {
-		c->page_js_pending = 0;
-		return;
-	}
-
-	if (c->reflowing || g_html_reconvert_depth > 0) {
-		html_page_js_queue(c, c->page_js_pending);
-		return;
-	}
-
-	/* 2. Detach batch */
-	batch = c->page_js_pending;
-	c->page_js_pending = 0;
-	if (batch == 0)
-		return;
-
-	/* 3. Ordered delivery: media -> resize -> reconvert-load -> MutationObserver
-	 * Validate token at entry and after each top-level dispatch. */
-
-	/* Step 1: media */
-	if (batch & HTML_PAGE_JS_MEDIA) {
-		js_media_state_changed(c->js_thread);
-		if (html_content_token_valid(&c->base, token) == 0 ||
-		    c->aborted || c->doc_generation != gen || c->js_thread == NULL)
-			return;
-	}
-
-	/* Step 2: resize */
-	if (batch & HTML_PAGE_JS_RESIZE) {
-		(void) js_fire_event(c->js_thread, "resize", c->document, NULL);
-		if (html_content_token_valid(&c->base, token) == 0 ||
-		    c->aborted || c->doc_generation != gen || c->js_thread == NULL)
-			return;
-	}
-
-	/* Step 3: reconvert-load */
-	if (batch & HTML_PAGE_JS_RECONVERT_LOAD) {
-		(void) js_fire_event(c->js_thread, "load", c->document, NULL);
-		if (html_content_token_valid(&c->base, token) == 0 ||
-		    c->aborted || c->doc_generation != gen || c->js_thread == NULL)
-			return;
-	}
-
-	/* Step 4: MutationObserver */
-	if (batch & HTML_PAGE_JS_MUTATION_OBSERVER) {
-		js_fire_mutation_batch(c->js_thread);
-		if (html_content_token_valid(&c->base, token) == 0 ||
-		    c->aborted || c->doc_generation != gen || c->js_thread == NULL)
-			return;
-	}
-}
-
-static void html_page_js_cancel(html_content *c)
-{
-	if (c == NULL)
-		return;
-	if (c->page_js_scheduled) {
-#ifdef __MACOS9__
-		macos9_schedule(-1, html_page_js_delivery_cb, c->page_js_payload);
-#endif
-		if (c->page_js_payload != NULL) {
-			free(c->page_js_payload);
-			c->page_js_payload = NULL;
-		}
-		c->page_js_scheduled = false;
-	}
-	c->page_js_pending = 0;
-}
-
-static bool css_media_equal(const css_media *a, const css_media *b)
-{
-	bool match = false;
-
-	if (a == b)
-		return true;
-	if (a == NULL || b == NULL)
-		return false;
-
-	if (a->type != b->type ||
-	    a->width != b->width ||
-	    a->height != b->height ||
-	    a->aspect_ratio != b->aspect_ratio ||
-	    a->orientation != b->orientation ||
-	    a->resolution.value != b->resolution.value ||
-	    a->resolution.unit != b->resolution.unit ||
-	    a->scan != b->scan ||
-	    a->grid != b->grid ||
-	    a->update != b->update ||
-	    a->overflow_block != b->overflow_block ||
-	    a->overflow_inline != b->overflow_inline ||
-	    a->color != b->color ||
-	    a->color_index != b->color_index ||
-	    a->monochrome != b->monochrome ||
-	    a->inverted_colors != b->inverted_colors ||
-	    a->pointer != b->pointer ||
-	    a->any_pointer != b->any_pointer ||
-	    a->hover != b->hover ||
-	    a->any_hover != b->any_hover ||
-	    a->light_level != b->light_level ||
-	    a->scripting != b->scripting)
-		return false;
-
-	if (a->prefers_color_scheme != b->prefers_color_scheme) {
-		if (a->prefers_color_scheme == NULL || b->prefers_color_scheme == NULL)
-			return false;
-		if (lwc_string_isequal(a->prefers_color_scheme, b->prefers_color_scheme, &match) != lwc_error_ok || !match)
-			return false;
-	}
-
-	return true;
-}
-
-static void html_media_update_and_gate(html_content *c)
-{
-	if (c == NULL)
-		return;
-
-	if (!c->media_snapshot_valid) {
-		/* Initial format: establish baseline snapshot without change event */
-		c->media_snapshot = c->media;
-		if (c->media_snapshot.prefers_color_scheme != NULL)
-			lwc_string_ref(c->media_snapshot.prefers_color_scheme);
-		c->media_snapshot_valid = true;
-		return;
-	}
-
-	if (!css_media_equal(&c->media, &c->media_snapshot)) {
-		/* Semantic change detected: update snapshot and queue media event */
-		if (c->media_snapshot.prefers_color_scheme != NULL)
-			lwc_string_unref(c->media_snapshot.prefers_color_scheme);
-		c->media_snapshot = c->media;
-		if (c->media_snapshot.prefers_color_scheme != NULL)
-			lwc_string_ref(c->media_snapshot.prefers_color_scheme);
-		html_page_js_queue(c, HTML_PAGE_JS_MEDIA);
-	}
-}
 
 long macos9_html_bytes_processed = 0;
 /* fixes560 - per-load reformat sequence counter.  Reset to 0 at
@@ -2043,12 +1823,6 @@ html_create_html_data(html_content *c, const http_parameter *params)
 	c->scripts_count = 0;
 	c->scripts = NULL;
 	c->js_thread = NULL;
-	c->page_js_pending = 0;
-	c->doc_generation = 1;
-	c->page_js_scheduled = false;
-	c->page_js_payload = NULL;
-	c->media_snapshot_valid = false;
-	memset(&c->media_snapshot, 0, sizeof(c->media_snapshot));
 
 	c->enable_scripting = nsoption_bool(enable_javascript);
 #ifdef __MACOS9__
@@ -2419,14 +2193,6 @@ html_process_encoding_change(struct content *c,
 
 	/* MacSurf Trace 1c: the parser just replaced html->document. Retire the
 	 * old DOM-document id; html_begin_conversion opens a fresh one. */
-	html->doc_generation++;
-	html_page_js_cancel(html);
-	if (html->media_snapshot_valid) {
-		if (html->media_snapshot.prefers_color_scheme != NULL)
-			lwc_string_unref(html->media_snapshot.prefers_color_scheme);
-		html->media_snapshot_valid = false;
-		memset(&html->media_snapshot, 0, sizeof(html->media_snapshot));
-	}
 	if (html->doc_id != 0) {
 		ms_diag_document_close(html->doc_id);
 		html->doc_id = 0;
@@ -3471,41 +3237,6 @@ void macsurf_reconvert_test_fail_once(void)
 {
 	g_reconvert_test_fail_once = 1;
 }
-
-void macsurf_test_page_js_queue(html_content *c, uint32_t events)
-{
-	html_page_js_queue(c, events);
-}
-
-void macsurf_test_page_js_cancel(html_content *c)
-{
-	html_page_js_cancel(c);
-}
-
-void macsurf_test_page_js_deliver(void *payload)
-{
-	html_page_js_delivery_cb(payload);
-}
-
-void macsurf_test_set_reconvert_depth(int depth)
-{
-	g_html_reconvert_depth = depth;
-}
-
-int macsurf_test_get_reconvert_depth(void)
-{
-	return g_html_reconvert_depth;
-}
-
-bool macsurf_test_css_media_equal(const css_media *a, const css_media *b)
-{
-	return css_media_equal(a, b);
-}
-
-void macsurf_test_html_media_update_and_gate(html_content *c)
-{
-	html_media_update_and_gate(c);
-}
 #endif
 
 /* fixes889 - reconvert sequence + the layout pointer each one installed.
@@ -3536,8 +3267,8 @@ int macsurf_reconvert_in_progress = 0;
  * (dom_to_box's callback), so a reentrant call arriving from page JS run
  * during that span sees depth > 0 and defers instead of touching the shared
  * single-instance state (g_walk_content/g_walk_gen in box_construct.c,
- * g_reconvert_old_bctx, c->box_conversion_context) a second time.
- * (Defined near top of file). */
+ * g_reconvert_old_bctx, c->box_conversion_context) a second time. */
+static int g_html_reconvert_depth = 0;
 
 /* fixes895 - durable "furthest position" marker + phase-scoped eager flush,
  * defined in macsurf_debug_log.c (local extern, matching this file's existing
@@ -3971,11 +3702,14 @@ int html_reconvert_fast_style(struct content *base_c, void *vnode)
 	if (new_styles == NULL) return -1;
 
 	if (css_computed_style_is_paint_only_diff(box->style, new_styles->styles[CSS_PSEUDO_ELEMENT_NONE])) {
-		/* 2B-2 opacity: A->B transition check before style replacement.
-		 * The handler resolves TickCount lazily only if an effect is created. */
-		macsurf_transition_handle_style_change(c, node, box->style,
-				new_styles->styles[CSS_PSEUDO_ELEMENT_NONE],
-				MACSURF_TRANSITION_NOW_AUTO);
+		/* 2B-2 opacity: A->B transition check before style replacement */
+		{
+			uint32_t now = 0;
+#ifdef __MACOS9__
+			now = (uint32_t)TickCount();
+#endif
+			macsurf_transition_handle_style_change(c, node, box->style, new_styles->styles[CSS_PSEUDO_ELEMENT_NONE], now);
+		}
 		if (box->custom_env != NULL && !(box->flags & CLONE))
 			css_custom_env_unref(box->custom_env);
 		if (!(box->flags & CLONE)) box->custom_env = new_env;
@@ -4633,9 +4367,13 @@ static void html_reconvert_done(html_content *c, bool success)
 #ifndef MACSURF_JS_RECONVERT_RESIZE
 #define MACSURF_JS_RECONVERT_RESIZE 1
 #endif
-	{
-		uint32_t reconv_events = 0;
 #if MACSURF_JS_RECONVERT_RESIZE
+	{
+		/* fixes1090 - track the height PER CONTENT. last_resize_h was a
+		 * bare static shared across every document in the session, so a
+		 * page whose height happened to match the previous page's would
+		 * silently skip its convergence resize. Keyed on the content
+		 * pointer, a new document always gets its first fire. */
 		static void *last_resize_c = NULL;
 		static int last_resize_h = -1;
 		if (c->js_thread != NULL &&
@@ -4644,17 +4382,49 @@ static void html_reconvert_done(html_content *c, bool success)
 			last_resize_c = (void *)c;
 			last_resize_h = (int)c->base.height;
 			macsurf_debug_log_writef(
-				"LIFE reconvert height %d -> resize/load queued",
+				"LIFE reconvert height %d -> resize fired",
 				(int)c->base.height);
-			reconv_events |= HTML_PAGE_JS_RESIZE | HTML_PAGE_JS_RECONVERT_LOAD;
+			(void) js_fire_event(c->js_thread, "resize",
+					c->document, NULL);
+			/* fixes1090b - `resize` alone was still a no-op for the
+			 * hackaday slider: the REAL slick.js (harness/
+			 * hackaday-bundle.js:933-942) gates its resize handler on
+			 * `$(window).width() !== _.windowWidth` before it will call
+			 * `_.setPosition()` (the actual re-measure). Our synthetic
+			 * resize never changes the reported window width, so that
+			 * branch is permanently false and setPosition never runs --
+			 * confirmed by reading the bundled source, not guessed.
+			 * slick's ONLY unconditional re-measure hooks are its
+			 * one-shot init() call (which fired too early here, while
+			 * the box tree was still unsettled, and measured garbage)
+			 * and `$(window).on('load', _.setPosition)`
+			 * (hackaday-bundle.js:944) -- and window `load` never fires
+			 * on the Mac at all (MACSURF_JS_FIRE_LOAD is off). Dispatch
+			 * `load` here too, under the exact same gate as `resize`:
+			 * once per content, only when a reconvert actually changed
+			 * the document height. This does NOT touch readyState or
+			 * the once-per-navigation `__ms_load_fired` idempotency
+			 * flag in js_fire_window_load -- it is a second plain
+			 * window.dispatchEvent, scoped identically to the resize
+			 * fire above, so it carries the same safety argument
+			 * fixes1090 already made and does not reopen the
+			 * MACSURF_JS_FIRE_LOAD switch or its history. */
+			(void) js_fire_event(c->js_thread, "load",
+					c->document, NULL);
 		}
+	}
 #endif
-		if (c->js_thread != NULL) {
-			reconv_events |= HTML_PAGE_JS_MUTATION_OBSERVER;
-		}
-		if (reconv_events != 0) {
-			html_page_js_queue(c, reconv_events);
-		}
+	/* fixes1235 (#167) - deliver a MutationObserver batch to any
+	 * registered observer. Unlike the resize/load hooks above, this is
+	 * NOT height-gated: a real DOM mutation just completed (that is why
+	 * reconvert ran at all), so every registered observer should hear
+	 * about it, not only ones whose consequence changed the page's
+	 * height. Fires once per completed reconvert -- see js_fire_mutation_
+	 * batch's own comment (macsurf_qjs.c) for why this cannot introduce a
+	 * new feedback-loop frequency beyond what reconvert's debounce/floor
+	 * already bounds. */
+	if (c->js_thread != NULL) {
+		js_fire_mutation_batch(c->js_thread);
 	}
 	macsurf_reconv_pos_set("reconvert-idle", (long) macsurf_reconvert_seq,
 			0, "");
@@ -4669,7 +4439,6 @@ nserror html_reconvert(html_content *c)
 	dom_node *html = NULL;
 	dom_exception exc;
 	nserror error;
-	unsigned long reconv_token;
 
 	if ((c == NULL) || (c->document == NULL) || (c->aborted))
 		return NSERROR_OK;
@@ -4745,7 +4514,6 @@ nserror html_reconvert(html_content *c)
 		return NSERROR_NEED_DATA;
 	}
 	g_html_reconvert_depth++;
-	reconv_token = macos9_content_token(&c->base);
 	/* fixes1105 (#265) - THE reconvert bug, proven on hardware.
 	 *
 	 * Without a select context there is no cascade, and libcss rejects the
@@ -4989,13 +4757,12 @@ nserror html_reconvert(html_content *c)
 			" root_style=NULL", (long) macsurf_reconvert_seq, ncleared);
 	}
 
-	/* Transition pre-recascade removal: retire stale effects scoped to this
-	 * content and document. Single-node opacity transitions are handled via
-	 * the mutation path (html_reconvert_fast_style). */
-	macsurf_transition_retire_content(c);
-	if (c->document != NULL) {
-		macsurf_transition_retire_document(c->document);
-	}
+	/* CSS Transitions 2B-2: full reconstruction normally replaces the box
+	 * tree wholesale, bypassing html_reconvert_fast_style's old/new style
+	 * comparison. Re-cascade the still-live old tree first so it can start
+	 * presentation effects from each genuine Style A -> Style B pair. The
+	 * normal reconstruction below still owns geometry and installs Style B. */
+	(void)html_recascade_tree(c);
 
 	/* fixes896 - pin the DOM's live text-node dom_strings across the rebuild
 	 * window. Was fixes843, which walked c->layout (the box tree) for BOX_TEXT
@@ -5136,16 +4903,6 @@ nserror html_reconvert(html_content *c)
 	 * (html_reconvert_done, including its resize/load JS fire, already ran
 	 * inside the call above) or failed, the reentrant span is over now. */
 	g_html_reconvert_depth--;
-	if (g_html_reconvert_depth == 0 && html_content_token_valid(&c->base, reconv_token)) {
-#ifndef __MACOS9__
-		if (c->page_js_scheduled && c->page_js_payload != NULL) {
-			void *saved_pl = c->page_js_payload;
-			c->page_js_payload = NULL;
-			c->page_js_scheduled = false;
-			html_page_js_delivery_cb(saved_pl);
-		}
-#endif
-	}
 	dom_node_unref(html);
 	return error;
 }
@@ -6164,10 +5921,13 @@ static void html_reformat(struct content *c, int width, int height)
 	htmlc->reflowing = false;
 	htmlc->had_initial_layout = true;
 
-	/* The completed layout has published the css_media state author CSS uses.
-	 * Deliver MediaQueryList changes only after this image/layout callback has
-	 * fully unwound; page listeners are allowed to mutate the DOM. */
-	html_media_update_and_gate(htmlc);
+	/* The completed layout now owns the same css_media state author CSS used.
+	 * Let MediaQueryLists compare their prior value only at this safe boundary;
+	 * a listener-induced DOM mutation will follow the ordinary reconvert path. */
+#ifdef WITH_QUICKJS
+	if (htmlc->js_thread != NULL)
+		js_media_state_changed(htmlc->js_thread);
+#endif
 
 	/* calculate next reflow time at three times what it took to reflow */
 	nsu_getmonotonic_ms(&ms_after);
@@ -6334,11 +6094,6 @@ static void html_destroy(struct content *c)
 	 * the freed+reused html_content, and resumes a garbage parser inside the
 	 * hubbub tokenizer (crash sig: lbzu through r4=0/1, r3=reuse garbage). */
 	macos9_schedule_cancel_owner(html);
-	html_page_js_cancel(html);
-	macsurf_transition_retire_content(html);
-	if (html->document != NULL) {
-		macsurf_transition_retire_document(html->document);
-	}
 
 	/* If we're still converting a layout, cancel it.
 	 * fixes499g - NULL the context after cancel so a second html_destroy
@@ -6430,12 +6185,6 @@ static void html_destroy(struct content *c)
 
 	lwc_string_unref(html->media.prefers_color_scheme);
 	html->media.prefers_color_scheme = NULL;
-
-	if (html->media_snapshot_valid) {
-		if (html->media_snapshot.prefers_color_scheme != NULL)
-			lwc_string_unref(html->media_snapshot.prefers_color_scheme);
-		html->media_snapshot_valid = false;
-	}
 
 	/* Free stylesheets */
 	html_css_free_stylesheets(html);
@@ -6529,7 +6278,6 @@ static nserror html_close(struct content *c)
 	 * a deferred_parser_unpause queued during script load could otherwise
 	 * fire in the window between close and destroy. */
 	macos9_schedule_cancel_owner(htmlc);
-	html_page_js_cancel(htmlc);
 
 	if (htmlc->box_conversion_context != NULL) {
 		cancel_dom_to_box(htmlc->box_conversion_context);

@@ -260,24 +260,7 @@ typedef struct html_content {
 	unsigned long last_layout_pass_id;	/* most recent render pass over
 						 * this document (paint join) */
 
-	/* Stage 1: Coalesced deferred page-JS delivery */
-	uint32_t page_js_pending;
-	uint32_t doc_generation;
-	bool page_js_scheduled;
-	void *page_js_payload;
-
-	/* Stage 1: Semantic media snapshot for media-change gating */
-	css_media media_snapshot;
-	bool media_snapshot_valid;
-
 } html_content;
-
-enum html_page_js_events {
-	HTML_PAGE_JS_MEDIA              = (1 << 0),
-	HTML_PAGE_JS_RESIZE             = (1 << 1),
-	HTML_PAGE_JS_RECONVERT_LOAD     = (1 << 2),
-	HTML_PAGE_JS_MUTATION_OBSERVER  = (1 << 3)
-};
 
 /**
  * Render padding and margin box outlines in html_redraw().

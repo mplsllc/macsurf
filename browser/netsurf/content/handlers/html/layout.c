@@ -439,14 +439,6 @@ static int layout_text_indent(
 {
 	css_fixed value = 0;
 	css_unit unit = CSS_UNIT_PX;
-	unsigned char *work;
-	unsigned char *work_p;
-	size_t col_bytes;
-	size_t excess_bytes;
-	size_t row_span_bytes;
-	size_t row_span_cell_bytes;
-	size_t xs_bytes;
-	size_t work_size;
 
 	css_computed_text_indent(style, &value, &unit);
 
@@ -2495,27 +2487,6 @@ static bool layout_multicol_layout_child(
 	return false;
 }
 
-union layout_multicol_work_align {
-	void *p;
-	double d;
-	long l;
-};
-
-static size_t
-layout_multicol_work_round(size_t n)
-{
-	size_t a = sizeof(union layout_multicol_work_align);
-	size_t r = n % a;
-
-	if (r != 0) {
-		size_t add = a - r;
-		if (n > (size_t)-1 - add)
-			return 0;
-		n += add;
-	}
-	return n;
-}
-
 static bool layout_multicol_context(
 		struct box *block,
 		int viewport_height,
@@ -2528,15 +2499,6 @@ static bool layout_multicol_context(
 	int *segment_starts;
 	int *segment_ends;
 	int *segment_targets;
-	unsigned char *work;
-	unsigned char *work_p;
-	size_t items_bytes;
-	size_t outer_bytes;
-	size_t flags_bytes;
-	size_t starts_bytes;
-	size_t ends_bytes;
-	size_t targets_bytes;
-	size_t work_size;
 	int child_count;
 	int item_index;
 	int segment_index;
@@ -2599,53 +2561,23 @@ static bool layout_multicol_context(
 		return false;
 	}
 
-	/* Six short-lived arrays used together for one multicol pass share one
-	 * aligned workspace, avoiding six allocator/free round-trips. */
-	if ((size_t)child_count > (size_t)-1 / sizeof(struct box *) ||
-			(size_t)child_count > (size_t)-1 / sizeof(int))
+	items = malloc(sizeof(struct box *) * child_count);
+	outer_heights = malloc(sizeof(int) * child_count);
+	span_all_flags = calloc((size_t)child_count, sizeof(unsigned char));
+	segment_starts = malloc(sizeof(int) * child_count);
+	segment_ends = malloc(sizeof(int) * child_count);
+	segment_targets = malloc(sizeof(int) * child_count);
+	if (items == NULL || outer_heights == NULL || span_all_flags == NULL ||
+			segment_starts == NULL || segment_ends == NULL ||
+			segment_targets == NULL) {
+		free(items);
+		free(outer_heights);
+		free(span_all_flags);
+		free(segment_starts);
+		free(segment_ends);
+		free(segment_targets);
 		return false;
-	items_bytes = layout_multicol_work_round(
-			(size_t)child_count * sizeof(struct box *));
-	outer_bytes = layout_multicol_work_round(
-			(size_t)child_count * sizeof(int));
-	flags_bytes = layout_multicol_work_round((size_t)child_count);
-	starts_bytes = layout_multicol_work_round(
-			(size_t)child_count * sizeof(int));
-	ends_bytes = layout_multicol_work_round(
-			(size_t)child_count * sizeof(int));
-	targets_bytes = layout_multicol_work_round(
-			(size_t)child_count * sizeof(int));
-	if (items_bytes == 0 || outer_bytes == 0 || flags_bytes == 0 ||
-			starts_bytes == 0 || ends_bytes == 0 || targets_bytes == 0)
-		return false;
-	work_size = items_bytes;
-	if (work_size > (size_t)-1 - outer_bytes) return false;
-	work_size += outer_bytes;
-	if (work_size > (size_t)-1 - flags_bytes) return false;
-	work_size += flags_bytes;
-	if (work_size > (size_t)-1 - starts_bytes) return false;
-	work_size += starts_bytes;
-	if (work_size > (size_t)-1 - ends_bytes) return false;
-	work_size += ends_bytes;
-	if (work_size > (size_t)-1 - targets_bytes) return false;
-	work_size += targets_bytes;
-
-	work = malloc(work_size);
-	if (work == NULL)
-		return false;
-	work_p = work;
-	items = (struct box **)work_p;
-	work_p += items_bytes;
-	outer_heights = (int *)work_p;
-	work_p += outer_bytes;
-	span_all_flags = work_p;
-	memset(span_all_flags, 0, (size_t)child_count);
-	work_p += flags_bytes;
-	segment_starts = (int *)work_p;
-	work_p += starts_bytes;
-	segment_ends = (int *)work_p;
-	work_p += ends_bytes;
-	segment_targets = (int *)work_p;
+	}
 
 	item_index = 0;
 
@@ -2662,7 +2594,12 @@ static bool layout_multicol_context(
 
 		if (!layout_multicol_layout_child(child, column_width,
 				viewport_height, block, content)) {
-			free(work);
+			free(items);
+			free(outer_heights);
+			free(span_all_flags);
+			free(segment_starts);
+			free(segment_ends);
+			free(segment_targets);
 			return false;
 		}
 
@@ -2728,7 +2665,12 @@ static bool layout_multicol_context(
 	flow_y = 0;
 	if (segment_count > 0 &&
 			layout_multicol_store_data(block, segment_count) == NULL) {
-		free(work);
+		free(items);
+		free(outer_heights);
+		free(span_all_flags);
+		free(segment_starts);
+		free(segment_ends);
+		free(segment_targets);
 		return false;
 	}
 	item_index = 0;
@@ -2769,7 +2711,12 @@ static bool layout_multicol_context(
 
 		if (segment_index >= segment_count ||
 				segment_starts[segment_index] != item_index) {
-			free(work);
+			free(items);
+			free(outer_heights);
+			free(span_all_flags);
+			free(segment_starts);
+			free(segment_ends);
+			free(segment_targets);
 			return false;
 		}
 
@@ -2828,32 +2775,15 @@ static bool layout_multicol_context(
 	if (block->height < 0)
 		block->height = 0;
 
-	free(work);
+	free(items);
+	free(outer_heights);
+	free(span_all_flags);
+	free(segment_starts);
+	free(segment_ends);
+	free(segment_targets);
 	return true;
 }
 
-
-/* Alignment unit for the single-allocation table-layout workspace. */
-union layout_table_work_align {
-	void *p;
-	double d;
-	long l;
-};
-
-static size_t
-layout_table_work_round(size_t n)
-{
-	size_t a = sizeof(union layout_table_work_align);
-	size_t r = n % a;
-
-	if (r != 0) {
-		size_t add = a - r;
-		if (n > (size_t)-1 - add)
-			return 0;
-		n += add;
-	}
-	return n;
-}
 
 /* fixes171 - Watchdog wrapper for layout_table. */
 static bool layout_table_inner(struct box *table, int available_width,
@@ -2907,14 +2837,6 @@ static bool layout_table_inner(
 	enum css_height_e htype;
 	css_fixed value = 0;
 	css_unit unit = CSS_UNIT_PX;
-	unsigned char *work;
-	unsigned char *work_p;
-	size_t col_bytes;
-	size_t excess_bytes;
-	size_t row_span_bytes;
-	size_t row_span_cell_bytes;
-	size_t xs_bytes;
-	size_t work_size;
 
 	/* fixes161e - per-call TABLE marker capped at first 100 calls
 	 * per redraw. fixes161d used %u which the writef formatter does
@@ -2940,46 +2862,20 @@ static bool layout_table_inner(
 	assert(table->children && table->children->children);
 	assert(columns);
 
-	/* One temporary allocation instead of five allocator round-trips per
-	 * table layout. Each segment is rounded to a max-alignment-sized unit. */
-	if (columns > (size_t)-1 / sizeof col[0] ||
-			columns > (size_t)-1 / sizeof excess_y[0] ||
-			columns > (size_t)-1 / sizeof row_span[0] ||
-			columns > (size_t)-1 / sizeof row_span_cell[0] ||
-			(size_t)columns + 1 > (size_t)-1 / sizeof xs[0])
+	/* allocate working buffers */
+	col = malloc(columns * sizeof col[0]);
+	excess_y = malloc(columns * sizeof excess_y[0]);
+	row_span = malloc(columns * sizeof row_span[0]);
+	row_span_cell = malloc(columns * sizeof row_span_cell[0]);
+	xs = malloc((columns + 1) * sizeof xs[0]);
+	if (!col || !xs || !row_span || !excess_y || !row_span_cell) {
+		free(col);
+		free(excess_y);
+		free(row_span);
+		free(row_span_cell);
+		free(xs);
 		return false;
-	col_bytes = layout_table_work_round((size_t)columns * sizeof col[0]);
-	excess_bytes = layout_table_work_round((size_t)columns * sizeof excess_y[0]);
-	row_span_bytes = layout_table_work_round((size_t)columns * sizeof row_span[0]);
-	row_span_cell_bytes = layout_table_work_round(
-			(size_t)columns * sizeof row_span_cell[0]);
-	xs_bytes = layout_table_work_round(((size_t)columns + 1) * sizeof xs[0]);
-	if (col_bytes == 0 || excess_bytes == 0 || row_span_bytes == 0 ||
-			row_span_cell_bytes == 0 || xs_bytes == 0)
-		return false;
-	work_size = col_bytes;
-	if (work_size > (size_t)-1 - excess_bytes) return false;
-	work_size += excess_bytes;
-	if (work_size > (size_t)-1 - row_span_bytes) return false;
-	work_size += row_span_bytes;
-	if (work_size > (size_t)-1 - row_span_cell_bytes) return false;
-	work_size += row_span_cell_bytes;
-	if (work_size > (size_t)-1 - xs_bytes) return false;
-	work_size += xs_bytes;
-
-	work = malloc(work_size);
-	if (work == NULL)
-		return false;
-	work_p = work;
-	col = (struct column *)work_p;
-	work_p += col_bytes;
-	excess_y = (int *)work_p;
-	work_p += excess_bytes;
-	row_span = (unsigned int *)work_p;
-	work_p += row_span_bytes;
-	row_span_cell = (struct box **)work_p;
-	work_p += row_span_cell_bytes;
-	xs = (int *)work_p;
+	}
 
 	memcpy(col, table->col, sizeof(col[0]) * columns);
 
@@ -3415,7 +3311,11 @@ static bool layout_table_inner(
 
 				c->height = AUTO;
 				if (!layout_block_context(c, -1, content)) {
-					free(work);
+					free(col);
+					free(excess_y);
+					free(row_span);
+					free(row_span_cell);
+					free(xs);
 					return false;
 				}
 				/* warning: c->descendant_y0 and
@@ -3563,7 +3463,11 @@ static bool layout_table_inner(
 	if (table->margin[BOTTOM] == AUTO)
 		table->margin[BOTTOM] = 0;
 
-	free(work);
+	free(col);
+	free(excess_y);
+	free(row_span);
+	free(row_span_cell);
+	free(xs);
 
 	table->width = table_width;
 	table->height = table_height;

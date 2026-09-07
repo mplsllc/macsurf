@@ -42,9 +42,6 @@ typedef struct css_select_results {
 	 * the corresponding pointer will be set to NULL
 	 */
 	css_computed_style *styles[CSS_PSEUDO_ELEMENT_COUNT];
-	/* Result-wrapper ownership count. Computed styles are immutable/interned;
-	 * sharing the wrapper avoids an allocation for reconvert Style-B reuse. */
-	uint32_t refs;
 } css_select_results;
 
 /** Opaque standalone media-query list. */
@@ -230,8 +227,6 @@ css_error css_select_style(css_select_ctx *ctx, void *node,
 		css_select_handler *handler, void *pw,
 		css_select_results **result);
 css_error css_select_results_destroy(css_select_results *results);
-css_select_results *css_select_results_ref(
-		const css_select_results *results);
 
 css_error css_select_font_faces(css_select_ctx *ctx,
 		const css_media *media,

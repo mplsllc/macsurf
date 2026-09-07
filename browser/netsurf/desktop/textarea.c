@@ -54,30 +54,7 @@ struct line_info {
 	unsigned int b_start;		/**< Byte offset of line start */
 	unsigned int b_length;		/**< Byte length of line */
 	int width;			/**< Width in pixels of line */
-	int prefix_max_width;		/**< Max width through this line */
 };
-
-/* Sorted line starts are queried on every caret move/selection update. */
-static int textarea_line_for_offset(const struct line_info *lines,
-		int line_count, unsigned int b_off)
-{
-	unsigned int lo;
-	unsigned int hi;
-	unsigned int mid;
-
-	if (lines == NULL || line_count <= 1)
-		return 0;
-	lo = 0;
-	hi = (unsigned int)line_count;
-	while (lo + 1 < hi) {
-		mid = lo + (hi - lo) / 2;
-		if (lines[mid].b_start <= b_off)
-			lo = mid;
-		else
-			hi = mid;
-	}
-	return (int)lo;
-}
 struct textarea_drag {
 	textarea_drag_type type;
 	union {
@@ -412,8 +389,10 @@ static bool textarea_set_caret_internal(struct textarea *ta, int caret_b)
 		/* Find byte offset of caret position */
 		b_off = caret_b;
 
-		/* Find line containing byte offset in logarithmic time. */
-		i = textarea_line_for_offset(ta->lines, ta->line_count, b_off);
+		/* Now find line in which byte offset appears */
+		for (i = 0; i < ta->line_count - 1; i++)
+			if (ta->lines[i + 1].b_start > b_off)
+				break;
 
 		/* Set new caret pos */
 		ta->caret_pos.line = i;
@@ -593,11 +572,15 @@ static bool textarea_select(struct textarea *ta, int b_start, int b_end,
 			}
 		}
 
-		/* Find redraw start/end lines without scanning from line zero. */
-		line_start = textarea_line_for_offset(ta->lines,
-			ta->line_count, b_low);
-		line_end = textarea_line_for_offset(ta->lines,
-			ta->line_count, b_high);
+		/* Find redraw start/end lines */
+		for (line_end = 0; line_end < ta->line_count - 1; line_end++)
+			if (ta->lines[line_end + 1].b_start > b_low) {
+				line_start = line_end;
+				break;
+			}
+		for (; line_end < ta->line_count - 1; line_end++)
+			if (ta->lines[line_end + 1].b_start > b_high)
+				break;
 
 		/* Set vertical redraw range */
 		msg.data.redraw.y0 = max(ta->border_width,
@@ -930,6 +913,14 @@ static bool textarea_reflow_singleline(struct textarea *ta, size_t b_off,
  * \param r		Modified/reduced to area where redraw is required
  * \return true on success false otherwise
  */
+#ifdef __MACOS9__
+/* fixes758 (#212) - DIAGNOSTIC ONLY: per-reflow timing + scope, to find why
+ * typing in a big multiline textarea crawls. Externs kept local so no Mac
+ * headers leak into core textarea.c. Remove with the log lines once diagnosed. */
+extern void macsurf_debug_log_writef(const char *fmt, ...);
+extern void Microseconds(UnsignedWide *microTickCount);
+#endif
+
 static bool textarea_reflow_multiline(struct textarea *ta,
 		const size_t b_start, const int b_length, struct rect *r)
 {
@@ -940,7 +931,6 @@ static bool textarea_reflow_multiline(struct textarea *ta,
 	size_t b_start_line_end;
 	int x;
 	char *space, *para_end;
-	char *para_end_cache;
 	unsigned int line; /* line count */
 	unsigned int scroll_lines;
 	int avail_width;
@@ -948,6 +938,10 @@ static bool textarea_reflow_multiline(struct textarea *ta,
 	int v_extent; /* vertical extent */
 	bool restart = false;
 	bool skip_line = false;
+#ifdef __MACOS9__
+	UnsignedWide _rt0, _rt1; int _restart_n = 0; unsigned int _start0 = 0;
+	Microseconds(&_rt0);
+#endif
 
 	assert(ta->flags & TEXTAREA_MULTILINE);
 
@@ -961,9 +955,10 @@ static bool textarea_reflow_multiline(struct textarea *ta,
 		ta->lines_alloc_size = LINE_CHUNK_SIZE;
 	}
 
-	/* Get line containing the start of the change. */
-	start = (unsigned int)textarea_line_for_offset(ta->lines,
-		ta->line_count, (unsigned int)b_start);
+	/* Get line of start of changes */
+	for (start = 0; (signed) start < ta->line_count - 1; start++)
+		if (ta->lines[start + 1].b_start > b_start)
+			break;
 
 	/* Find max number of lines before vertical scrollbar is required */
 	scroll_lines = (ta->vis_height - 2 * ta->border_width -
@@ -979,19 +974,17 @@ static bool textarea_reflow_multiline(struct textarea *ta,
 
 	/* Record original end pos of start line */
 	b_start_line_end = ta->lines[start].b_start + ta->lines[start].b_length;
+#ifdef __MACOS9__
+	_start0 = start;
+#endif
 
 	/* During layout we may decide we need to restart again from the
-	 * textarea's first line. para_end_cache is an absolute pointer into the
-	 * stable text buffer; soft wraps reuse it instead of rescanning the rest
-	 * of the same paragraph for '\n' on every visual line. */
-	para_end_cache = NULL;
+	 * textarea's first line. */
 	do {
 		/* If a vertical scrollbar has been added or removed, we need
 		 * to restart from the first line in the textarea. */
-		if (restart) {
+		if (restart)
 			start = 0;
-			para_end_cache = NULL;
-		}
 
 		/* Set current line to the starting line */
 		line = start;
@@ -1009,13 +1002,18 @@ static bool textarea_reflow_multiline(struct textarea *ta,
 		text = ta->text.data;
 
 		if (line != 0) {
-			/* Not starting at the beginning of the textarea. The prefix
-			 * maximum is maintained as lines are written, so recovering the
-			 * unchanged prefix extent is O(1), not a scan from line zero. */
+			/* Not starting at the beginning of the textarea, so
+			 * jump forward, and make sure the horizontal extents
+			 * accommodate the width of the skipped lines. */
+			unsigned int i;
 			len -= ta->lines[line].b_start;
 			text += ta->lines[line].b_start;
-			if (ta->lines[line - 1].prefix_max_width > h_extent)
-				h_extent = ta->lines[line - 1].prefix_max_width;
+
+			for (i = 0; i < line; i++) {
+				if (ta->lines[i].width > h_extent) {
+					h_extent = ta->lines[i].width;
+				}
+			}
 		}
 
 		if (ta->text.len == 1) {
@@ -1023,26 +1021,17 @@ static bool textarea_reflow_multiline(struct textarea *ta,
 			assert(ta->text.data[0] == '\0');
 			ta->lines[line].b_start = 0;
 			ta->lines[line].b_length = 0;
-			ta->lines[line].width = 0;
-			ta->lines[line].prefix_max_width =
-				(line == 0) ? 0 : ta->lines[line - 1].prefix_max_width;
-			line++;
+			ta->lines[line++].width = 0;
 			ta->line_count = 1;
 		}
 
 		restart = false;
 		for (; len > 0; len -= b_off, text += b_off) {
-			/* Find end of paragraph once. While soft-wrapping the same
-			 * paragraph, text advances but the newline pointer does not. */
-			if (para_end_cache == NULL || para_end_cache < text) {
-				for (para_end = text; para_end < text + len;
-						para_end++) {
-					if (*para_end == '\n')
-						break;
-				}
-				para_end_cache = para_end;
-			} else {
-				para_end = para_end_cache;
+			/* Find end of paragraph */
+			for (para_end = text; para_end < text + len;
+					para_end++) {
+				if (*para_end == '\n')
+					break;
 			}
 
 			/* Wrap current line in paragraph */
@@ -1094,11 +1083,7 @@ static bool textarea_reflow_multiline(struct textarea *ta,
 				 * have a newline char */
 				ta->lines[line].b_start = text - ta->text.data;
 				ta->lines[line].b_length = para_end - text;
-				ta->lines[line].width = x;
-				ta->lines[line].prefix_max_width =
-					(line == 0 || x > ta->lines[line - 1].prefix_max_width) ?
-					x : ta->lines[line - 1].prefix_max_width;
-				line++;
+				ta->lines[line++].width = x;
 
 				/* Jump newline */
 				b_off++;
@@ -1109,11 +1094,7 @@ static bool textarea_reflow_multiline(struct textarea *ta,
 					ta->lines[line].b_start = text +
 							b_off - ta->text.data;
 					ta->lines[line].b_length = 0;
-					ta->lines[line].width = x;
-					ta->lines[line].prefix_max_width =
-						(line == 0 || x > ta->lines[line - 1].prefix_max_width) ?
-						x : ta->lines[line - 1].prefix_max_width;
-					line++;
+					ta->lines[line++].width = x;
 				}
 
 				if (line > scroll_lines && ta->bar_y == NULL)
@@ -1135,11 +1116,7 @@ static bool textarea_reflow_multiline(struct textarea *ta,
 
 			ta->lines[line].b_start = text - ta->text.data;
 			ta->lines[line].b_length = b_off;
-			ta->lines[line].width = x;
-			ta->lines[line].prefix_max_width =
-				(line == 0 || x > ta->lines[line - 1].prefix_max_width) ?
-				x : ta->lines[line - 1].prefix_max_width;
-			line++;
+			ta->lines[line++].width = x;
 
 			if (line > scroll_lines && ta->bar_y == NULL)
 				break;
@@ -1170,6 +1147,9 @@ static bool textarea_reflow_multiline(struct textarea *ta,
 						ta->bar_y);
 			ta->pad_right += SCROLLBAR_WIDTH;
 			restart = true;
+#ifdef __MACOS9__
+			_restart_n++;
+#endif
 
 		} else if (line <= scroll_lines && ta->bar_y != NULL) {
 			/* Remove vertical scrollbar */
@@ -1177,6 +1157,9 @@ static bool textarea_reflow_multiline(struct textarea *ta,
 			ta->bar_y = NULL;
 			ta->pad_right -= SCROLLBAR_WIDTH;
 			restart = true;
+#ifdef __MACOS9__
+			_restart_n++;
+#endif
 		}
 	} while (restart);
 
@@ -1204,6 +1187,13 @@ static bool textarea_reflow_multiline(struct textarea *ta,
 	ta->h_extent = h_extent;
 	ta->v_extent = v_extent;
 	ta->line_count = line;
+#ifdef __MACOS9__
+	Microseconds(&_rt1);
+	macsurf_debug_log_writef(
+		"RECON TAref len=%ld start=%ld lines=%ld restart=%d dt=%ldus",
+		(long)ta->text.len, (long)_start0, (long)line, _restart_n,
+		(long)(_rt1.lo - _rt0.lo));
+#endif
 
 	/* Update start line end byte pos, if it's increased */
 	if (ta->lines[start].b_start + ta->lines[start].b_length >

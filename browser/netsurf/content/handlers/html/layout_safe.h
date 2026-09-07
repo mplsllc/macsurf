@@ -165,7 +165,7 @@ static int layout_dim_clamp(int v)
  * is given; an artificial budget just converts "loads slowly"
  * into "doesn't load". The wrapper machinery stays so the
  * breadcrumb still fires on layout_document entry for crash
- * forensics, but the recursive enter/exit gates compile away.
+ * forensics, but layout_watchdog_enter is a pure pass-through.
  *
  * If the platform's thread stack genuinely overflows, that's
  * a real crash worth fixing at the recursion site, not papering
@@ -184,18 +184,57 @@ extern int macsurf_flex_layout_cache_enabled;
 
 /* macsurf_layout_watchdog_reset() and macsurf_layout_breadcrumb()
  * are real functions (defined in layout.c) so they can do I/O and
- * carry mutable state at document scope. */
+ * carry mutable state. The inline-static enter/exit helpers below
+ * are tiny enough to live in the header. */
 extern void macsurf_layout_watchdog_reset(void);
 extern void macsurf_layout_breadcrumb(const char *phase, const void *box);
 
 /**
- * Disabled recursive watchdog gates.  These used to be tiny static functions,
- * but C89 gives CW8 no inline guarantee; on deeply nested pages that left a
- * call/return pair at every recursive layout entry and exit despite the bodies
- * being pure no-ops.  Keep the call sites/source shape for easy restoration,
- * but compile them to constants in the no-budget configuration.
+ * Watchdog gate at the entry of every recursive layout function.
+ *
+ * Returns 1 if either the depth cap or the iteration budget has
+ * been exceeded. Callers MUST bail out with the zero-height block
+ * fallback in that case (do NOT call layout_watchdog_exit). On a
+ * return of 0 the caller has been counted in and must pair with
+ * layout_watchdog_exit() before returning.
  */
-#define layout_watchdog_enter(box) ((void)(box), 0)
-#define layout_watchdog_exit() ((void)0)
+static int layout_watchdog_enter(const void *box)
+{
+	(void)box;
+	/* Counters tracked so the breadcrumb / SITE log can report
+	 * peak depth and total call count for diagnostics, but the
+	 * function NEVER returns 1: there is no budget. The browser
+	 * loads whatever it is given. */
+	macsurf_layout_calls++;
+	macsurf_layout_depth++;
+	/* fixes848b (#167 perf investigation) - a hardware log on a heavy
+	 * Facebook page showed box+cascade finish in ~5s but NO LAYPROF
+	 * line at all after a minute of runtime, meaning layout_document()
+	 * itself is what's taking so long (or is genuinely stuck). Without
+	 * this, "grinding through millions of layout calls on a huge deep
+	 * tree" and "stuck in a real loop somewhere outside the layout call
+	 * graph" (font measurement, a retry loop, etc.) look IDENTICAL from
+	 * the outside - nothing else in this pass logs anything visible.
+	 * This is the single hottest entry point in layout, so the check
+	 * must be nearly free the other 99999/100000 times; only the
+	 * modulo, and only a WORK line every 100k calls. If the next
+	 * hardware log shows this count climbing steadily, it's real (if
+	 * slow) forward progress - an algorithmic complexity problem, not a
+	 * hang. If it stops climbing, that pinpoints the hang outside this
+	 * call graph entirely. */
+	if ((macsurf_layout_calls % 100000L) == 0) {
+		extern void macsurf_debug_log_writef(const char *fmt, ...);
+		macsurf_debug_log_writef(
+			"WORK layout progress: calls=%ld depth=%d",
+			macsurf_layout_calls, macsurf_layout_depth);
+	}
+	return 0;
+}
+
+static void layout_watchdog_exit(void)
+{
+	if (macsurf_layout_depth > 0)
+		macsurf_layout_depth--;
+}
 
 #endif /* NETSURF_HTML_LAYOUT_SAFE_H */

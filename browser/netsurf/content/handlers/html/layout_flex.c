@@ -239,7 +239,6 @@ struct flex_ctx {
 		size_t count;
 		size_t alloc;
 		struct flex_line_data *data;
-		struct flex_line_data first;
 	} line;
 };
 
@@ -251,9 +250,8 @@ struct flex_ctx {
 static void layout_flex_ctx__destroy(struct flex_ctx *ctx)
 {
 	if (ctx != NULL) {
-		if (ctx->line.data != &ctx->line.first)
-			free(ctx->line.data);
-		/* item.data is the tail of the ctx allocation. */
+		free(ctx->item.data);
+		free(ctx->line.data);
 		free(ctx);
 	}
 }
@@ -270,25 +268,26 @@ static struct flex_ctx *layout_flex_ctx__create(
 		const struct box *flex)
 {
 	struct flex_ctx *ctx;
-	size_t item_count;
-	size_t alloc_size;
 
-	item_count = box_count_children(flex);
-	if (item_count > (((size_t)-1 - sizeof(*ctx)) /
-			sizeof(struct flex_item_data))) {
-		return NULL;
-	}
-	alloc_size = sizeof(*ctx) +
-		item_count * sizeof(struct flex_item_data);
-	ctx = calloc(1, alloc_size);
+	ctx = calloc(1, sizeof(*ctx));
 	if (ctx == NULL) {
 		return NULL;
 	}
-
-	ctx->item.count = item_count;
-	ctx->item.data = (struct flex_item_data *)(ctx + 1);
 	ctx->line.alloc = 1;
-	ctx->line.data = &ctx->line.first;
+
+	ctx->item.count = box_count_children(flex);
+	ctx->item.data = calloc(ctx->item.count, sizeof(*ctx->item.data));
+	if (ctx->item.data == NULL) {
+		layout_flex_ctx__destroy(ctx);
+		return NULL;
+	}
+
+	ctx->line.alloc = 1;
+	ctx->line.data = calloc(ctx->line.alloc, sizeof(*ctx->line.data));
+	if (ctx->line.data == NULL) {
+		layout_flex_ctx__destroy(ctx);
+		return NULL;
+	}
 
 	ctx->flex = flex;
 	ctx->content = content;
@@ -395,7 +394,7 @@ static bool layout_flex_item(
 	 * laid out fine in 247ms).
 	 *
 	 * Correctness invariant for the skip: a box laid out is a
-	 * deterministic function of (available_width, b->width, b->style, content) -- its
+	 * deterministic function of (b->width, b->style, content) -- its
 	 * position (x/y) is assigned by the parent AFTER this returns and
 	 * doesn't feed the box's own content layout. So if, on re-entry, the
 	 * box's width AND height are byte-identical to what they were
@@ -408,9 +407,38 @@ static bool layout_flex_item(
 	 * height too is exactly what makes that stretch re-layout still fire.
 	 * Flex/grid items are block-formatting-context roots, so a skipped
 	 * re-layout has no float-escape side effect on ancestors. */
+	/* fixes1306 (#167, C0) - the FLEXITEM diagnostic (fixes1302/1304)
+	 * shows a nested flex item's base_size (captured right after THIS
+	 * function returns, per fixes1303) disagreeing with that SAME
+	 * box's memoized flex_layout_height moments later inside the SAME
+	 * parent's layout_flex_inner call -- e.g. base=23286 but
+	 * cache_h=1441, both supposedly read from this one box after this
+	 * one function. That should be impossible if layout_flex_item runs
+	 * (for this box, this pass) exactly once before the read. Log every
+	 * call for nested flex/inline-flex items specifically (not every
+	 * box on the page -- bounded to the exact shape of the bug) so the
+	 * next hardware run shows definitively whether it's called more
+	 * than once per pass, memo-hit or not, and what height each call
+	 * sees. */
+	if (b->type == BOX_FLEX || b->type == BOX_INLINE_FLEX) {
+		macsurf_debug_log_writef(
+			"LIFE FLEXITEMCALL box=%p avail_w=%d b_w=%d b_h=%d "
+			"gen=%d cache_gen=%d cache_w=%d cache_h=%d "
+			"memo_hit=%d",
+			(void *)b, available_width, (int)b->width,
+			(int)b->height, (int)macsurf_layout_pass_gen,
+			(int)b->flex_layout_gen, (int)b->flex_layout_width,
+			(int)b->flex_layout_height,
+			(macsurf_flex_layout_cache_enabled &&
+				b->flex_layout_gen == macsurf_layout_pass_gen &&
+				b->flex_layout_width == available_width &&
+				b->flex_layout_width == b->width &&
+				b->flex_layout_height == b->height) ? 1 : 0);
+	}
+
 	if (macsurf_flex_layout_cache_enabled &&
 			b->flex_layout_gen == macsurf_layout_pass_gen &&
-			b->flex_layout_available_width == available_width &&
+			b->flex_layout_width == available_width &&
 			b->flex_layout_width == b->width &&
 			b->flex_layout_height == b->height) {
 		return true;
@@ -462,7 +490,6 @@ static bool layout_flex_item(
 	 * failed/degraded item is left un-memoed so it is retried, not pinned. */
 	if (success) {
 		b->flex_layout_gen = macsurf_layout_pass_gen;
-		b->flex_layout_available_width = available_width;
 		b->flex_layout_width = b->width;
 		b->flex_layout_height = b->height;
 	}
@@ -855,14 +882,7 @@ static bool layout_flex_ctx__ensure_line(struct flex_ctx *ctx)
 		return true;
 	}
 
-	if (ctx->line.data == &ctx->line.first) {
-		temp = malloc(sizeof(*ctx->line.data) * line_alloc);
-		if (temp != NULL)
-			temp[0] = ctx->line.first;
-	} else {
-		temp = realloc(ctx->line.data,
-			sizeof(*ctx->line.data) * line_alloc);
-	}
+	temp = realloc(ctx->line.data, sizeof(*ctx->line.data) * line_alloc);
 	if (temp == NULL) {
 		return false;
 	}
@@ -2117,6 +2137,39 @@ static bool layout_flex_inner(struct box *flex, int available_width,
 	struct flex_ctx *ctx;
 	bool success = false;
 
+	/* fixes161e - per-call FLEX marker capped at first 200 calls per
+	 * redraw. Counter resets when macsurf_layout_seq changes
+	 * (incremented in layout_document). Child count walks flex->children
+	 * once; capped at 999 as a safety. Prime suspect for both apple and
+	 * huffpost; per-call granularity will pin the exact box. */
+	{
+		extern long macsurf_layout_seq;
+		static long macsurf_flex_calls = 0;
+		static long macsurf_flex_seq = -1;
+		int macsurf_flex_children = 0;
+		struct box *macsurf_flex_c;
+		if (macsurf_flex_seq != macsurf_layout_seq) {
+			macsurf_flex_calls = 0;
+			macsurf_flex_seq = macsurf_layout_seq;
+		}
+		macsurf_flex_calls++;
+		if (macsurf_flex_calls <= 200) {
+			for (macsurf_flex_c = flex->children;
+			     macsurf_flex_c != NULL;
+			     macsurf_flex_c = macsurf_flex_c->next) {
+				macsurf_flex_children++;
+				if (macsurf_flex_children > 999)
+					break;
+			}
+			macsurf_debug_log_writef(
+				"LAYOUTPHASE flex #%ld box=%p type=%d w=%d h=%d children=%d",
+				macsurf_flex_calls, (void *)flex,
+				(int)flex->type,
+				(int)flex->width, (int)flex->height,
+				macsurf_flex_children);
+		}
+	}
+
 	ctx = layout_flex_ctx__create(content, flex);
 	if (ctx == NULL) {
 		return false;
@@ -2258,6 +2311,22 @@ static bool layout_flex_inner(struct box *flex, int available_width,
 	/* fixes166 -- shared FLEXPHASE probes capped at first 200 flex calls
 	 * per redraw (same cap as the entry-FLEX marker). Tags each phase
 	 * with the flex box pointer so apple's crash site can be localized. */
+	{
+		extern long macsurf_layout_seq;
+		static long macsurf_flexphase_seq = -1;
+		static long macsurf_flexphase_calls = 0;
+		if (macsurf_flexphase_seq != macsurf_layout_seq) {
+			macsurf_flexphase_calls = 0;
+			macsurf_flexphase_seq = macsurf_layout_seq;
+		}
+		macsurf_flexphase_calls++;
+		if (macsurf_flexphase_calls <= 200) {
+			macsurf_debug_log_writef(
+				"FLEXPHASE box=%p pre-populate avail_main=%d cross=%d",
+				(void *)flex, (int)ctx->available_main,
+				(int)ctx->available_cross);
+		}
+	}
 
 	/* fixes167b - populate now returns bool. A failing child kicks
 	 * the whole container into block-flow fallback. */
@@ -2270,10 +2339,27 @@ static bool layout_flex_inner(struct box *flex, int available_width,
 				content);
 	}
 
-	/* Order items before placing them on lines. The line collector is the
-	 * actual flex-layout step: without it, ctx->line.count stays zero and
-	 * placement continues with an unfinished container. */
+	{
+		extern long macsurf_layout_seq;
+		static long macsurf_flexphase2_seq = -1;
+		static long macsurf_flexphase2_calls = 0;
+		if (macsurf_flexphase2_seq != macsurf_layout_seq) {
+			macsurf_flexphase2_calls = 0;
+			macsurf_flexphase2_seq = macsurf_layout_seq;
+		}
+		macsurf_flexphase2_calls++;
+		if (macsurf_flexphase2_calls <= 200) {
+			macsurf_debug_log_writef(
+				"FLEXPHASE box=%p post-populate items=%d",
+				(void *)flex, (int)ctx->item.count);
+		}
+	}
+
+	/* fixes41 -- re-order items by computed `order` before they go
+	 * onto lines. Stable so equal-order items keep DOM order. */
 	layout_flex__order_items(ctx);
+
+	/* Place items onto lines. */
 	success = layout_flex__collect_items_into_lines(ctx);
 	if (!success) {
 		layout_flex_ctx__destroy(ctx);
@@ -2297,9 +2383,41 @@ static bool layout_flex_inner(struct box *flex, int available_width,
 				content);
 	}
 
+	{
+		extern long macsurf_layout_seq;
+		static long macsurf_flexphase3_seq = -1;
+		static long macsurf_flexphase3_calls = 0;
+		if (macsurf_flexphase3_seq != macsurf_layout_seq) {
+			macsurf_flexphase3_calls = 0;
+			macsurf_flexphase3_seq = macsurf_layout_seq;
+		}
+		macsurf_flexphase3_calls++;
+		if (macsurf_flexphase3_calls <= 200) {
+			macsurf_debug_log_writef(
+				"FLEXPHASE box=%p post-collect lines=%d main=%d cross=%d",
+				(void *)flex, (int)ctx->line.count,
+				(int)ctx->main_size, (int)ctx->cross_size);
+		}
+	}
 
 	layout_flex__place_lines(ctx);
 
+	{
+		extern long macsurf_layout_seq;
+		static long macsurf_flexphase4_seq = -1;
+		static long macsurf_flexphase4_calls = 0;
+		if (macsurf_flexphase4_seq != macsurf_layout_seq) {
+			macsurf_flexphase4_calls = 0;
+			macsurf_flexphase4_seq = macsurf_layout_seq;
+		}
+		macsurf_flexphase4_calls++;
+		if (macsurf_flexphase4_calls <= 200) {
+			macsurf_debug_log_writef(
+				"FLEXPHASE box=%p post-place main=%d cross=%d h=%d",
+				(void *)flex, (int)ctx->main_size,
+				(int)ctx->cross_size, (int)flex->height);
+		}
+	}
 
 	if (flex->height == AUTO) {
 		flex->height = ctx->horizontal ?
@@ -2351,6 +2469,22 @@ static bool layout_flex_inner(struct box *flex, int available_width,
 	 * on the success path, so 'cleanup:' is no longer needed as a
 	 * label. The exit FLEXPHASE probe still fires for the success
 	 * case. */
+	{
+		extern long macsurf_layout_seq;
+		static long macsurf_flexphase5_seq = -1;
+		static long macsurf_flexphase5_calls = 0;
+		if (macsurf_flexphase5_seq != macsurf_layout_seq) {
+			macsurf_flexphase5_calls = 0;
+			macsurf_flexphase5_seq = macsurf_layout_seq;
+		}
+		macsurf_flexphase5_calls++;
+		if (macsurf_flexphase5_calls <= 200) {
+			macsurf_debug_log_writef(
+				"FLEXPHASE box=%p exit success=%d w=%d h=%d",
+				(void *)flex, (int)success,
+				(int)flex->width, (int)flex->height);
+		}
+	}
 	layout_flex_ctx__destroy(ctx);
 
 	NSLOG(flex, DEEPDEBUG, "box %p: %s: w: %i, h: %i", flex,

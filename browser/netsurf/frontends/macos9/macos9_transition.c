@@ -160,8 +160,6 @@ void macsurf_transition_init(void)
         g_effects[i].in_use = false;
         g_effects[i].node = NULL;
         g_effects[i].diag_milestones = 0;
-        g_effects[i].owner_content = NULL;
-        g_effects[i].owner_doc = NULL;
     }
     g_effect_count = 0;
     g_sched_armed = false;
@@ -177,8 +175,6 @@ void macsurf_transition_reset(void)
         }
         g_effects[i].in_use = false;
         g_effects[i].diag_milestones = 0;
-        g_effects[i].owner_content = NULL;
-        g_effects[i].owner_doc = NULL;
     }
     g_effect_count = 0;
     g_sched_armed = false;
@@ -293,8 +289,6 @@ int macsurf_transition_create(dom_node *node, uint32_t prop,
                 dom_node_unref(e->node);
                 e->in_use = false;
                 e->node = NULL;
-                e->owner_content = NULL;
-                e->owner_doc = NULL;
                 g_effect_count--;
                 schedule_tick_if_needed();
                 return 0;
@@ -322,8 +316,6 @@ int macsurf_transition_create(dom_node *node, uint32_t prop,
     e->start_value = start_value;
     e->target_value = target_value;
     e->diag_milestones = 0;
-    e->owner_content = NULL;
-    e->owner_doc = NULL;
     {
         int delay_ticks = macsurf_transition_fixed_to_ticks(delay);
         int duration_ticks = macsurf_transition_fixed_to_ticks(duration);
@@ -337,8 +329,6 @@ int macsurf_transition_create(dom_node *node, uint32_t prop,
             dom_node_unref(e->node);
             e->in_use = false;
             e->node = NULL;
-            e->owner_content = NULL;
-            e->owner_doc = NULL;
             return 0;
         }
     }
@@ -436,8 +426,6 @@ void macsurf_transition_tick(void *p)
                 /* complete: retire */
                 dom_node_unref(g_effects[i].node);
                 g_effects[i].node = NULL;
-                g_effects[i].owner_content = NULL;
-                g_effects[i].owner_doc = NULL;
                 g_effects[i].in_use = false;
                 g_effect_count--;
                 continue;
@@ -492,70 +480,8 @@ void macsurf_transition_node_destroy(dom_node *node)
         if (g_effects[i].in_use && g_effects[i].node == node) {
             dom_node_unref(g_effects[i].node);
             g_effects[i].node = NULL;
-            g_effects[i].owner_content = NULL;
-            g_effects[i].owner_doc = NULL;
             g_effects[i].in_use = false;
             g_effect_count--;
-        }
-    }
-    schedule_tick_if_needed();
-}
-
-void macsurf_transition_set_owner(dom_node *node, uint32_t prop,
-        struct html_content *c, struct dom_document *doc)
-{
-    int slot = find_effect(node, prop);
-    if (slot >= 0) {
-        g_effects[slot].owner_content = c;
-        g_effects[slot].owner_doc = doc;
-    }
-}
-
-void macsurf_transition_retire_content(struct html_content *c)
-{
-    int i;
-    if (c == NULL) return;
-    for (i = 0; i < MACSURF_TRANSITION_MAX_ACTIVE; i++) {
-        if (!g_effects[i].in_use) continue;
-        if (g_effects[i].owner_content == c) {
-            dom_node_unref(g_effects[i].node);
-            g_effects[i].node = NULL;
-            g_effects[i].owner_content = NULL;
-            g_effects[i].owner_doc = NULL;
-            g_effects[i].in_use = false;
-            g_effect_count--;
-        }
-    }
-    schedule_tick_if_needed();
-}
-
-void macsurf_transition_retire_document(struct dom_document *doc)
-{
-    int i;
-    struct dom_document *ndoc = NULL;
-    if (doc == NULL) return;
-    for (i = 0; i < MACSURF_TRANSITION_MAX_ACTIVE; i++) {
-        if (!g_effects[i].in_use) continue;
-        if (g_effects[i].owner_doc == doc) {
-            dom_node_unref(g_effects[i].node);
-            g_effects[i].node = NULL;
-            g_effects[i].owner_content = NULL;
-            g_effects[i].owner_doc = NULL;
-            g_effects[i].in_use = false;
-            g_effect_count--;
-        } else if (g_effects[i].owner_doc == NULL && g_effects[i].node != NULL) {
-            ndoc = NULL;
-            if (dom_node_get_owner_document(g_effects[i].node, &ndoc) == DOM_NO_ERR && ndoc != NULL) {
-                if (ndoc == doc) {
-                    dom_node_unref(g_effects[i].node);
-                    g_effects[i].node = NULL;
-                    g_effects[i].owner_content = NULL;
-                    g_effects[i].owner_doc = NULL;
-                    g_effects[i].in_use = false;
-                    g_effect_count--;
-                }
-                dom_node_unref((dom_node *)ndoc);
-            }
         }
     }
     schedule_tick_if_needed();
@@ -576,7 +502,7 @@ bool macsurf_transition_handle_style_change(struct html_content *c, dom_node *no
     int match_idx = -1;
     css_effective_transition_descriptor desc;
     uint32_t i;
-    struct dom_document *doc = NULL;
+    (void)c;
     if (node == NULL || old_style == NULL || new_style == NULL) return false;
     type_a = css_computed_opacity(old_style, &op_a);
     type_b = css_computed_opacity(new_style, &op_b);
@@ -613,30 +539,10 @@ bool macsurf_transition_handle_style_change(struct html_content *c, dom_node *no
     duration = desc.duration;
     timing = desc.timing;
     if (duration == 0) return false;
-#ifdef __MACOS9__
-    /* Most style changes do not create transitions. Defer the toolbox clock
-     * read until opacity changed, a matching descriptor exists, and duration
-     * is non-zero. */
-    if (now == MACSURF_TRANSITION_NOW_AUTO)
-        now = (uint32_t)TickCount();
-#endif
     /* create/replace via generic engine */
     {
         int created = macsurf_transition_create(node, CSS_PROP_OPACITY,
             op_a, op_b, delay, duration, timing, now, (dom_node *)old_style);
-        if (created) {
-            int slot = find_effect(node, CSS_PROP_OPACITY);
-            if (slot >= 0) {
-                g_effects[slot].owner_content = c;
-                doc = NULL;
-                if (dom_node_get_owner_document(node, &doc) == DOM_NO_ERR && doc != NULL) {
-                    g_effects[slot].owner_doc = doc;
-                    dom_node_unref((dom_node *)doc);
-                } else {
-                    g_effects[slot].owner_doc = NULL;
-                }
-            }
-        }
 #ifdef __MACOS9__
         TRANSITION_DIAG(("LIFE 2B2 hook node=%p old=%d new=%d desc=%ld match=%d dur=%d delay=%d timing=%d create=%d active=%d",
             (void *)node, (int)op_a, (int)op_b, (long)count, match_idx,

@@ -1277,7 +1277,6 @@ static css_error css_select__initialise_selection_state(
 	if (state->results == NULL) {
 		return CSS_NOMEM;
 	}
-	state->results->refs = 1;
 
 	error = css__create_node_data(&state->node_data);
 	if (error != CSS_OK) {
@@ -1794,11 +1793,6 @@ css_error css_select_results_destroy(css_select_results *results)
 	if (results == NULL)
 		return CSS_BADPARM;
 
-	if (results->refs > 1) {
-		results->refs--;
-		return CSS_OK;
-	}
-
 	for (i = 0; i < CSS_PSEUDO_ELEMENT_COUNT; i++) {
 		if (results->styles[i] != NULL)
 			css_computed_style_destroy(results->styles[i]);
@@ -1808,23 +1802,6 @@ css_error css_select_results_destroy(css_select_results *results)
 
 	return CSS_OK;
 }
-
-/* MacSurf reconvert fast path: share the immutable result wrapper itself. */
-css_select_results *css_select_results_ref(const css_select_results *results)
-{
-	css_select_results *shared;
-
-	if (results == NULL)
-		return NULL;
-	shared = (css_select_results *)results;
-	if (shared->refs == 0)
-		shared->refs = 1;
-	if (shared->refs == 0xffffffffUL)
-		return NULL;
-	shared->refs++;
-	return shared;
-}
-
 
 /**
  * Search a selection context for defined font faces

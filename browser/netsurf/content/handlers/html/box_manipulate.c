@@ -51,21 +51,38 @@
  * both hardware crashes. Read by html.c. */
 unsigned long macsurf_box_backlink_cleared = 0;
 
-/* The recently-freed-box ring was diagnostic scaffolding for the resolved
- * reconvert double-free hunt. Keeping it active costs global writes for every
- * box destructor and permanently reserves the static ring. Retain the exported
- * hooks because talloc's fatal diagnostic references them, but make normal
- * teardown allocation- and write-free. */
+/* fixes908 -- recently-freed-box ring for the reconvert double-free hunt.
+ * box_talloc_destructor is the single choke point every box passes through on
+ * its FIRST free (via box_free_box, or via talloc_free(tree) recursion -- talloc
+ * runs the destructor per chunk). Recording (box, during-label) here lets the
+ * talloc double-free abort in talloc.c report WHERE the box was first freed --
+ * the missing half of the picture (the second-free path is the live during=
+ * label). 4096 slots so a whole heavy-page tree-free does not evict the target
+ * before the double-free lands. Diagnostic only. */
+#define MACSURF_BOXFREE_RING 4096
+static void *g_boxfree_ptr[MACSURF_BOXFREE_RING];
+static const char *g_boxfree_ctx[MACSURF_BOXFREE_RING];
+static int g_boxfree_ix = 0;
+
 void macsurf_box_freed_note(void *box, const char *ctx)
 {
-	(void)box;
-	(void)ctx;
+	g_boxfree_ptr[g_boxfree_ix] = box;
+	g_boxfree_ctx[g_boxfree_ix] = (ctx != NULL) ? ctx : "(null)";
+	g_boxfree_ix++;
+	if (g_boxfree_ix >= MACSURF_BOXFREE_RING) {
+		g_boxfree_ix = 0;
+	}
 }
 
 const char *macsurf_box_freed_lookup(void *box)
 {
-	(void)box;
-	return "(boxfree-diag-disabled)";
+	int i;
+	for (i = 0; i < MACSURF_BOXFREE_RING; i++) {
+		if (g_boxfree_ptr[i] == box) {
+			return g_boxfree_ctx[i];
+		}
+	}
+	return "(not-in-ring)";
 }
 
 /**
@@ -77,11 +94,12 @@ const char *macsurf_box_freed_lookup(void *box)
 static int box_talloc_destructor(struct box *b)
 {
 	struct html_scrollbar_data *data;
-	css_custom_env *env;
-	css_select_results *styles;
-	css_computed_style *st;
-	struct box *cur = NULL;
-	void *old_ud = NULL;
+
+	/* fixes908 -- note this box's first free + the free path in flight. */
+	{
+		extern const char *macsurf_talloc_free_ctx;
+		macsurf_box_freed_note(b, macsurf_talloc_free_ctx);
+	}
 
 	/* fixes1076 - free an ORPHAN form control here, not only in
 	 * box_free_box.
@@ -117,31 +135,14 @@ static int box_talloc_destructor(struct box *b)
 		b->gadget = NULL;
 	}
 
-	/* fixes1268c (#167) - release this box's reference to its
-	 * custom-property environment. Guarded by !CLONE alongside
-	 * styles: a CLONE box shares both with its original and must
-	 * not drop a reference it never took. Detach custom_env BEFORE
-	 * styles. */
-	if (b->custom_env != NULL) {
-		env = b->custom_env;
-		b->custom_env = NULL;
-		if (!(b->flags & CLONE)) {
-			css_custom_env_unref(env);
-		}
-	}
-
 	if ((b->flags & STYLE_OWNED) && b->style != NULL) {
-		st = b->style;
+		css_computed_style_destroy(b->style);
 		b->style = NULL;
-		css_computed_style_destroy(st);
 	}
 
 	if (b->styles != NULL) {
-		styles = b->styles;
+		css_select_results_destroy(b->styles);
 		b->styles = NULL;
-		if (!(b->flags & CLONE)) {
-			css_select_results_destroy(styles);
-		}
 	}
 
 	if (b->href != NULL)
@@ -178,14 +179,15 @@ static int box_talloc_destructor(struct box *b)
 		 * An unconditional clear here would null the LIVE tree's back-pointer
 		 * and break box_for_node for the page that just rendered. Only ever
 		 * retract our own backlink. */
-		cur = NULL;
+		struct box *cur = NULL;
 		if (dom_node_get_user_data(b->node,
 				corestring_dom___ns_key_box_node_data,
 				&cur) == DOM_NO_ERR && cur == b) {
-			old_ud = NULL;
+			void *old_ud = NULL;
 			(void) dom_node_set_user_data(b->node,
 					corestring_dom___ns_key_box_node_data,
 					NULL, NULL, &old_ud);
+			macsurf_box_backlink_cleared++;
 		}
 		dom_node_unref(b->node);
 	}
@@ -221,10 +223,9 @@ box_create(css_select_results *styles,
 	   lwc_string *id,
 	   void *context)
 {
+	unsigned int i;
 	struct box *box;
 
-	/* talloc_zero has already cleared every ordinary zero/NULL field.
-	 * Only initialise non-zero sentinels/defaults and caller-owned refs here. */
 	box = talloc_zero(context, struct box);
 	if (!box) {
 		return 0;
@@ -233,19 +234,51 @@ box_create(css_select_results *styles,
 	talloc_set_destructor(box, box_talloc_destructor);
 
 	box->type = BOX_INLINE;
-	if (style_owned)
-		box->flags = STYLE_OWNED;
+	box->flags = 0;
+	box->flags = style_owned ? (box->flags | STYLE_OWNED) : box->flags;
 	box->styles = styles;
 	box->style = style;
+	box->x = box->y = 0;
 	box->width = UNKNOWN_WIDTH;
+	box->height = 0;
+	box->descendant_x0 = box->descendant_y0 = 0;
+	box->descendant_x1 = box->descendant_y1 = 0;
+	for (i = 0; i != 4; i++)
+		box->margin[i] = box->padding[i] = box->border[i].width = 0;
+	box->scroll_x = box->scroll_y = NULL;
+	box->min_width = 0;
 	box->max_width = UNKNOWN_MAX_WIDTH;
+	box->byte_offset = 0;
+	box->text = NULL;
+	box->length = 0;
+	box->space = 0;
 	box->href = (href == NULL) ? NULL : nsurl_ref(href);
 	box->target = target;
 	box->title = title;
 	box->columns = 1;
 	box->rows = 1;
+	box->start_column = 0;
+	box->next = NULL;
+	box->prev = NULL;
+	box->children = NULL;
+	box->last = NULL;
+	box->parent = NULL;
+	box->inline_end = NULL;
+	box->float_children = NULL;
+	box->float_container = NULL;
+	box->next_float = NULL;
+	box->cached_place_below_level = 0;
 	box->list_value = 1;
+	box->list_marker = NULL;
+	box->col = NULL;
+	box->gadget = NULL;
+	box->usemap = NULL;
 	box->id = id;
+	box->background = NULL;
+	box->object = NULL;
+	box->object_params = NULL;
+	box->iframe = NULL;
+	box->node = NULL;
 
 	return box;
 }
@@ -337,12 +370,31 @@ void box_free(struct box *box)
 /* Exported function documented in html/box.h */
 void box_free_box(struct box *box)
 {
-	if (box == NULL)
-		return;
+	if (!(box->flags & CLONE)) {
+		/* fixes1076 - NULL it. box_free_box ends in talloc_free(box),
+		 * which runs box_talloc_destructor, which now also frees an
+		 * orphan gadget; without clearing the pointer here that path
+		 * would free the same control twice. */
+		if (box->gadget) {
+			form_free_control(box->gadget);
+			box->gadget = NULL;
+		}
+		if (box->scroll_x != NULL)
+			scrollbar_destroy(box->scroll_x);
+		if (box->scroll_y != NULL)
+			scrollbar_destroy(box->scroll_y);
+		if (box->styles != NULL)
+			css_select_results_destroy(box->styles);
+		/* fixes1268c (#167) - release this box's reference to its
+		 * custom-property environment. Guarded by !CLONE alongside
+		 * styles: a CLONE box shares both with its original and must
+		 * not drop a reference it never took. */
+		if (box->custom_env != NULL) {
+			css_custom_env_unref(box->custom_env);
+			box->custom_env = NULL;
+		}
+	}
 
-	/* Canonical release point is box_talloc_destructor. Freeing the box
-	 * runs the talloc destructor, which handles custom_env, styles, orphan
-	 * gadgets, scrollbars, and node backlinks while respecting CLONE flags. */
 	talloc_free(box);
 }
 

@@ -20,9 +20,6 @@
 #ifndef MACSURF_DIAG_H
 #define MACSURF_DIAG_H
 
-#include <stdint.h>
-#include <stdbool.h>
-
 /* Wire-request lifecycle state (small ints; netsummary maps to text). */
 enum ms_req_state {
 	MS_REQ_UNKNOWN = 0,
@@ -352,137 +349,13 @@ enum ms_io_event_type {
 	MS_IO_QUERY,
 	MS_IO_CHECK,
 	MS_IO_CALLBACK,
-	MS_IO_SKIP,       /* timer fired but el already unobserved */
-	MS_IO_UNOBSERVE,  /* unobserve() called */
-	MS_IO_DISCONNECT  /* disconnect() called */
+	MS_IO_SKIP,
+	MS_IO_UNOBSERVE,
+	MS_IO_DISCONNECT
 };
 
 void ms_diag_io_record(unsigned long io_id, int ev_type, const char *target_name,
 	long x, long y, long w, long h, int intersecting, int ratio_pct, int entries);
 long macsurf_diag_serialize_io(char *buf, long cap);
-long macsurf_diag_serialize_capabilities(char *buf, long cap);
-long macsurf_diag_serialize_css_gaps(char *buf, long cap);
-long macsurf_diag_serialize_gapreport(char *buf, long cap);
-
-/* ===================== Performance Aggregation ===================== */
-#define MS_PERF_HIST_BINS 256
-#define MS_PERF_HIST_BIN_WIDTH_MS 16
-#define MS_PERF_HIST_MAX_MS (MS_PERF_HIST_BINS * MS_PERF_HIST_BIN_WIDTH_MS) /* 4096 */
-
-struct ms_perf_histogram {
-	uint32_t bins[MS_PERF_HIST_BINS];
-	uint32_t overflow;
-	uint32_t samples;
-	unsigned long max_latency_ms;
-	unsigned long max_gap_ms;
-	unsigned long last_presentation_ms;
-};
-
-enum ms_perf_nav_status {
-	MS_PERF_STATUS_ACTIVE = 0,
-	MS_PERF_STATUS_DONE,
-	MS_PERF_STATUS_ABORTED,
-	MS_PERF_STATUS_FAILED
-};
-
-#define MS_PERF_URL_MAX 256
-#define MS_PERF_SCENARIO_MAX 64
-
-struct ms_perf_record {
-	unsigned long nav_id;
-	unsigned long doc_generation;
-	char url[MS_PERF_URL_MAX];
-	char scenario[MS_PERF_SCENARIO_MAX];
-	unsigned int run;
-	int status;                  /* enum ms_perf_nav_status */
-	int clock_res_ms;
-	int metric_version;
-
-	/* Timestamps & durations (ms relative to nav_start_ms) */
-	unsigned long nav_start_ms;
-	unsigned long first_paint_ms; /* 0 if not yet reached */
-	bool first_paint_recorded;
-	unsigned long done_ms;        /* 0 if not yet reached */
-	unsigned long endpoint_ms;    /* when stopped / aborted / completed */
-
-	/* JS timing with nesting protection */
-	unsigned int js_depth;
-	unsigned long js_start_ms;
-	unsigned long js_wall_ms;
-
-	unsigned int js_wrapper_depth;
-	unsigned long js_wrapper_start_ms;
-	unsigned long js_wrapper_ms;
-
-	/* Box / layout / paint with nesting protection */
-	unsigned int box_depth;
-	unsigned long box_start_ms;
-	unsigned long box_ms;
-
-	unsigned int layout_depth;
-	unsigned long layout_start_ms;
-	unsigned long layout_ms;
-
-	unsigned int paint_depth;
-	unsigned long paint_start_ms;
-	unsigned long paint_ms;
-
-	/* Reconvert stats */
-	unsigned long reconverts_attempted;
-	unsigned long reconverts_deferred;
-	unsigned long reconverts_completed;
-	unsigned long reconverts_failed;
-	unsigned int reconvert_depth;
-	unsigned long reconvert_start_ms;
-	unsigned long reconverts_total_ms;
-	unsigned long reconverts_max_ms;
-
-	/* Bytes */
-	unsigned long net_bytes;
-	unsigned long cache_hit_bytes;
-
-	/* Scroll latency histograms */
-	unsigned long pending_scroll_event_ms;
-	struct ms_perf_histogram hist_nav;       /* navigation-to-DONE */
-	struct ms_perf_histogram hist_scroll;    /* post-DONE sustained scrolling */
-};
-
-void ms_diag_perf_set_metadata(const char *scenario, unsigned int run);
-void ms_diag_perf_nav_start(unsigned long nav_id, unsigned long doc_gen, const char *url);
-void ms_diag_perf_first_paint(unsigned long nav_id, unsigned long doc_gen);
-void ms_diag_perf_nav_done(unsigned long nav_id, unsigned long doc_gen);
-void ms_diag_perf_nav_abort(unsigned long nav_id, unsigned long doc_gen);
-void ms_diag_perf_nav_fail(unsigned long nav_id, unsigned long doc_gen);
-
-void ms_diag_perf_js_enter(void);
-void ms_diag_perf_js_leave(void);
-void ms_diag_perf_js_wrapper_enter(void);
-void ms_diag_perf_js_wrapper_leave(void);
-
-void ms_diag_perf_box_enter(void);
-void ms_diag_perf_box_leave(void);
-void ms_diag_perf_layout_enter(void);
-void ms_diag_perf_layout_leave(void);
-void ms_diag_perf_paint_enter(void);
-void ms_diag_perf_paint_leave(void);
-
-void ms_diag_perf_reconvert_attempt(void);
-void ms_diag_perf_reconvert_defer(void);
-void ms_diag_perf_reconvert_start(void);
-void ms_diag_perf_reconvert_end(bool success);
-
-void ms_diag_perf_net_bytes(unsigned long bytes);
-void ms_diag_perf_cache_hit_bytes(unsigned long bytes);
-
-void ms_diag_perf_scroll_input(unsigned long event_timestamp_ms);
-void ms_diag_perf_scroll_present(unsigned long presentation_ms);
-void ms_diag_perf_scroll_cancel(void);
-
-long macsurf_diag_serialize_perf(char *buf, long cap);
-
-/* Test hooks */
-void macsurf_test_perf_reset(void);
-void macsurf_test_perf_hist_sample(struct ms_perf_histogram *h, unsigned long latency_ms, unsigned long presentation_ms);
-void macsurf_test_perf_hist_percentile(const struct ms_perf_histogram *h, unsigned int pct, char *out, size_t out_cap);
 
 #endif /* MACSURF_DIAG_H */

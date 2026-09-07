@@ -162,4 +162,11 @@ static struct gui_layout_table harness_layout_table_impl = {
 };
 struct gui_layout_table *macos9_layout_table = &harness_layout_table_impl;
 
-int macos9_debug_integrations_enabled(void) { return 0; }
+/* The production implementation lives in macos9_prefs.c, which the Linux
+ * harness intentionally does not link.  Master defaults diagnostics off, so
+ * this preserves the shipped default and prevents profiling-only branches
+ * from changing harness behavior. */
+int macos9_debug_integrations_enabled(void)
+{
+	return 0;
+}

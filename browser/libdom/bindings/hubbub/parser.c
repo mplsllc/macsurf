@@ -21,7 +21,7 @@
 
 #include <dom/dom.h>
 
-#include "dom_hubbub_parser.h"
+#include "parser.h"
 #include "utils.h"
 
 #include "document_i.h"

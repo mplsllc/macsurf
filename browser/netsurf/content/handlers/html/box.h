@@ -513,7 +513,6 @@ struct box {
 	 * generation bump (macsurf_layout_pass_gen), so no walk to clear.
 	 */
 	unsigned flex_layout_gen;
-	int flex_layout_available_width;
 	int flex_layout_width;
 	int flex_layout_height;
 

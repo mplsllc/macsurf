@@ -113,176 +113,6 @@ static unsigned long    g_walk_gen     = 0;
 #include <Timer.h>
 #endif
 
-
-/* Reconvert Style-B cache.  The old tree was just recascaded to the current
- * DOM. Reuse those results only when the node still has the same boxed DOM
- * parent; new and moved nodes fall back to normal selector matching. */
-#define MACSURF_RECONV_STYLE_CACHE_SLOTS 8192
-struct macsurf_reconv_style_cache_entry {
-	dom_node *node;
-	struct box *box;
-};
-static struct macsurf_reconv_style_cache_entry
-	g_reconv_style_cache[MACSURF_RECONV_STYLE_CACHE_SLOTS];
-static long g_reconv_style_cache_stored;
-static long g_reconv_style_cache_hit;
-static long g_reconv_style_cache_miss;
-static long g_reconv_style_cache_parent_skip;
-static long g_reconv_style_cache_overflow;
-
-static unsigned long
-macsurf_reconv_style_cache_hash(dom_node *node)
-{
-	return (((unsigned long) node) >> 4) &
-		(MACSURF_RECONV_STYLE_CACHE_SLOTS - 1);
-}
-
-static struct macsurf_reconv_style_cache_entry *
-macsurf_reconv_style_cache_slot(dom_node *node, int create)
-{
-	unsigned long i;
-	unsigned long start;
-
-	if (node == NULL)
-		return NULL;
-	start = macsurf_reconv_style_cache_hash(node);
-	for (i = 0; i < MACSURF_RECONV_STYLE_CACHE_SLOTS; i++) {
-		struct macsurf_reconv_style_cache_entry *e =
-			&g_reconv_style_cache[(start + i) &
-			 (MACSURF_RECONV_STYLE_CACHE_SLOTS - 1)];
-		if (e->node == node)
-			return e;
-		if (e->node == NULL)
-			return create ? e : NULL;
-	}
-	return NULL;
-}
-
-static struct box *
-macsurf_reconv_style_cache_box(dom_node *node)
-{
-	struct macsurf_reconv_style_cache_entry *e =
-		macsurf_reconv_style_cache_slot(node, 0);
-	return e != NULL ? e->box : NULL;
-}
-
-static void
-macsurf_reconv_style_cache_reset(void)
-{
-	memset(g_reconv_style_cache, 0, sizeof(g_reconv_style_cache));
-	g_reconv_style_cache_stored = 0;
-	g_reconv_style_cache_hit = 0;
-	g_reconv_style_cache_miss = 0;
-	g_reconv_style_cache_parent_skip = 0;
-	g_reconv_style_cache_overflow = 0;
-}
-
-static int
-macsurf_reconv_style_cache_parent_ok(struct box *box)
-{
-	struct box *old_parent;
-	dom_node *cur = NULL;
-	dom_node *next = NULL;
-	dom_node_type type;
-
-	if (box == NULL || box->node == NULL)
-		return 0;
-	old_parent = box->parent;
-	while (old_parent != NULL && old_parent->node == NULL)
-		old_parent = old_parent->parent;
-
-	if (old_parent != NULL &&
-		macsurf_reconv_style_cache_box(old_parent->node) != old_parent)
-		return 0;
-
-	if (dom_node_get_parent_node(box->node, &cur) != DOM_NO_ERR)
-		return 0;
-	while (cur != NULL) {
-		if (old_parent != NULL && cur == old_parent->node) {
-			dom_node_unref(cur);
-			return 1;
-		}
-		if (macsurf_reconv_style_cache_box(cur) != NULL) {
-			dom_node_unref(cur);
-			return 0;
-		}
-		type = 0;
-		if (dom_node_get_node_type(cur, &type) != DOM_NO_ERR ||
-			type == DOM_DOCUMENT_NODE) {
-			dom_node_unref(cur);
-			return old_parent == NULL;
-		}
-		next = NULL;
-		if (dom_node_get_parent_node(cur, &next) != DOM_NO_ERR) {
-			dom_node_unref(cur);
-			return 0;
-		}
-		dom_node_unref(cur);
-		cur = next;
-	}
-	return old_parent == NULL;
-}
-
-static void
-macsurf_reconv_style_cache_store(struct box *box)
-{
-	struct macsurf_reconv_style_cache_entry *e;
-
-	if (!macsurf_reconvert_in_progress || box == NULL ||
-		box->node == NULL || (box->flags & CLONE) || box->styles == NULL)
-		return;
-	if (!macsurf_reconv_style_cache_parent_ok(box)) {
-		g_reconv_style_cache_parent_skip++;
-		return;
-	}
-	e = macsurf_reconv_style_cache_slot(box->node, 1);
-	if (e == NULL) {
-		g_reconv_style_cache_overflow++;
-		return;
-	}
-	if (e->node == NULL) {
-		e->node = box->node;
-		e->box = box;
-		g_reconv_style_cache_stored++;
-	}
-}
-
-static css_select_results *
-macsurf_reconv_style_cache_take(dom_node *node, css_custom_env **out_env)
-{
-	struct box *old_box;
-	css_select_results *styles;
-
-	if (!macsurf_reconvert_in_progress || node == NULL)
-		return NULL;
-	old_box = macsurf_reconv_style_cache_box(node);
-	if (old_box == NULL || old_box->styles == NULL) {
-		g_reconv_style_cache_miss++;
-		return NULL;
-	}
-	styles = css_select_results_ref(old_box->styles);
-	if (styles == NULL) {
-		g_reconv_style_cache_miss++;
-		return NULL;
-	}
-	if (out_env != NULL && old_box->custom_env != NULL)
-		*out_env = css_custom_env_ref(old_box->custom_env);
-	g_reconv_style_cache_hit++;
-	return styles;
-}
-
-static void
-macsurf_reconv_style_cache_report(void)
-{
-	if (!macsurf_reconvert_in_progress)
-		return;
-	macsurf_debug_log_writef(
-		"LIFE RECONVSTYLE stored=%ld hit=%ld miss=%ld parent_skip=%ld overflow=%ld",
-		g_reconv_style_cache_stored, g_reconv_style_cache_hit,
-		g_reconv_style_cache_miss, g_reconv_style_cache_parent_skip,
-		g_reconv_style_cache_overflow);
-}
-
 /* fixes553 - extend the fixes552 writer-side free guard from the single walked
  * content to its ENTIRE tree.  The box walk dereferences not just the
  * html_content itself but the sub-resource contents hanging off its object_list
@@ -484,87 +314,83 @@ static inline bool box_is_root(dom_node *n)
 static void
 box_extract_properties(dom_node *n, struct box_construct_props *props)
 {
-	dom_node *current_node;
-	dom_node *parent_node;
-	struct box *b;
-	dom_exception err;
-	int first_parent;
-	int have_parent_box;
-
 	memset(props, 0, sizeof(*props));
 
-	/* One ancestor walk supplies both logically distinct answers:
-	 *  - the nearest boxed ancestor supplies inherited style/link state;
-	 *  - the nearest non-inline/non-contents/non-BR box is the containing
-	 *    block.  The old code walked the same DOM chain twice to get them. */
-	current_node = n;
-	parent_node = NULL;
-	first_parent = 1;
-	have_parent_box = 0;
+	props->node_is_root = box_is_root(n);
 
-	while (true) {
-		dom_node_type parent_type;
+	/* Extract properties from containing DOM node */
+	if (props->node_is_root == false) {
+		dom_node *current_node = n;
+		dom_node *parent_node = NULL;
+		struct box *parent_box;
+		dom_exception err;
 
-		err = dom_node_get_parent_node(current_node, &parent_node);
-		if (err != DOM_NO_ERR || parent_node == NULL) {
-			/* A node with no parent is a root for construction purposes,
-			 * matching box_is_root's historical behaviour. */
-			if (first_parent)
-				props->node_is_root = true;
-			break;
+		/* Find ancestor node containing parent box */
+		while (true) {
+			err = dom_node_get_parent_node(current_node,
+					&parent_node);
+			if (err != DOM_NO_ERR || parent_node == NULL)
+				break;
+
+			parent_box = box_for_node(parent_node);
+
+			if (parent_box != NULL) {
+				props->parent_style = parent_box->style;
+				props->parent_custom_env =
+						parent_box->custom_env;
+				props->href = parent_box->href;
+				props->target = parent_box->target;
+				/* fixes1063 (#114) - travels with href. */
+				props->download = (parent_box->flags &
+						LINK_DOWNLOAD) != 0;
+				props->title = parent_box->title;
+
+				dom_node_unref(parent_node);
+				break;
+			} else {
+				if (current_node != n)
+					dom_node_unref(current_node);
+				current_node = parent_node;
+				parent_node = NULL;
+			}
 		}
 
-		if (first_parent) {
-			parent_type = 0;
-			err = dom_node_get_node_type(parent_node, &parent_type);
-			if (err != DOM_NO_ERR) {
-				dom_node_unref(parent_node);
-				parent_node = NULL;
+		/* Find containing block (may be parent) */
+		while (true) {
+			struct box *b;
+
+			err = dom_node_get_parent_node(current_node,
+					&parent_node);
+			if (err != DOM_NO_ERR || parent_node == NULL) {
+				if (current_node != n)
+					dom_node_unref(current_node);
 				break;
 			}
-			if (parent_type == DOM_DOCUMENT_NODE) {
-				props->node_is_root = true;
-				dom_node_unref(parent_node);
-				parent_node = NULL;
-				break;
-			}
-			first_parent = 0;
-		}
 
-		b = box_for_node(parent_node);
-		if (b != NULL) {
-			if (!have_parent_box) {
-				props->parent_style = b->style;
-				props->parent_custom_env = b->custom_env;
-				props->href = b->href;
-				props->target = b->target;
-				props->download = (b->flags & LINK_DOWNLOAD) != 0;
-				props->title = b->title;
-				have_parent_box = 1;
-			}
+			if (current_node != n)
+				dom_node_unref(current_node);
 
-			if (props->containing_block == NULL &&
-					b->type != BOX_INLINE &&
+			b = box_for_node(parent_node);
+
+			/* Children of nodes that created an inline box
+			 * will generate boxes which are attached as
+			 * _siblings_ of the box generated for their
+			 * parent node. Note, however, that we'll still
+			 * use the parent node's styling as the parent
+			 * style, above. */
+			if (b != NULL && b->type != BOX_INLINE &&
 					b->type != BOX_CONTENTS &&
 					b->type != BOX_BR) {
 				props->containing_block = b;
-			}
 
-			if (have_parent_box && props->containing_block != NULL) {
 				dom_node_unref(parent_node);
-				parent_node = NULL;
 				break;
+			} else {
+				current_node = parent_node;
+				parent_node = NULL;
 			}
 		}
-
-		if (current_node != n)
-			dom_node_unref(current_node);
-		current_node = parent_node;
-		parent_node = NULL;
 	}
-
-	if (current_node != n)
-		dom_node_unref(current_node);
 
 	/* Compute current inline container, if any */
 	if (props->containing_block != NULL &&
@@ -860,9 +686,8 @@ box_construct_generate(struct box_construct_ctx *ctx,
 		return;
 	}
 
-	/* The owning box already identifies the document root. Avoid a DOM
-	 * parent/type probe for generated content and compute display once. */
-	computed_display = ns_computed_display(style, ctx->root_box == box);
+	/* create box for this element */
+	computed_display = ns_computed_display(style, box_is_root(n));
 	if (computed_display == CSS_DISPLAY_BLOCK ||
 			computed_display == CSS_DISPLAY_TABLE) {
 		/* currently only support block level boxes */
@@ -874,8 +699,9 @@ box_construct_generate(struct box_construct_ctx *ctx,
 			return;
 		}
 
-		/* set box type from the display value already resolved above */
-		gen->type = box_map[computed_display];
+		/* set box type from computed display */
+		gen->type = box_map[ns_computed_display(
+				style, box_is_root(n))];
 
 		box_add_child(box, gen);
 
@@ -1381,60 +1207,24 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 	dom_exception err;
 	struct box_construct_props props;
 	const css_computed_style *root_style = NULL;
-	bool is_svg = false;
-	bool is_table_cell_tag = false;
-	dom_html_element_type tag_type = DOM_HTML_ELEMENT_TYPE__UNKNOWN;
 
 	assert(ctx->n != NULL);
 
-	/* Classify the tag once.  The old path fetched every element's tag name
-	 * here for metadata rejection, tried up to six caseless comparisons, then
-	 * fetched the same immutable tag name again later solely to detect <svg>.
-	 * Length + first-byte dispatch leaves ordinary div/span/etc. at zero
-	 * caseless comparisons and carries the SVG result forward. */
+	/* Skip non-rendered metadata elements unconditionally - these never
+	 * generate boxes regardless of the cascade's display value. Catches
+	 * the case where the UA stylesheet's display:none rules don't reach
+	 * the cascade and <style>/<script> content leaks into body as text. */
 	{
 		dom_string *tag_name = NULL;
 		if (dom_element_get_tag_name(ctx->n, &tag_name) == DOM_NO_ERR &&
 				tag_name != NULL) {
-			const char *tag = (const char *)dom_string_data(tag_name);
-			size_t tlen = dom_string_length(tag_name);
-			unsigned char c0 = (tlen != 0) ? (unsigned char)tag[0] : 0;
 			bool skip = false;
-
-			if (c0 >= 'A' && c0 <= 'Z')
-				c0 = (unsigned char)(c0 + ('a' - 'A'));
-
-			(void)macsurf_html_tag_name_get_type(tag_name, &tag_type);
-
-			if (tlen == 2 && c0 == 't') {
-				unsigned char c1 = (unsigned char)tag[1];
-				if (c1 >= 'A' && c1 <= 'Z')
-					c1 = (unsigned char)(c1 + ('a' - 'A'));
-				is_table_cell_tag = (c1 == 'd' || c1 == 'h');
-			}
-			if (tlen == 3 && c0 == 's') {
-				is_svg = dom_string_caseless_lwc_isequal(
-					tag_name, corestring_lwc_svg);
-			}
-
-			switch (tag_type) {
-			case DOM_HTML_ELEMENT_TYPE_STYLE:
-			case DOM_HTML_ELEMENT_TYPE_TITLE:
-			case DOM_HTML_ELEMENT_TYPE_META:
-			case DOM_HTML_ELEMENT_TYPE_LINK:
-				skip = true;
-				break;
-			default:
-				break;
-			}
-			if (!skip && tlen == 4 && c0 == 'b') {
-				skip = dom_string_caseless_lwc_isequal(
-					tag_name, corestring_lwc_base);
-			} else if (!skip && tlen == 4 && c0 == 'h') {
-				skip = dom_string_caseless_lwc_isequal(
-					tag_name, corestring_lwc_head);
-			}
-
+			if (dom_string_caseless_lwc_isequal(tag_name, corestring_lwc_style)) skip = true;
+			else if (dom_string_caseless_lwc_isequal(tag_name, corestring_lwc_title)) skip = true;
+			else if (dom_string_caseless_lwc_isequal(tag_name, corestring_lwc_meta)) skip = true;
+			else if (dom_string_caseless_lwc_isequal(tag_name, corestring_lwc_link)) skip = true;
+			else if (dom_string_caseless_lwc_isequal(tag_name, corestring_lwc_base)) skip = true;
+			else if (dom_string_caseless_lwc_isequal(tag_name, corestring_lwc_head)) skip = true;
 			dom_string_unref(tag_name);
 			if (skip) {
 				*convert_children = false;
@@ -1442,6 +1232,7 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 			}
 		}
 	}
+
 
 	box_extract_properties(ctx->n, &props);
 
@@ -1456,11 +1247,8 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 		root_style = ctx->root_box->style;
 	}
 
-	styles = macsurf_reconv_style_cache_take(ctx->n, &elem_custom_env);
-	if (styles == NULL) {
-		styles = box_get_style(ctx->content, props.parent_style, root_style,
-				ctx->n, props.parent_custom_env, &elem_custom_env);
-	}
+	styles = box_get_style(ctx->content, props.parent_style, root_style,
+			ctx->n, props.parent_custom_env, &elem_custom_env);
 	if (styles == NULL)
 		return false;
 
@@ -1540,38 +1328,33 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 	if (props.node_is_root)
 		ctx->root_box = box;
 
-	/* colspan/rowspan are table-cell attributes.  The old path queried both
-	 * attributes on every element in the document, even though they have no
-	 * HTML semantics outside <td>/<th>.  Tag classification above is already
-	 * paid for, so ordinary elements skip two DOM attribute-map lookups. */
-	if (is_table_cell_tag) {
-		err = dom_element_get_attribute(ctx->n, corestring_dom_colspan, &s);
-		if (err != DOM_NO_ERR)
-			return false;
+	/* Deal with colspan/rowspan */
+	err = dom_element_get_attribute(ctx->n, corestring_dom_colspan, &s);
+	if (err != DOM_NO_ERR)
+		return false;
 
-		if (s != NULL) {
-			const char *val = dom_string_data(s);
+	if (s != NULL) {
+		const char *val = dom_string_data(s);
 
-			/* Convert to a number, clamping to [1,1000] according to 4.9.11 */
-			if ('0' <= val[0] && val[0] <= '9')
-				box->columns = clamp(strtol(val, NULL, 10), 1, 1000);
+		/* Convert to a number, clamping to [1,1000] according to 4.9.11 */
+		if ('0' <= val[0] && val[0] <= '9')
+			box->columns = clamp(strtol(val, NULL, 10), 1, 1000);
 
-			dom_string_unref(s);
-		}
+		dom_string_unref(s);
+	}
 
-		err = dom_element_get_attribute(ctx->n, corestring_dom_rowspan, &s);
-		if (err != DOM_NO_ERR)
-			return false;
+	err = dom_element_get_attribute(ctx->n, corestring_dom_rowspan, &s);
+	if (err != DOM_NO_ERR)
+		return false;
 
-		if (s != NULL) {
-			const char *val = dom_string_data(s);
+	if (s != NULL) {
+		const char *val = dom_string_data(s);
 
-			/* Convert to a number, clamping to [0,65534] according to 4.9.11 */
-			if ('0' <= val[0] && val[0] <= '9')
-				box->rows = clamp(strtol(val, NULL, 10), 0, 65534);
+		/* Convert to a number, clamping to [0,65534] according to 4.9.11 */
+		if ('0' <= val[0] && val[0] <= '9')
+			box->rows = clamp(strtol(val, NULL, 10), 0, 65534);
 
-			dom_string_unref(s);
-		}
+		dom_string_unref(s);
 	}
 
 	css_display = ns_computed_display_static(box->style);
@@ -1634,8 +1417,7 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 	if (convert_special_elements(ctx->n,
 				     ctx->content,
 				     box,
-				     convert_children,
-				     tag_type) == false) {
+				     convert_children) == false) {
 		return false;
 	}
 
@@ -1789,12 +1571,59 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 		return true;
 	}
 
-	/* Inline SVG classification was already done with the metadata tag lookup
-	 * above.  Avoid a second dom_element_get_tag_name + string comparison for
-	 * every constructed element. */
-	if (is_svg) {
-		box->flags |= SVG_INLINE | IS_REPLACED | REPLACE_DIM;
-		*convert_children = false;
+	/* fixes195 - inline <svg> root detection.
+	 *
+	 * If this element is an SVG root, mark the box and tell the
+	 * caller not to descend into the DOM children. The shape
+	 * elements (path / rect / circle / line / etc.) stay attached
+	 * to the SVG node and are rendered at paint time by the
+	 * DOM-walker in macos9_svg_inline.c. They don't participate in
+	 * HTML layout, which matches SVG semantics (the root <svg>
+	 * draws its viewBox into a single box).
+	 *
+	 * fixes197 - diagnostic instrumentation: log every tag name
+	 * we see so we can confirm <svg> tags actually reach this
+	 * point (e.g. that Hubbub's foreign-content path isn't
+	 * stashing them in a different namespace that
+	 * dom_element_get_tag_name doesn't return as plain "svg"). */
+	{
+		dom_string *svg_name = NULL;
+		if (box != NULL &&
+				dom_element_get_tag_name(ctx->n, &svg_name) ==
+					DOM_NO_ERR && svg_name != NULL) {
+			const char *tag = (const char *)
+					dom_string_data(svg_name);
+			size_t tlen = dom_string_length(svg_name);
+			int matched = dom_string_caseless_lwc_isequal(
+					svg_name, corestring_lwc_svg);
+			if (matched) {
+				/* fixes202: mark the SVG root as a replaced
+				 * element with given dimensions. Without this,
+				 * lh__box_is_replace() returns false and the
+				 * inline layout path treats the box as non-
+				 * replaced - width collapses to 0 and height
+				 * collapses to the parent line-height, so the
+				 * macos9 SVG painter (fixes195) is invoked with
+				 * a degenerate 0xN rect and nothing renders.
+				 * fixes196's presentational-hint dispatch puts
+				 * width/height in computed style; this flag
+				 * combination makes layout actually consume
+				 * them. */
+				box->flags |= SVG_INLINE | IS_REPLACED |
+						REPLACE_DIM;
+				*convert_children = false;
+			}
+			/* Only log s-prefixed tags to keep noise down; <svg>
+			 * always falls in this bucket. */
+			if (tlen >= 3 && tlen <= 32 &&
+					(tag[0] == 's' || tag[0] == 'S')) {
+				macsurf_debug_log_writef(
+					"svg_box: tag=%s len=%ld match=%d box=%p flags=%ld",
+					tag, (long)tlen, matched,
+					(void *)box, (long)(unsigned int)box->flags);
+			}
+			dom_string_unref(svg_name);
+		}
 	}
 
 	if (*convert_children)
@@ -1877,28 +1706,18 @@ box_construct_element(struct box_construct_ctx *ctx, bool *convert_children)
 static void box_construct_element_after(struct box_construct_ctx *ctx,
 		dom_node *n, html_content *content)
 {
+	struct box_construct_props props;
 	struct box *box = box_for_node(n);
 
 	assert(box != NULL);
 
+	box_extract_properties(n, &props);
+
 	if (box->type == BOX_INLINE || box->type == BOX_BR) {
-		struct box_construct_props props;
 		/* Insert INLINE_END into containing block */
 		struct box *inline_end;
 		bool has_children;
 		dom_exception err;
-
-		memset(&props, 0, sizeof(props));
-		/* Inline boxes are attached to their INLINE_CONTAINER at element-open
-		 * time. Recover close-time placement directly from those box links; the
-		 * DOM ancestor walk is only a fallback for an unexpected tree shape. */
-		if (box->parent != NULL &&
-				box->parent->type == BOX_INLINE_CONTAINER) {
-			props.inline_container = box->parent;
-			props.containing_block = box->parent->parent;
-		} else {
-			box_extract_properties(n, &props);
-		}
 
 		err = dom_node_has_child_nodes(n, &has_children);
 		if (err != DOM_NO_ERR)
@@ -1970,95 +1789,109 @@ static void box_construct_element_after(struct box_construct_ctx *ctx,
  *
  * \note \a n will be unreferenced
  */
-static bool
-box_construct_node_is_root(struct box_construct_ctx *ctx, dom_node *n)
-{
-	/* Once the root element has been constructed, its box owns a reference to
-	 * the exact DOM node.  Pointer comparison avoids a parent lookup + parent
-	 * node-type query on every ascent step.  Keep box_is_root as a defensive
-	 * fallback for any early/abnormal state where the root box is unavailable. */
-	if (ctx != NULL && ctx->root_box != NULL && ctx->root_box->node != NULL)
-		return ctx->root_box->node == n;
-	return box_is_root(n);
-}
-
 static dom_node *
 next_node(struct box_construct_ctx *ctx, dom_node *n,
 		html_content *content, bool convert_children)
 {
 	dom_node *next = NULL;
+	bool has_children;
 	dom_exception err;
 
-	/* get_first_child already returns NULL when there is no child. Avoid a
-	 * separate dom_node_has_child_nodes dispatch on every traversal step. */
-	if (convert_children) {
-		err = dom_node_get_first_child(n, &next);
-		if (err != DOM_NO_ERR) {
-			dom_node_unref(n);
-			return NULL;
-		}
-		if (next != NULL) {
-			dom_node_unref(n);
-			return next;
-		}
-	}
-
-	err = dom_node_get_next_sibling(n, &next);
+	err = dom_node_has_child_nodes(n, &has_children);
 	if (err != DOM_NO_ERR) {
 		dom_node_unref(n);
 		return NULL;
 	}
 
-	if (next != NULL) {
-		if (box_for_node(n) != NULL)
-			box_construct_element_after(ctx, n, content);
-		dom_node_unref(n);
-		return next;
-	}
-
-	if (box_for_node(n) != NULL)
-		box_construct_element_after(ctx, n, content);
-
-	/* No sibling: climb until an ancestor has one.  The old implementation
-	 * asked box_is_root() at each level (parent + type lookup), then when it
-	 * found parent_next it discarded BOTH references, broke out, fetched the
-	 * same parent again, fetched the same sibling again, and only then closed
-	 * the parent.  Carry the references we already own instead. */
-	while (!box_construct_node_is_root(ctx, n)) {
-		dom_node *parent = NULL;
-		dom_node *parent_next = NULL;
-
-		err = dom_node_get_parent_node(n, &parent);
-		if (err != DOM_NO_ERR || parent == NULL) {
-			dom_node_unref(n);
-			return NULL;
-		}
-
-		err = dom_node_get_next_sibling(parent, &parent_next);
+	if (convert_children && has_children) {
+		err = dom_node_get_first_child(n, &next);
 		if (err != DOM_NO_ERR) {
-			dom_node_unref(parent);
+			dom_node_unref(n);
+			return NULL;
+		}
+		dom_node_unref(n);
+	} else {
+		err = dom_node_get_next_sibling(n, &next);
+		if (err != DOM_NO_ERR) {
 			dom_node_unref(n);
 			return NULL;
 		}
 
-		if (parent_next != NULL) {
-			if (box_for_node(parent) != NULL)
-				box_construct_element_after(ctx, parent, content);
-			dom_node_unref(parent);
+		if (next != NULL) {
+			if (box_for_node(n) != NULL)
+				box_construct_element_after(ctx, n, content);
 			dom_node_unref(n);
-			return parent_next;
-		}
+		} else {
+			if (box_for_node(n) != NULL)
+				box_construct_element_after(ctx, n, content);
 
-		/* Parent itself has no next sibling. Promote it to current, close it,
-		 * then continue climbing with the already-owned parent reference. */
-		dom_node_unref(n);
-		n = parent;
-		if (box_for_node(n) != NULL)
-			box_construct_element_after(ctx, n, content);
+			while (box_is_root(n) == false) {
+				dom_node *parent = NULL;
+				dom_node *parent_next = NULL;
+
+				err = dom_node_get_parent_node(n, &parent);
+				if (err != DOM_NO_ERR) {
+					dom_node_unref(n);
+					return NULL;
+				}
+
+				assert(parent != NULL);
+
+				err = dom_node_get_next_sibling(parent,
+						&parent_next);
+				if (err != DOM_NO_ERR) {
+					dom_node_unref(parent);
+					dom_node_unref(n);
+					return NULL;
+				}
+
+				if (parent_next != NULL) {
+					dom_node_unref(parent_next);
+					dom_node_unref(parent);
+					break;
+				}
+
+				dom_node_unref(n);
+				n = parent;
+				parent = NULL;
+
+				if (box_for_node(n) != NULL) {
+					box_construct_element_after(
+							ctx, n, content);
+				}
+			}
+
+			if (box_is_root(n) == false) {
+				dom_node *parent = NULL;
+
+				err = dom_node_get_parent_node(n, &parent);
+				if (err != DOM_NO_ERR) {
+					dom_node_unref(n);
+					return NULL;
+				}
+
+				assert(parent != NULL);
+
+				err = dom_node_get_next_sibling(parent, &next);
+				if (err != DOM_NO_ERR) {
+					dom_node_unref(parent);
+					dom_node_unref(n);
+					return NULL;
+				}
+
+				if (box_for_node(parent) != NULL) {
+					box_construct_element_after(ctx,
+							parent, content);
+				}
+
+				dom_node_unref(parent);
+			}
+
+			dom_node_unref(n);
+		}
 	}
 
-	dom_node_unref(n);
-	return NULL;
+	return next;
 }
 
 
@@ -2128,7 +1961,6 @@ static bool box_construct_text(struct box_construct_ctx *ctx)
 			css_computed_white_space(props.parent_style) ==
 			CSS_WHITE_SPACE_NOWRAP) {
 		char *text;
-		size_t text_len;
 
 		text = squash_whitespace(dom_string_data(content));
 
@@ -2137,12 +1969,25 @@ static bool box_construct_text(struct box_construct_ctx *ctx)
 		if (text == NULL)
 			return false;
 
-		text_len = strlen(text);
-
+#ifdef __MACOS9__
+		/* fixes491 diag - trace the source of "data-xf-init" text nodes.
+		 * Log the offending character data plus the content-data pointer
+		 * so the node can be tied back to its DOM origin. Remove once the
+		 * leak is root-caused. */
+		{
+			extern void macsurf_debug_log_writef(const char *fmt,
+					...);
+			if (text[0] != '\0' && strstr(text, "xf-init") != NULL) {
+				macsurf_debug_log_writef(
+					"fixes491 TEXTNODE='%s' node=%p",
+					text, (void *)ctx->n);
+			}
+		}
+#endif
 
 		/* if the text is just a space, combine it with the preceding
 		 * text node, if any */
-		if (text_len == 1 && text[0] == ' ') {
+		if (text[0] == ' ' && text[1] == 0) {
 			if (props.inline_container != NULL) {
 				assert(props.inline_container->last != NULL);
 
@@ -2181,21 +2026,22 @@ static bool box_construct_text(struct box_construct_ctx *ctx)
 				props.inline_container->last->space == 0 &&
 				props.inline_container->last->text != NULL) {
 			struct box *prev = props.inline_container->last;
+			size_t tlen = strlen(text);
 			size_t plen = prev->length;
-			int new_is_shy = (text_len >= 2 &&
+			int new_is_shy = (tlen >= 2 &&
 				(unsigned char) text[0] == 0xC2 &&
 				(unsigned char) text[1] == 0xAD);
 			int prev_shy = (plen >= 2 &&
 				(unsigned char) prev->text[plen - 2] == 0xC2 &&
 				(unsigned char) prev->text[plen - 1] == 0xAD);
-			if ((new_is_shy || prev_shy) && text_len > 0) {
+			if ((new_is_shy || prev_shy) && tlen > 0) {
 				char *merged = talloc_realloc(ctx->bctx,
-					prev->text, char, plen + text_len + 1);
+					prev->text, char, plen + tlen + 1);
 				if (merged != NULL) {
-					memcpy(merged + plen, text, text_len);
-					merged[plen + text_len] = '\0';
+					memcpy(merged + plen, text, tlen);
+					merged[plen + tlen] = '\0';
 					prev->text = merged;
-					prev->length = plen + text_len;
+					prev->length = plen + tlen;
 					free(text);
 					return true;
 				}
@@ -2281,12 +2127,12 @@ static bool box_construct_text(struct box_construct_ctx *ctx)
 		box->type = BOX_TEXT;
 		macos9_box_text_created++;
 
-		box->text = talloc_memdup(ctx->bctx, text, text_len + 1);
+		box->text = talloc_strdup(ctx->bctx, text);
 		free(text);
 		if (box->text == NULL)
 			return false;
 
-		box->length = text_len;
+		box->length = strlen(box->text);
 
 		/* strip ending space char off */
 		if (box->length > 1 && box->text[box->length - 1] == ' ') {
@@ -2425,7 +2271,7 @@ static bool box_construct_text(struct box_construct_ctx *ctx)
 
 		if (css_computed_text_transform(props.parent_style) !=
 				CSS_TEXT_TRANSFORM_NONE)
-			box_text_transform(text, text_len,
+			box_text_transform(text, strlen(text),
 				css_computed_text_transform(
 						props.parent_style));
 
@@ -2488,13 +2334,13 @@ static bool box_construct_text(struct box_construct_ctx *ctx)
 			box->type = BOX_TEXT;
 		macos9_box_text_created++;
 
-			box->text = talloc_memdup(ctx->bctx, current, len + 1);
+			box->text = talloc_strdup(ctx->bctx, current);
 			if (box->text == NULL) {
 				free(text);
 				return false;
 			}
 
-			box->length = len;
+			box->length = strlen(box->text);
 
 			box_add_child(props.inline_container, box);
 
@@ -2689,10 +2535,8 @@ static void convert_xml_to_box_inner(struct box_construct_ctx *ctx)
 	do {
 		convert_children = true;
 
-#ifdef MACSURF_VERBOSE_RECONVERT
 		if (macsurf_reconvert_in_progress)
 			g_reconv_node_ix++;
-#endif
 
 		assert(ctx->n != NULL);
 
@@ -2723,7 +2567,6 @@ static void convert_xml_to_box_inner(struct box_construct_ctx *ctx)
 		 * cascade/create leaves this node's index+ptr as the last durable
 		 * position. No tag lookup here -- dom_node_get_node_name on a freed node
 		 * would itself crash and hide which node it was. */
-#ifdef MACSURF_VERBOSE_RECONVERT
 		if (macsurf_reconvert_in_progress && g_reconv_node_ix <= 150) {
 			macsurf_debug_log_writef(
 				"WORK reconvert #%ld: elem node=%ld ptr=%p",
@@ -2733,7 +2576,6 @@ static void convert_xml_to_box_inner(struct box_construct_ctx *ctx)
 				(long) macsurf_reconvert_seq, (long) g_reconv_node_ix, "");
 			macsurf_reconv_pos_flush();
 		}
-#endif
 
 		{
 			bool bce_ok = box_construct_element(ctx, &convert_children);
@@ -2794,7 +2636,6 @@ static void convert_xml_to_box_inner(struct box_construct_ctx *ctx)
 				 * Distinguishes a crash in box_construct_text (the
 				 * dom_string read, fixes489 UAF) from one in
 				 * box_construct_element (attr/cascade). */
-#ifdef MACSURF_VERBOSE_RECONVERT
 				if (macsurf_reconvert_in_progress &&
 						g_reconv_node_ix <= 150) {
 					macsurf_debug_log_writef(
@@ -2806,7 +2647,6 @@ static void convert_xml_to_box_inner(struct box_construct_ctx *ctx)
 						(long) g_reconv_node_ix, "");
 					macsurf_reconv_pos_flush();
 				}
-#endif
 				if (box_construct_text(ctx) == false) {
 					ctx->cb(ctx->content, false);
 					dom_node_unref(ctx->n);
@@ -2845,8 +2685,6 @@ static void convert_xml_to_box_inner(struct box_construct_ctx *ctx)
 					(long) macsurf_reconvert_seq,
 					(long) g_reconv_node_ix, macsurf_free_mem());
 			}
-
-			macsurf_reconv_style_cache_report();
 
 			/** \todo Remove box_normalise_block */
 			if (box_normalise_block(&root, ctx->root_box,
@@ -2993,7 +2831,6 @@ html_recascade_tree(html_content *c)
 
 	if (c == NULL || c->layout == NULL) return NSERROR_OK;
 
-	macsurf_reconv_style_cache_reset();
 	macsurf_debug_log_writef("recascade: enter layout=%p node=%p",
 			(void *)c->layout,
 			(void *)(c->layout->node));
@@ -3032,6 +2869,11 @@ html_recascade_tree(html_content *c)
 		parent_custom_env = frame.parent_custom_env;
 
 		processed++;
+		if ((processed % 200) == 0) {
+			macsurf_debug_log_writef(
+				"recascade: processed=%d recascaded=%d top=%d",
+				processed, recascaded, stack_top);
+		}
 
 		if (box == NULL) continue;
 		old_self_style = box->style;
@@ -3048,6 +2890,17 @@ html_recascade_tree(html_content *c)
 					use_parent, use_root, box->node,
 					use_parent_env, &new_env);
 			if (new_styles != NULL) {
+				uint32_t now = 0;
+				/* Start presentation effects before replacing the old
+				 * computed style. This also covers the full-reconstruction
+				 * path, which re-cascades this still-live old box tree just
+				 * before it constructs the replacement. */
+#ifdef __MACOS9__
+				now = (uint32_t)TickCount();
+#endif
+				macsurf_transition_handle_style_change(c, box->node,
+						old_self_style,
+						new_styles->styles[CSS_PSEUDO_ELEMENT_NONE], now);
 				/* fixes1268c - replace, releasing the
 				 * environment from the previous cascade. */
 				if (box->custom_env != NULL && !(box->flags & CLONE))
@@ -3082,7 +2935,6 @@ html_recascade_tree(html_content *c)
 					box->styles = new_styles;
 					box->style = new_styles->styles[
 							CSS_PSEUDO_ELEMENT_NONE];
-					macsurf_reconv_style_cache_store(box);
 				}
 				recascaded++;
 				if (box == c->layout) {
