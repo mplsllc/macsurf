@@ -3297,7 +3297,12 @@ long macsurf_diag_dom_start(unsigned long target_doc, char *buf, long cap)
 static void ms_diag_check_snapshot_drift(void)
 {
 	if (!g_dom_snapshot.valid || g_dom_snapshot.htmlc == NULL) return;
-	if (macos9_content_is_live((struct content *) g_dom_snapshot.htmlc)) {
+	/* Validate the captured generation, not pointer membership alone.  A newly
+	 * registered content may reuse this address after the snapshot owner dies;
+	 * its fields belong to the new content and must never be sampled as though
+	 * they described the retained snapshot. */
+	if (macos9_content_token_valid((struct content *) g_dom_snapshot.htmlc,
+			g_dom_snapshot.content_token)) {
 		if (g_dom_snapshot.htmlc->live_box_generation != g_dom_snapshot.box_generation ||
 		    g_dom_snapshot.htmlc->doc_id != g_dom_snapshot.doc_id) {
 			g_dom_snapshot.live_changed = 1;

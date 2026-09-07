@@ -13178,6 +13178,27 @@ box_coords(bx, &cx, &cy);
 			return 1;
 		}
 
+		/* A content address can be reused after its old lifetime ends.  The
+		 * retained snapshot must validate its captured registry token before
+		 * reading through the address, even when doc_id and box generation
+		 * happen to match the newly registered occupant. */
+		macos9_content_unregister((struct content *)&t110c);
+		macos9_content_register((struct content *)&t110c);
+		n = macsurf_diag_serialize_dom(buf, (long)sizeof(buf), 0, 1);
+		if (n <= 0 || strstr(buf, "snapshot_stale=1") == NULL ||
+				strstr(buf, "live_changed=1") == NULL) {
+			fprintf(stderr, "FAIL: Test 110 -- content-token ABA drift: %s\n", buf);
+			return 1;
+		}
+
+		/* A new capture is independent of the old retained snapshot. */
+		n = macsurf_diag_dom_start(target_doc_id, buf, (long)sizeof(buf));
+		if (n <= 0 || strstr(buf, "complete=1") == NULL ||
+				strstr(buf, "coverage=connected_tree") == NULL) {
+			fprintf(stderr, "FAIL: Test 110 -- domstart recapture failed: %s\n", buf);
+			return 1;
+		}
+
 		/* 3. Verify cloneNode leaves clone with distinct/unassigned identity */
 		t110derr = dom_node_clone_node(p1, false, &p1_clone);
 		if (t110derr != DOM_NO_ERR || p1_clone == NULL) {
