@@ -88,6 +88,8 @@ struct jsheap {
 	 * unmapped-memory exception at js_shape_hash_unlink+0004C.  The generation
 	 * never repeats, so (ctx, gen) does identify a realm. */
 	unsigned long ctx_gen;
+	unsigned long nav_id;
+	unsigned long heap_id;
 	int timeout;
 	/* fixes861 (#289) - every live heap, so macsurf_qjs_pump_all() can pump
 	 * ALL of them.  js_newheap() runs per browser_window AND per (i)frame
@@ -158,9 +160,25 @@ struct qjs_realm_owner {
 	dom_document *document;
 	struct content *content;
 	struct qjs_realm_owner *next;
+	/* Realm diagnostic identity (for MSdg GET realms). */
+	unsigned long realm_id;
+	unsigned long frame_id;
+	unsigned long document_id;
+	unsigned long nav_id;
+	unsigned char state;	/* enum qjs_realm_diag_state */
 };
 
 static struct qjs_realm_owner *g_qjs_realm_owners = NULL;
+static unsigned long g_qjs_realm_id_seq = 0;
+static unsigned long g_qjs_heap_id_seq = 0;
+
+/* Retired contexts cannot remain registered: their pointers and runtime are
+ * invalid. Preserve only stable IDs and final ownership counts, in a bounded
+ * ring, so MSdg can distinguish a recently retired realm from no realm. */
+#define QJS_REALM_TOMBSTONE_N 32
+static struct qjs_realm_diag g_qjs_realm_tombstones[QJS_REALM_TOMBSTONE_N];
+static int g_qjs_realm_tombstone_head;
+static unsigned long g_qjs_realm_tombstone_total;
 
 static struct qjs_realm_owner *qjs_owner_for_ctx(JSContext *ctx)
 {
@@ -184,9 +202,66 @@ static int qjs_owner_register(JSContext *ctx, struct jsheap *heap,
 	owner->heap = heap;
 	owner->document = document;
 	owner->content = content;
+	owner->realm_id = ++g_qjs_realm_id_seq;
+	if (g_qjs_realm_id_seq == 0) owner->realm_id = ++g_qjs_realm_id_seq;
+	owner->state = QJS_REALM_LIVE;
 	owner->next = g_qjs_realm_owners;
 	g_qjs_realm_owners = owner;
 	return 1;
+}
+
+static unsigned long qjs_realm_timer_count(JSContext *ctx,
+		unsigned long ctx_gen);
+static unsigned long qjs_realm_wrapper_count(JSRuntime *rt);
+
+static void qjs_owner_refresh(JSContext *ctx, void *win_priv,
+		html_content *htmlc)
+{
+	struct qjs_realm_owner *owner = qjs_owner_for_ctx(ctx);
+	if (owner == NULL) return;
+	owner->frame_id = ms_diag_frame_get(win_priv);
+	if (htmlc != NULL) {
+		owner->document = htmlc->document;
+		owner->content = (struct content *)htmlc;
+		owner->document_id = htmlc->doc_id;
+		owner->nav_id = content_get_nav_id((struct content *)htmlc);
+		if (owner->heap != NULL) owner->heap->nav_id = owner->nav_id;
+	}
+}
+
+static void qjs_owner_tombstone(const struct qjs_realm_owner *owner)
+{
+	struct qjs_realm_diag *out;
+	if (owner == NULL) return;
+	out = &g_qjs_realm_tombstones[g_qjs_realm_tombstone_head];
+	memset(out, 0, sizeof(*out));
+	out->realm_id = owner->realm_id;
+	out->frame_id = owner->frame_id;
+	out->document_id = owner->document_id;
+	out->nav_id = owner->nav_id;
+	out->heap_id = owner->heap ? owner->heap->heap_id : 0;
+	out->ctx_gen = owner->heap ? owner->heap->ctx_gen : 0;
+	out->state = QJS_REALM_RETIRED;
+	out->timers_owned = qjs_realm_timer_count(owner->ctx, out->ctx_gen);
+	out->xhr_owned = macos9_js_fetch_realm_count(owner->ctx);
+	out->microtasks_pending = QJS_REALM_DIAG_UNAVAILABLE;
+	out->modules_waiting = QJS_REALM_DIAG_UNAVAILABLE;
+	out->event_listeners = QJS_REALM_DIAG_UNAVAILABLE;
+	out->wrappers = qjs_realm_wrapper_count(owner->heap ? owner->heap->rt : NULL);
+	out->deferred_notifications = QJS_REALM_DIAG_UNAVAILABLE;
+	g_qjs_realm_tombstone_head = (g_qjs_realm_tombstone_head + 1) %
+		QJS_REALM_TOMBSTONE_N;
+	g_qjs_realm_tombstone_total++;
+}
+
+/* Called when a navigation starts replacing this realm's context.
+ * Transitions state from LIVE to TEARING_DOWN. */
+void macsurf_qjs_realm_tearing_down(JSContext *ctx)
+{
+	struct qjs_realm_owner *owner = qjs_owner_for_ctx(ctx);
+	if (owner != NULL && owner->state == QJS_REALM_LIVE) {
+		owner->state = QJS_REALM_TEARING_DOWN;
+	}
 }
 
 static void qjs_owner_unregister(JSContext *ctx)
@@ -196,6 +271,7 @@ static void qjs_owner_unregister(JSContext *ctx)
 		if ((*pp)->ctx == ctx) {
 			struct qjs_realm_owner *owner = *pp;
 			*pp = owner->next;
+			qjs_owner_tombstone(owner);
 			free(owner);
 			return;
 		}
@@ -1279,6 +1355,21 @@ static int qjs_timer_owned_by(struct qjs_timer *t, JSContext *ctx)
 {
 	if (!t->live || t->ctx != ctx) return 0;
 	return t->ctx_gen == qjs_ctx_gen(ctx) && t->ctx_gen != 0;
+}
+
+static unsigned long qjs_realm_timer_count(JSContext *ctx,
+		unsigned long ctx_gen)
+{
+	unsigned long count = 0;
+	int i;
+
+	if (ctx == NULL || ctx_gen == 0) return 0;
+	for (i = 0; i < QJS_MAX_TIMERS; i++) {
+		if (s_timer_arena[i].live && s_timer_arena[i].ctx == ctx &&
+			s_timer_arena[i].ctx_gen == ctx_gen)
+			count++;
+	}
+	return count;
 }
 
 /* fixes875 (#304) - never-repeating realm id. Monotonic across the whole
@@ -2677,6 +2768,85 @@ static void qjs_wrap_drain(JSRuntime *rt)
 	macsurf_debug_log_writef(
 		"WORK wrapmap drain freed=%d kept-foreign=%d heap=%p",
 		cleaned, kept, (void *)g_heap);
+}
+
+static unsigned long qjs_realm_wrapper_count(JSRuntime *rt)
+{
+	unsigned long count = 0;
+	unsigned int i;
+
+	if (rt == NULL) return 0;
+	for (i = 0; i < QJS_WRAP_BUCKETS; i++) {
+		struct qjs_wrap_entry *e;
+		for (e = s_wrap_buckets[i]; e != NULL; e = e->next) {
+			if (e->rt == rt) count++;
+		}
+	}
+	return count;
+}
+
+int macsurf_qjs_realm_count(void)
+{
+	int count = 0;
+	struct qjs_realm_owner *owner;
+	int i;
+
+	for (owner = g_qjs_realm_owners; owner != NULL; owner = owner->next)
+		count++;
+	for (i = 0; i < QJS_REALM_TOMBSTONE_N; i++) {
+		if (g_qjs_realm_tombstones[i].realm_id != 0) count++;
+	}
+	return count;
+}
+
+unsigned long macsurf_qjs_realm_retired_total(void)
+{
+	return g_qjs_realm_tombstone_total;
+}
+
+unsigned long macsurf_qjs_realm_retired_capacity(void)
+{
+	return QJS_REALM_TOMBSTONE_N;
+}
+
+int macsurf_qjs_realm_get(int index, struct qjs_realm_diag *out)
+{
+	struct qjs_realm_owner *owner;
+	int i;
+	int at = 0;
+
+	if (index < 0 || out == NULL) return 0;
+	for (owner = g_qjs_realm_owners; owner != NULL; owner = owner->next) {
+		if (at++ != index) continue;
+		memset(out, 0, sizeof(*out));
+		out->realm_id = owner->realm_id;
+		out->frame_id = owner->frame_id;
+		out->document_id = owner->document_id;
+		out->nav_id = owner->nav_id;
+		out->heap_id = owner->heap ? owner->heap->heap_id : 0;
+		out->ctx_gen = owner->heap ? owner->heap->ctx_gen : 0;
+		out->ctx = owner->ctx;
+		out->rt = owner->heap ? owner->heap->rt : NULL;
+		out->content = owner->content;
+		out->document = owner->document;
+		out->state = owner->state;
+		out->timers_owned = qjs_realm_timer_count(owner->ctx,
+			out->ctx_gen);
+		out->xhr_owned = macos9_js_fetch_realm_count(owner->ctx);
+		out->microtasks_pending = QJS_REALM_DIAG_UNAVAILABLE;
+		out->modules_waiting = QJS_REALM_DIAG_UNAVAILABLE;
+		out->event_listeners = QJS_REALM_DIAG_UNAVAILABLE;
+		out->wrappers = qjs_realm_wrapper_count(out->rt);
+		out->deferred_notifications = QJS_REALM_DIAG_UNAVAILABLE;
+		return 1;
+	}
+	for (i = 0; i < QJS_REALM_TOMBSTONE_N; i++) {
+		if (g_qjs_realm_tombstones[i].realm_id == 0) continue;
+		if (at++ != index) continue;
+		*out = g_qjs_realm_tombstones[i];
+		return 1;
+	}
+	return 0;
 }
 
 /* Pointer-validate guard (ON from phase one).  Single chokepoint every accessor
@@ -15367,6 +15537,8 @@ nserror js_newheap(int timeout, struct jsheap **out_heap)
 	 * earlier either: heap->ctx does not exist until qjs_build_context returns,
 	 * so linking sooner would not help -- the list keys on heap->ctx. */
 	heap->ctx_gen = g_ctx_gen_next++;
+	heap->heap_id = ++g_qjs_heap_id_seq;
+	if (g_qjs_heap_id_seq == 0) heap->heap_id = ++g_qjs_heap_id_seq;
 
 	heap->timeout = timeout;
 
@@ -15478,6 +15650,7 @@ nserror js_newthread(struct jsheap *heap, void *win_priv, void *doc_priv,
 		 * by the "LIFE js src" line and the FBCR __d wrapper so both
 		 * can be diffed nav-by-nav. */
 		g_qjs_nav_seq++;
+		macsurf_qjs_realm_tearing_down(heap->ctx);
 		qjs_flush_timers(heap->ctx);
 		/* fixes846 (#167 S3) - same load-bearing ordering as the timer
 		 * flush above: abort every in-flight XHR and free its dup'd
@@ -15576,6 +15749,7 @@ nserror js_newthread(struct jsheap *heap, void *win_priv, void *doc_priv,
 		 * same access pattern as macsurf_js.c (Duktape). */
 		qjs_set_document(heap, htmlc->document);
 		qjs_set_content(heap, (struct content *)htmlc);
+		qjs_owner_refresh(heap->ctx, win_priv, htmlc);
 		/* Re-wire getElementById/querySelectorAll with real document now */
 		qjs_dom_install(heap->ctx);
 		MS_LOG("qjs: thread document wired");

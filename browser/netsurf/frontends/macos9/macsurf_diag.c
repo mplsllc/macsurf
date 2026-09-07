@@ -14,6 +14,7 @@
 #include "macsurf_diag.h"
 #include "macsurf_gap.h"
 #include "macsurf_trace.h"	/* Milestone 1c: mirror lifecycle to the ring */
+#include "macsurf_qjs.h"
 
 /* All writers run on the cooperative main / notifier context; no locking. */
 
@@ -342,6 +343,78 @@ long macsurf_diag_serialize_network(char *buf, long cap)
 		(unsigned long) g_req_ring_total);
 	n = diag_cat(buf, cap, n, line);
 
+	return n;
+}
+
+static const char *ms_diag_realm_state_name(int state)
+{
+	if (state == MS_REALM_LIVE) return "live";
+	if (state == MS_REALM_TEARING_DOWN) return "tearing_down";
+	if (state == MS_REALM_RETIRED) return "retired";
+	return "unknown";
+}
+
+static void ms_diag_realm_count_text(char *buf, size_t cap,
+		unsigned long value)
+{
+	if (value == QJS_REALM_DIAG_UNAVAILABLE)
+		snprintf(buf, cap, "unavailable");
+	else
+		snprintf(buf, cap, "%lu", value);
+}
+
+long macsurf_diag_serialize_realms(char *buf, long cap)
+{
+	char line[512];
+	char timers[24], xhr[24], microtasks[24], modules[24];
+	char listeners[24], wrappers[24], deferred[24];
+	long n = 0;
+	int total;
+	int emitted = 0;
+	int truncated = 0;
+	int i;
+	unsigned long retired_total = 0;
+	unsigned long retired_cap = 0;
+
+	if (buf == NULL || cap < 2) return 0;
+	buf[0] = '\0';
+	n = diag_cat(buf, cap, n, "MSDIAG 1 realms\n");
+	total = macsurf_qjs_realm_count();
+	retired_total = macsurf_qjs_realm_retired_total();
+	retired_cap = macsurf_qjs_realm_retired_capacity();
+	snprintf(line, sizeof(line), "records_total=%d\nretired_capacity=%lu\nretired_total=%lu\nretired_overwritten=%lu\n",
+		total, retired_cap, retired_total,
+		(retired_total > retired_cap) ? retired_total - retired_cap : 0);
+	n = diag_cat(buf, cap, n, line);
+	for (i = 0; i < total; i++) {
+		struct qjs_realm_diag realm;
+		if (!macsurf_qjs_realm_get(i, &realm)) continue;
+		ms_diag_realm_count_text(timers, sizeof(timers), realm.timers_owned);
+		ms_diag_realm_count_text(xhr, sizeof(xhr), realm.xhr_owned);
+		ms_diag_realm_count_text(microtasks, sizeof(microtasks), realm.microtasks_pending);
+		ms_diag_realm_count_text(modules, sizeof(modules), realm.modules_waiting);
+		ms_diag_realm_count_text(listeners, sizeof(listeners), realm.event_listeners);
+		ms_diag_realm_count_text(wrappers, sizeof(wrappers), realm.wrappers);
+		ms_diag_realm_count_text(deferred, sizeof(deferred), realm.deferred_notifications);
+		snprintf(line, sizeof(line),
+			"realm=%lu state=%s frame=%lu doc=%lu nav=%lu heap=%lu ctx_gen=%lu ctx=%p rt=%p content=%p document=%p timers=%s xhr=%s microtasks=%s modules_waiting=%s event_listeners=%s wrappers=%s deferred_notifications=%s\n",
+			realm.realm_id, ms_diag_realm_state_name(realm.state),
+			realm.frame_id, realm.document_id, realm.nav_id, realm.heap_id,
+			realm.ctx_gen, (void *)realm.ctx, (void *)realm.rt,
+			(void *)realm.content, realm.document, timers, xhr, microtasks,
+			modules, listeners, wrappers, deferred);
+		/* Reserve enough room for an unambiguous footer. A reply never
+		 * contains a partial realm record: omitted records are explicit. */
+		if (n + (long)strlen(line) + 64 >= cap) {
+			truncated = 1;
+			continue;
+		}
+		n = diag_cat(buf, cap, n, line);
+		emitted++;
+	}
+	snprintf(line, sizeof(line), "records_emitted=%d\ntruncated=%d\ncomplete=%d\n",
+		emitted, truncated, emitted == total && !truncated);
+	n = diag_cat(buf, cap, n, line);
 	return n;
 }
 

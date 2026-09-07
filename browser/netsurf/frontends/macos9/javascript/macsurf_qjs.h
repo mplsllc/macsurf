@@ -8,12 +8,12 @@
 #ifndef MACSURF_QJS_H
 #define MACSURF_QJS_H
 
+#include "quickjs.h"
+
 #ifdef WITH_QUICKJS
 
 #include <stdbool.h>
 #include <stddef.h>
-
-#include "quickjs.h"
 
 struct jscontext {
 	JSContext *qctx;
@@ -66,6 +66,47 @@ struct content *qjs_get_content_for_ctx(JSContext *ctx);
 /* console.log append (used by DOM bindings). */
 void macsurf_qjs_console_append(const char *line);
 
+/* Realm diagnostic inventory declarations are below the engine guard: the
+ * MSdg serializer is compiled as frontend glue, not as the QJS translation
+ * unit, and still needs this read-only interface. */
 #endif /* WITH_QUICKJS */
+
+/* Realm diagnostic inventory (for MSdg GET realms). */
+#define QJS_REALM_DIAG_UNAVAILABLE (~0UL)
+enum qjs_realm_diag_state {
+	QJS_REALM_LIVE = 0,
+	QJS_REALM_TEARING_DOWN,
+	QJS_REALM_RETIRED
+};
+
+struct qjs_realm_diag {
+	unsigned long realm_id;
+	unsigned long frame_id;
+	unsigned long document_id;
+	unsigned long nav_id;
+	unsigned long heap_id;
+	unsigned long ctx_gen;
+	JSContext *ctx;
+	JSRuntime *rt;
+	struct content *content;
+	void *document;	/* opaque on non-Mac builds */
+	unsigned char state;	/* enum qjs_realm_diag_state */
+	unsigned long timers_owned;
+	unsigned long xhr_owned;
+	unsigned long microtasks_pending;
+	unsigned long modules_waiting;
+	unsigned long event_listeners;
+	unsigned long wrappers;
+	unsigned long deferred_notifications;
+};
+
+int macsurf_qjs_realm_count(void);
+int macsurf_qjs_realm_get(int index, struct qjs_realm_diag *out);
+unsigned long macsurf_qjs_realm_retired_total(void);
+unsigned long macsurf_qjs_realm_retired_capacity(void);
+
+/* Called when a navigation starts replacing this realm's context.
+ * Transitions state from LIVE to TEARING_DOWN. */
+void macsurf_qjs_realm_tearing_down(JSContext *ctx);
 
 #endif /* MACSURF_QJS_H */

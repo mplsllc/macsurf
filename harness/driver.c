@@ -12909,5 +12909,45 @@ box_coords(bx, &cx, &cy);
 		fprintf(stderr, "=== Test 107 PASS: Opacity presentation (interpolation, delay, interruption) ===\n");
 	}
 
+	/* --- Test 108: realm inventory is stable while live and retained after
+	 * teardown without retaining a dead pointer. This invokes the real QJS
+	 * heap lifecycle rather than constructing diagnostic records directly. */
+	{
+		char realms0[4096], realms1[4096], needle[64];
+		char *first_realm;
+		struct jsheap *realm_heap = NULL;
+		unsigned long realm_id = 0;
+
+		fprintf(stderr, "\n=== Test 108: QuickJS realm inventory lifecycle ===\n");
+		if (js_newheap(20000, &realm_heap) != NSERROR_OK || realm_heap == NULL) {
+			fprintf(stderr, "FAIL: Test 108 -- js_newheap\n");
+			return 1;
+		}
+		(void)macsurf_diag_serialize_realms(realms0, (long)sizeof(realms0));
+		first_realm = strstr(realms0, "realm=");
+		if (first_realm == NULL ||
+			sscanf(first_realm, "realm=%lu", &realm_id) != 1 ||
+			realm_id == 0) {
+			fprintf(stderr, "FAIL: Test 108 -- no live stable realm id\n");
+			return 1;
+		}
+		snprintf(needle, sizeof(needle), "realm=%lu state=live", realm_id);
+		if (strstr(realms0, needle) == NULL ||
+			strstr(realms0, "retired_capacity=32") == NULL ||
+			strstr(realms0, "microtasks=unavailable") == NULL) {
+			fprintf(stderr, "FAIL: Test 108 -- live inventory schema\n");
+			return 1;
+		}
+		js_destroyheap(realm_heap);
+		(void)macsurf_diag_serialize_realms(realms1, (long)sizeof(realms1));
+		snprintf(needle, sizeof(needle), "realm=%lu state=retired", realm_id);
+		if (strstr(realms1, needle) == NULL ||
+			strstr(realms1, "ctx=(nil) rt=(nil)") == NULL) {
+			fprintf(stderr, "FAIL: Test 108 -- pointer-free retirement record\n");
+			return 1;
+		}
+		fprintf(stderr, "=== Test 108 PASS: live realm becomes pointer-free retained retirement evidence ===\n");
+	}
+
 	return 0;
 }

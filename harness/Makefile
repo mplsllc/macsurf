@@ -37,6 +37,7 @@ CFLAGS := -O0 -g $(ASAN) -std=gnu99 -w -include stdint.h -include stdbool.h \
 # include set: harness stubs FIRST (shadow Mac headers), then netsurf, real libs, quickjs
 INC := -Iinclude \
        -I$(NS)/include -I$(NS) -I$(NS)/content/handlers \
+       -I$(NS)/frontends/macos9/javascript \
        -I$(LIBDIR)/libwapcaplet/include -I$(LIBDIR)/libparserutils/include \
        -I$(LIBDIR)/libhubbub/include -I$(LIBDIR)/libdom/include -I$(LIBDIR)/libcss/include \
        -I$(QJS)

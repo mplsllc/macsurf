@@ -75,6 +75,13 @@ long macsurf_diag_serialize_gaps(char *buf, long cap);
  */
 long macsurf_diag_serialize_network(char *buf, long cap);
 
+enum ms_realm_state {
+	MS_REALM_LIVE = 0,
+	MS_REALM_TEARING_DOWN,
+	MS_REALM_RETIRED
+};
+long macsurf_diag_serialize_realms(char *buf, long cap);
+
 
 /* ============================ Phase 1b ==============================
  * script_id  = one source EXECUTION attempt (not a source-file id).

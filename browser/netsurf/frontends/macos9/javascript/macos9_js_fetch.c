@@ -123,6 +123,21 @@ struct qjs_xhr_slot {
 static struct qjs_xhr_slot s_xhr_arena[QJS_XHR_MAX];
 static int s_xhr_next_id = 1;
 
+unsigned long
+macos9_js_fetch_realm_count(JSContext *ctx)
+{
+	unsigned long count = 0;
+	int i;
+
+	if (ctx == NULL) return 0;
+	for (i = 0; i < QJS_XHR_MAX; i++) {
+		if (s_xhr_arena[i].used && !s_xhr_arena[i].beacon &&
+			s_xhr_arena[i].ctx == ctx)
+			count++;
+	}
+	return count;
+}
+
 static void
 xhr_free_req_headers(struct qjs_xhr_slot *s)
 {
