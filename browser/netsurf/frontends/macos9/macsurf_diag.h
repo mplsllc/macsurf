@@ -81,6 +81,7 @@ long macsurf_diag_serialize_network(char *buf, long cap);
  * guessed from process-global state. */
 enum ms_realm_state {
 	MS_REALM_LIVE = 0,
+	MS_REALM_NAVIGATION_REQUESTED,
 	MS_REALM_TEARING_DOWN,
 	MS_REALM_RETIRED
 };
@@ -105,7 +106,8 @@ enum ms_realm_invariant_state {
 	MS_RIS_REJECTED_CTX_GENERATION_MISMATCH,
 	MS_RIS_REJECTED_RUNTIME_REALM_MISMATCH,
 	MS_RIS_CALLBACK_INVALIDATED_DOCUMENT,
-	MS_RIS_CALLBACK_INVALIDATED_REALM
+	MS_RIS_CALLBACK_INVALIDATED_REALM,
+	MS_RIS_CALLBACK_REQUESTED_NAVIGATION
 };
 void ms_diag_realm_invariant_record(int kind, int state,
 	unsigned long realm_id, unsigned long frame_id,

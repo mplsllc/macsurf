@@ -433,7 +433,14 @@ xhr_deliver(void *p)
 	JS_FreeValue(ctx, fn);
 	realm_check = macsurf_qjs_realm_identity_check(ctx, &s->queued_realm,
 		&live_realm);
-	if (realm_check == QJS_REALM_IDENTITY_DOCUMENT_MISMATCH ||
+	if (realm_check == QJS_REALM_IDENTITY_NAVIGATION_REQUESTED) {
+		ms_diag_realm_invariant_record(MS_RI_DEFERRED_CALLBACK,
+			MS_RIS_CALLBACK_REQUESTED_NAVIGATION, s->queued_realm.realm_id,
+			s->queued_realm.frame_id, s->queued_realm.document_id,
+			live_realm.document_id, s->queued_realm.nav_id, live_realm.nav_id,
+			s->queued_realm.heap_id, s->queued_realm.ctx_gen,
+			(unsigned long)s->id);
+	} else if (realm_check == QJS_REALM_IDENTITY_DOCUMENT_MISMATCH ||
 		realm_check == QJS_REALM_IDENTITY_NAV_MISMATCH) {
 		ms_diag_realm_invariant_record(MS_RI_DEFERRED_CALLBACK,
 			MS_RIS_CALLBACK_INVALIDATED_DOCUMENT, s->queued_realm.realm_id,

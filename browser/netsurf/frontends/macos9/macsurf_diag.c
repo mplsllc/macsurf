@@ -349,6 +349,7 @@ long macsurf_diag_serialize_network(char *buf, long cap)
 static const char *ms_diag_realm_state_name(int state)
 {
 	if (state == MS_REALM_LIVE) return "live";
+	if (state == MS_REALM_NAVIGATION_REQUESTED) return "navigation_requested";
 	if (state == MS_REALM_TEARING_DOWN) return "tearing_down";
 	if (state == MS_REALM_RETIRED) return "retired";
 	return "unknown";
@@ -472,6 +473,7 @@ static const char *ms_realm_invariant_state_name(int state)
 	if (state == MS_RIS_REJECTED_RUNTIME_REALM_MISMATCH) return "rejected_runtime_realm_mismatch";
 	if (state == MS_RIS_CALLBACK_INVALIDATED_DOCUMENT) return "callback_invalidated_document";
 	if (state == MS_RIS_CALLBACK_INVALIDATED_REALM) return "callback_invalidated_realm";
+	if (state == MS_RIS_CALLBACK_REQUESTED_NAVIGATION) return "callback_requested_navigation";
 	return "unknown";
 }
 

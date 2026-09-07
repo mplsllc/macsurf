@@ -12984,6 +12984,18 @@ box_coords(bx, &cx, &cy);
 			fprintf(stderr, "FAIL: Test 109 -- document generation mismatch hidden\n");
 			return 1;
 		}
+		queued.document_id--;
+		macsurf_qjs_realm_navigation_requested(realm.ctx);
+		if (macsurf_qjs_realm_identity_check(realm.ctx, &queued, &live) !=
+			QJS_REALM_IDENTITY_NAVIGATION_REQUESTED) {
+			fprintf(stderr, "FAIL: Test 109 -- navigation requested identity check\n");
+			return 1;
+		}
+		ms_diag_realm_invariant_record(MS_RI_DEFERRED_CALLBACK,
+			MS_RIS_CALLBACK_REQUESTED_NAVIGATION, live.realm_id,
+			live.frame_id, queued.document_id, live.document_id,
+			queued.nav_id, live.nav_id, live.heap_id, live.ctx_gen,
+			999UL);
 		for (i = 0; i < 65; i++)
 			ms_diag_realm_invariant_record(MS_RI_CALLBACK_DOC_GENERATION_MISMATCH,
 				MS_RIS_CANCELLED_NAVIGATION_REPLACED, live.realm_id,

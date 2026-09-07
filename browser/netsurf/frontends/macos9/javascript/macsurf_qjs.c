@@ -275,6 +275,8 @@ int macsurf_qjs_realm_identity_check(JSContext *ctx,
 	qjs_owner_identity(owner, &observed);
 	if (live != NULL) *live = observed;
 	if (owner == NULL) return QJS_REALM_IDENTITY_CTX_NOT_REGISTERED;
+	if (owner->state == QJS_REALM_NAVIGATION_REQUESTED)
+		return QJS_REALM_IDENTITY_NAVIGATION_REQUESTED;
 	if (owner->state != QJS_REALM_LIVE) return QJS_REALM_IDENTITY_RETIRED;
 	if (queued == NULL) return QJS_REALM_IDENTITY_CTX_NOT_REGISTERED;
 	if (queued->realm_id != observed.realm_id ||
@@ -325,12 +327,23 @@ static void qjs_owner_tombstone(const struct qjs_realm_owner *owner)
 	g_qjs_realm_tombstone_total++;
 }
 
+/* A script-originated navigation has been accepted but content replacement is
+ * asynchronous.  Stop post-callback old-realm work immediately; teardown
+ * later records and releases its remaining native slots. */
+void macsurf_qjs_realm_navigation_requested(JSContext *ctx)
+{
+	struct qjs_realm_owner *owner = qjs_owner_for_ctx(ctx);
+	if (owner != NULL && owner->state == QJS_REALM_LIVE)
+		owner->state = QJS_REALM_NAVIGATION_REQUESTED;
+}
+
 /* Called when a navigation starts replacing this realm's context.
- * Transitions state from LIVE to TEARING_DOWN. */
+ * Transitions state to TEARING_DOWN. */
 void macsurf_qjs_realm_tearing_down(JSContext *ctx)
 {
 	struct qjs_realm_owner *owner = qjs_owner_for_ctx(ctx);
-	if (owner != NULL && owner->state == QJS_REALM_LIVE) {
+	if (owner != NULL && owner->state != QJS_REALM_TEARING_DOWN &&
+			owner->state != QJS_REALM_RETIRED) {
 		struct qjs_realm_identity id;
 		unsigned long pending;
 		qjs_owner_identity(owner, &id);
@@ -1216,10 +1229,18 @@ static JSValue qjs_location_set(JSContext *ctx, JSValueConst this_val,
 			 * document first, as native XHR already does. */
 			if (base != NULL && nsurl_join(base, url, &resolved) == NSERROR_OK &&
 					resolved != NULL) {
-				if (win != NULL)
+				if (win != NULL) {
+					/* Same-document hash navigation does not replace the document/realm. */
+					if (!nsurl_compare(base, resolved, NSURL_COMPLETE) ||
+							nsurl_has_component(resolved, NSURL_QUERY)) {
+						macsurf_qjs_realm_navigation_requested(ctx);
+					}
 					macos9_window_navigate(win, nsurl_access(resolved));
+				}
 				nsurl_unref(resolved);
 			} else if (win != NULL) {
+				if (url[0] != '#')
+					macsurf_qjs_realm_navigation_requested(ctx);
 				macos9_window_navigate(win, url);
 			}
 			JS_FreeCString(ctx, url);
@@ -2061,6 +2082,11 @@ void macsurf_qjs_run_timers(struct jscontext *ctx)
 		JS_FreeValue(qctx, fn);
 		for (a = 0; a < call_nargs; a++)
 			JS_FreeValue(qctx, call_args[a]);
+		{
+			struct qjs_realm_owner *owner = qjs_owner_for_ctx(qctx);
+			if (owner != NULL && owner->state == QJS_REALM_NAVIGATION_REQUESTED)
+				break;
+		}
 	}
 }
 

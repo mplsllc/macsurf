@@ -75,6 +75,7 @@ void macsurf_qjs_console_append(const char *line);
 #define QJS_REALM_DIAG_UNAVAILABLE (~0UL)
 enum qjs_realm_diag_state {
 	QJS_REALM_LIVE = 0,
+	QJS_REALM_NAVIGATION_REQUESTED,
 	QJS_REALM_TEARING_DOWN,
 	QJS_REALM_RETIRED
 };
@@ -114,6 +115,7 @@ enum qjs_realm_identity_check {
 	QJS_REALM_IDENTITY_NAV_MISMATCH,
 	QJS_REALM_IDENTITY_GENERATION_MISMATCH,
 	QJS_REALM_IDENTITY_RUNTIME_MISMATCH,
+	QJS_REALM_IDENTITY_NAVIGATION_REQUESTED,
 	QJS_REALM_IDENTITY_RETIRED
 };
 int macsurf_qjs_realm_identity(JSContext *ctx, struct qjs_realm_identity *out);
@@ -128,5 +130,6 @@ unsigned long macsurf_qjs_realm_retired_capacity(void);
 /* Called when a navigation starts replacing this realm's context.
  * Transitions state from LIVE to TEARING_DOWN. */
 void macsurf_qjs_realm_tearing_down(JSContext *ctx);
+void macsurf_qjs_realm_navigation_requested(JSContext *ctx);
 
 #endif /* MACSURF_QJS_H */
