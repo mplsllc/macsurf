@@ -232,13 +232,16 @@ static void qjs_owner_refresh(JSContext *ctx, void *win_priv,
 static void qjs_owner_tombstone(const struct qjs_realm_owner *owner)
 {
 	struct qjs_realm_diag *out;
+	html_content *htmlc;
 	if (owner == NULL) return;
+	htmlc = (html_content *)owner->content;
 	out = &g_qjs_realm_tombstones[g_qjs_realm_tombstone_head];
 	memset(out, 0, sizeof(*out));
 	out->realm_id = owner->realm_id;
 	out->frame_id = owner->frame_id;
-	out->document_id = owner->document_id;
-	out->nav_id = owner->nav_id;
+	out->document_id = htmlc ? htmlc->doc_id : owner->document_id;
+	out->nav_id = htmlc ? content_get_nav_id((struct content *)htmlc) :
+		owner->nav_id;
 	out->heap_id = owner->heap ? owner->heap->heap_id : 0;
 	out->ctx_gen = owner->heap ? owner->heap->ctx_gen : 0;
 	out->state = QJS_REALM_RETIRED;
@@ -2817,12 +2820,19 @@ int macsurf_qjs_realm_get(int index, struct qjs_realm_diag *out)
 
 	if (index < 0 || out == NULL) return 0;
 	for (owner = g_qjs_realm_owners; owner != NULL; owner = owner->next) {
+		html_content *htmlc;
 		if (at++ != index) continue;
 		memset(out, 0, sizeof(*out));
+		htmlc = (html_content *)owner->content;
 		out->realm_id = owner->realm_id;
 		out->frame_id = owner->frame_id;
-		out->document_id = owner->document_id;
-		out->nav_id = owner->nav_id;
+		/* html_begin_conversion allocates doc_id after js_newthread has
+		 * already registered this realm. Read the HTML content's authoritative
+		 * current identity at snapshot time; the owner record still supplies
+		 * the safe fallback for bootstrap contexts with no document. */
+		out->document_id = htmlc ? htmlc->doc_id : owner->document_id;
+		out->nav_id = htmlc ? content_get_nav_id((struct content *)htmlc) :
+			owner->nav_id;
 		out->heap_id = owner->heap ? owner->heap->heap_id : 0;
 		out->ctx_gen = owner->heap ? owner->heap->ctx_gen : 0;
 		out->ctx = owner->ctx;
