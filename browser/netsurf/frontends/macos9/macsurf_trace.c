@@ -217,6 +217,7 @@ long macsurf_trace_serialize_since(char *buf, long cap,
 	unsigned long returned = 0;
 	unsigned long max_return;
 	int oldest_idx;
+	int have_wanted = 0;
 	int truncated = 0;
 	int lost = 0;
 
@@ -252,9 +253,12 @@ long macsurf_trace_serialize_since(char *buf, long cap,
 
 	/* `after=0` means the host wants the first event.  If that event has
 	 * already been overwritten, report the exact missing interval too. */
-	want = after;
-	if (want < latest) want++;
-	if (first != 0 && want < first) {
+	want = 0;
+	if (after < latest) {
+		want = after + 1;
+		have_wanted = 1;
+	}
+	if (have_wanted && first != 0 && want < first) {
 		lost = 1;
 		snprintf(line, sizeof line, "lost_from=%lu\n", want);
 		n = ms_trace_cat_append(buf, cap, n, line);
@@ -266,9 +270,12 @@ long macsurf_trace_serialize_since(char *buf, long cap,
 	n = ms_trace_cat_append(buf, cap, n, line);
 
 	next_after = after;
-	max_return = want + limit;
-	if (max_return < want || max_return > latest + 1) max_return = latest + 1;
-	if (first != 0 && want <= latest) {
+	max_return = 0;
+	if (have_wanted) {
+		max_return = want + limit;
+		if (max_return < want || max_return > latest + 1) max_return = latest + 1;
+	}
+	if (have_wanted && first != 0 && want <= latest) {
 		oldest_idx = (g_trace_head - (int)retained + 2 * MS_TRACE_RING_N)
 			% MS_TRACE_RING_N;
 		for (seq = want; seq < max_return; seq++) {

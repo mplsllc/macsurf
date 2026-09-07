@@ -12794,6 +12794,13 @@ box_coords(bx, &cx, &cy);
 			fprintf(stderr, "FAIL: Test 102 trace cursor resume\n");
 			return 1;
 		}
+		(void)macsurf_trace_serialize_since(trace, (long)sizeof(trace), 260, 8);
+		if (strstr(trace, "returned=0\nnext_after=260\n") == NULL ||
+				strstr(trace, "complete=1\ntruncated=0\n") == NULL ||
+				strstr(trace, "event seq=") != NULL) {
+			fprintf(stderr, "FAIL: Test 102 trace cursor at latest\n");
+			return 1;
+		}
 		(void)macsurf_trace_serialize_since(trace_short,
 				(long)sizeof(trace_short), 14, 4);
 		if (strstr(trace_short, "truncated=1\n") == NULL ||
