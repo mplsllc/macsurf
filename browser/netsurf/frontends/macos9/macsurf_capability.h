@@ -31,13 +31,26 @@ enum ms_css_gap_kind {
 	MS_CSS_GAP_CONDITION, MS_CSS_GAP_COMPUTED, MS_CSS_GAP_CSSOM
 };
 
+/* A JS execution failure is different from an unsupported host API: it says
+ * the page attempted work which did not complete.  Keep this small and
+ * normalized so retained evidence never needs an exception object, a source
+ * pointer, or a script URL. */
+enum ms_js_event_kind {
+	MS_JS_EVENT_PARSE_FAILED = 0,
+	MS_JS_EVENT_RUNTIME_FAILED,
+	MS_JS_EVENT_PROMISE_REJECTION,
+	MS_JS_EVENT_HANDLER_FAILED
+};
+
 void ms_diag_capability_hit(int domain, int operation, const char *name,
 	int result, int quality);
 void ms_diag_css_gap_hit(int kind, const char *property, const char *name,
 	const char *value, int result);
+void ms_diag_js_event_hit(int kind);
 
 long macsurf_diag_serialize_capabilities(char *buf, long cap);
 long macsurf_diag_serialize_css_gaps(char *buf, long cap);
 long macsurf_diag_serialize_gapreport(char *buf, long cap);
+long macsurf_diag_serialize_javascript(char *buf, long cap);
 
 #endif

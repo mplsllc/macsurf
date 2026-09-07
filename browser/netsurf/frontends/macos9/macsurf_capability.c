@@ -8,6 +8,7 @@
 
 #define MS_CAP_RECORDS 128
 #define MS_CAP_TEXT 48
+#define MS_JS_EVENT_RECORDS 32
 
 struct ms_cap_record {
 	int used, domain, operation, result, quality;
@@ -24,10 +25,16 @@ struct ms_css_record {
 	char name[MS_CAP_TEXT];
 	char value[MS_CAP_TEXT];
 };
+struct ms_js_event_record {
+	int used, kind;
+	unsigned long count, first_nav, first_script, first_task;
+	unsigned long last_nav, last_script, last_task;
+};
 
 static struct ms_cap_record g_cap[MS_CAP_RECORDS];
 static struct ms_css_record g_css[MS_CAP_RECORDS];
-static unsigned long g_cap_dropped, g_css_dropped;
+static struct ms_js_event_record g_js_event[MS_JS_EVENT_RECORDS];
+static unsigned long g_cap_dropped, g_css_dropped, g_js_event_dropped;
 static unsigned long g_cap_drop_domain[9], g_css_drop_kind[8];
 
 static unsigned long str_hash(const char *s)
@@ -104,6 +111,32 @@ void ms_diag_css_gap_hit(int kind, const char *property, const char *name,
 	r->count++; r->last_nav = ms_diag_cur_nav();
 }
 
+void ms_diag_js_event_hit(int kind)
+{
+	int i, free_slot = -1;
+	struct ms_js_event_record *r = NULL;
+	for (i = 0; i < MS_JS_EVENT_RECORDS; i++) {
+		if (!g_js_event[i].used) {
+			if (free_slot < 0) free_slot = i;
+			continue;
+		}
+		if (g_js_event[i].kind == kind) { r = &g_js_event[i]; break; }
+	}
+	if (r == NULL && free_slot >= 0) {
+		r = &g_js_event[free_slot];
+		memset(r, 0, sizeof(*r));
+		r->used = 1; r->kind = kind;
+		r->first_nav = ms_diag_cur_nav();
+		r->first_script = ms_diag_cur_script();
+		r->first_task = ms_diag_cur_task();
+	}
+	if (r == NULL) { g_js_event_dropped++; return; }
+	r->count++;
+	r->last_nav = ms_diag_cur_nav();
+	r->last_script = ms_diag_cur_script();
+	r->last_task = ms_diag_cur_task();
+}
+
 static long add(char *b, long c, long n, const char *s)
 {
 	long l;
@@ -135,6 +168,35 @@ static const char *cap_op(int x)
 	static const char *const a[] = {"get", "has", "call", "construct",
 		"register", "set", "query"};
 	return (x >= 0 && x < 7) ? a[x] : "unknown";
+}
+static const char *js_event_kind(int x)
+{
+	static const char *const a[] = {"parse_failed", "runtime_failed",
+		"promise_rejection", "handler_failed"};
+	return (x >= 0 && x < 4) ? a[x] : "unknown";
+}
+
+long macsurf_diag_serialize_javascript(char *b, long c)
+{
+	char line[256]; long n = 0; int i, total = 0;
+	if (b == NULL || c < 2) return 0;
+	b[0] = '\0';
+	n = add(b, c, n, "MSDIAG 1 javascript\n");
+	for (i = 0; i < MS_JS_EVENT_RECORDS; i++) if (g_js_event[i].used) total++;
+	snprintf(line, sizeof line,
+		"total=%d capacity=%d dropped=%lu loss_explicit=1\n",
+		total, MS_JS_EVENT_RECORDS, g_js_event_dropped);
+	n = add(b, c, n, line);
+	for (i = 0; i < MS_JS_EVENT_RECORDS; i++) if (g_js_event[i].used) {
+		snprintf(line, sizeof line,
+			"kind=%s count=%lu first_nav=%lu first_script=%lu first_task=%lu last_nav=%lu last_script=%lu last_task=%lu\n",
+			js_event_kind(g_js_event[i].kind), g_js_event[i].count,
+			g_js_event[i].first_nav, g_js_event[i].first_script,
+			g_js_event[i].first_task, g_js_event[i].last_nav,
+			g_js_event[i].last_script, g_js_event[i].last_task);
+		n = add(b, c, n, line);
+	}
+	return n;
 }
 
 long macsurf_diag_serialize_capabilities(char *b, long c)
@@ -178,11 +240,11 @@ long macsurf_diag_serialize_gapreport(char *b, long c)
 	char line[256];
 	long n = 0;
 	int i;
-	int cap_unique = 0, css_unique = 0;
+	int cap_unique = 0, css_unique = 0, js_unique = 0;
 	int css_prop_gaps = 0, css_val_gaps = 0, css_sel_gaps = 0;
 	int css_pc_gaps = 0, css_pe_gaps = 0, css_at_gaps = 0;
 	int css_media_gaps = 0, cssom_gaps = 0;
-	unsigned long cap_hits = 0, css_hits = 0;
+	unsigned long cap_hits = 0, css_hits = 0, js_hits = 0;
 	unsigned long nav_id = ms_diag_cur_nav();
 
 	if (b == NULL || c < 2) return 0;
@@ -194,6 +256,9 @@ long macsurf_diag_serialize_gapreport(char *b, long c)
 			cap_hits += g_cap[i].count;
 			if (g_cap[i].domain == MS_CAP_CSSOM) cssom_gaps++;
 		}
+	}
+	for (i = 0; i < MS_JS_EVENT_RECORDS; i++) if (g_js_event[i].used) {
+		js_unique++; js_hits += g_js_event[i].count;
 	}
 	for (i = 0; i < MS_CAP_RECORDS; i++) {
 		if (g_css[i].used) {
@@ -214,10 +279,11 @@ long macsurf_diag_serialize_gapreport(char *b, long c)
 	snprintf(line, sizeof line, "nav=%lu\n", nav_id);
 	n = add(b, c, n, line);
 	snprintf(line, sizeof line, "unique_gaps=%d\ntotal_hits=%lu\ndropped=%lu\n",
-		cap_unique + css_unique, cap_hits + css_hits, g_cap_dropped + g_css_dropped);
+		cap_unique + css_unique + js_unique, cap_hits + css_hits + js_hits,
+		g_cap_dropped + g_css_dropped + g_js_event_dropped);
 	n = add(b, c, n, line);
 	snprintf(line, sizeof line, "census_lossless=%d\ncoverage_complete=%d\nblind_spots=%d\n",
-		(g_cap_dropped + g_css_dropped == 0) ? 1 : 0, 0, 2);
+		(g_cap_dropped + g_css_dropped + g_js_event_dropped == 0) ? 1 : 0, 0, 2);
 	n = add(b, c, n, line);
 	snprintf(line, sizeof line, "capability_gaps=%d\ncss_property_gaps=%d\ncss_value_gaps=%d\nselector_gaps=%d\npseudo_class_gaps=%d\npseudo_element_gaps=%d\nmedia_gaps=%d\ncssom_gaps=%d\n\n",
 		cap_unique, css_prop_gaps, css_val_gaps, css_sel_gaps, css_pc_gaps, css_pe_gaps, css_media_gaps, cssom_gaps);
@@ -225,6 +291,7 @@ long macsurf_diag_serialize_gapreport(char *b, long c)
 
 	n = add(b, c, n, "[coverage]\n");
 	n = add(b, c, n, "js_host_api=full\n");
+	n = add(b, c, n, "js_execution_failures=full\n");
 	n = add(b, c, n, "dom_property_missing=full\n");
 	n = add(b, c, n, "dom_method_missing=full\n");
 	n = add(b, c, n, "global_feature_get=unobservable reason=quickjs_global_lookup_no_safe_host_hook\n");
@@ -251,6 +318,21 @@ long macsurf_diag_serialize_gapreport(char *b, long c)
 				g_cap[i].count, g_cap[i].first_nav, g_cap[i].last_nav);
 			n = add(b, c, n, line);
 		}
+	}
+	for (i = 0; i < MS_CAP_RECORDS; i++) if (g_cap[i].used) {
+		snprintf(line, sizeof line,
+			"normalized_key=js.api.%s.%s count=%lu first_nav=%lu last_nav=%lu\n",
+			g_cap[i].name, cap_result(g_cap[i].result), g_cap[i].count,
+			g_cap[i].first_nav, g_cap[i].last_nav);
+		n = add(b, c, n, line);
+	}
+	for (i = 0; i < MS_JS_EVENT_RECORDS; i++) if (g_js_event[i].used) {
+		snprintf(line, sizeof line,
+			"key=js.%s count=%lu first_nav=%lu last_nav=%lu first_script=%lu last_script=%lu\n",
+			js_event_kind(g_js_event[i].kind), g_js_event[i].count,
+			g_js_event[i].first_nav, g_js_event[i].last_nav,
+			g_js_event[i].first_script, g_js_event[i].last_script);
+		n = add(b, c, n, line);
 	}
 	for (i = 0; i < MS_CAP_RECORDS; i++) {
 		if (g_css[i].used) {

@@ -10,9 +10,14 @@ enum ms_cap_result { MS_CAP_UNSUPPORTED = 0, MS_CAP_STUB, MS_CAP_NOOP,
 enum ms_css_gap_kind { MS_CSS_GAP_SELECTOR = 0, MS_CSS_GAP_PROPERTY,
 	MS_CSS_GAP_VALUE, MS_CSS_GAP_PSEUDO_CLASS, MS_CSS_GAP_PSEUDO_ELEMENT,
 	MS_CSS_GAP_CONDITION, MS_CSS_GAP_COMPUTED, MS_CSS_GAP_CSSOM };
+enum ms_js_event_kind { MS_JS_EVENT_PARSE_FAILED = 0,
+	MS_JS_EVENT_RUNTIME_FAILED, MS_JS_EVENT_PROMISE_REJECTION,
+	MS_JS_EVENT_HANDLER_FAILED };
 void ms_diag_capability_hit(int, int, const char *, int, int);
 void ms_diag_css_gap_hit(int, const char *, const char *, const char *, int);
+void ms_diag_js_event_hit(int);
 long macsurf_diag_serialize_capabilities(char *, long);
 long macsurf_diag_serialize_css_gaps(char *, long);
 long macsurf_diag_serialize_gapreport(char *, long);
+long macsurf_diag_serialize_javascript(char *, long);
 #endif

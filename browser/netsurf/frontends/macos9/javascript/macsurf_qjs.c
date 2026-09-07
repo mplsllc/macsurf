@@ -2061,6 +2061,7 @@ void macsurf_qjs_run_timers(struct jscontext *ctx)
 		JS_FreeValue(qctx, this_obj);
 		if (JS_IsException(ret)) {
 			JSValue exc = JS_GetException(qctx);
+			ms_diag_js_event_hit(MS_JS_EVENT_HANDLER_FAILED);
 			qjs_log_exc(qctx, exc, "timer exc", "setTimeout");
 			JS_FreeValue(qctx, exc);
 			/* Deadline-abort of a still-live (repeating) timer: kill
@@ -15171,6 +15172,7 @@ static void qjs_promise_rejection_tracker(JSContext *ctx, JSValueConst promise,
 	const char *msg;
 	(void)promise; (void)opaque;
 	if (is_handled) return;
+	ms_diag_js_event_hit(MS_JS_EVENT_PROMISE_REJECTION);
 	msg = JS_ToCString(ctx, reason);
 	macsurf_debug_log_writef("LIFE js unhandled rejection: %s",
 			msg ? msg : "(no reason)");
@@ -16662,11 +16664,14 @@ unsigned char js_exec(struct jsthread *thread,
 			 * to before -- a failed compile must not start looking
 			 * like a different kind of failure. */
 			val = fn;
+			ms_diag_js_event_hit(MS_JS_EVENT_PARSE_FAILED);
 			/* R1.3 - compile failed; nothing ran. */
 			qjs_census_note(name, (long)txtlen, ctype,
 					0, 0, c_us, 0);
 		} else {
 			val = JS_EvalFunction(thread->ctx, fn);
+			if (JS_IsException(val))
+				ms_diag_js_event_hit(MS_JS_EVENT_RUNTIME_FAILED);
 			r_us = (long)(macos9_micros() - t_mid);
 			/* R1.3 - compiled ok; ran to completion or threw. */
 			qjs_census_note(name, (long)txtlen, ctype,
