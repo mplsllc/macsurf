@@ -2052,6 +2052,10 @@ void macsurf_qjs_run_timers(struct jscontext *ctx)
 		ms_diag_timer_state((unsigned long)due_id[k], MS_TIMER_FIRING);
 		ret = JS_Call(qctx, fn, this_obj, call_nargs, call_args);
 		ms_diag_timer_state((unsigned long)due_id[k], MS_TIMER_FIRED);
+		/* Record an exception while the timer's causal task is still live.
+		 * Popping first turns a real handler failure into task=0 evidence. */
+		if (JS_IsException(ret))
+			ms_diag_js_event_hit(MS_JS_EVENT_HANDLER_FAILED);
 		ms_diag_task_leave(&__tsk);
 		{	/* fixes1037 */
 			extern double macos9_micros(void);
@@ -2061,7 +2065,6 @@ void macsurf_qjs_run_timers(struct jscontext *ctx)
 		JS_FreeValue(qctx, this_obj);
 		if (JS_IsException(ret)) {
 			JSValue exc = JS_GetException(qctx);
-			ms_diag_js_event_hit(MS_JS_EVENT_HANDLER_FAILED);
 			qjs_log_exc(qctx, exc, "timer exc", "setTimeout");
 			JS_FreeValue(qctx, exc);
 			/* Deadline-abort of a still-live (repeating) timer: kill

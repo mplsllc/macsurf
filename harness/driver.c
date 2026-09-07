@@ -12899,12 +12899,16 @@ box_coords(bx, &cx, &cy);
 	/* --- Test 104a: JS failures and API keys retain causal evidence ------ */
 	{
 		char javascript[8192], javascript_again[8192], report[32768];
+		struct ms_diag_scope handler_scope;
 		fprintf(stderr, "\n=== Test 104a: JS failure and normalized API observability ===\n");
 		ms_diag_js_event_hit(MS_JS_EVENT_PARSE_FAILED);
 		ms_diag_js_event_hit(MS_JS_EVENT_RUNTIME_FAILED);
 		ms_diag_js_event_hit(MS_JS_EVENT_RUNTIME_FAILED);
 		ms_diag_js_event_hit(MS_JS_EVENT_PROMISE_REJECTION);
+		(void)ms_diag_task_enter(&handler_scope, MS_TASK_TIMER, 701, 702,
+			0, NULL);
 		ms_diag_js_event_hit(MS_JS_EVENT_HANDLER_FAILED);
+		ms_diag_task_leave(&handler_scope);
 		(void)macsurf_diag_serialize_javascript(javascript,
 			(long)sizeof(javascript));
 		(void)macsurf_diag_serialize_javascript(javascript_again,
@@ -12916,6 +12920,7 @@ box_coords(bx, &cx, &cy);
 				strstr(javascript, "kind=parse_failed count=1") == NULL ||
 				strstr(javascript, "kind=runtime_failed count=2") == NULL ||
 				strstr(javascript, "kind=promise_rejection count=1") == NULL ||
+				strstr(javascript, "kind=handler_failed count=1 first_nav=701 first_script=702 first_task=0") != NULL ||
 				strstr(javascript, "kind=handler_failed count=1") == NULL ||
 				strstr(report, "key=js.runtime_failed count=2") == NULL ||
 				strstr(report, "normalized_key=js.api.offsetWidth.unsupported count=2") == NULL) {
