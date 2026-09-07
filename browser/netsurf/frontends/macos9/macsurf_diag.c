@@ -19,6 +19,7 @@
 #ifdef __MACOS9__
 #include "macos9.h"		/* struct gui_window -- Mac-only full definition */
 #include "desktop/browser_private.h"	/* struct browser_window fields */
+#include "content/hlcache.h"	/* hlcache_handle_get_content */
 #endif
 
 #include "macsurf_diag.h"
