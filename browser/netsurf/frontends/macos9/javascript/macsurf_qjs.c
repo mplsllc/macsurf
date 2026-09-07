@@ -1170,7 +1170,11 @@ static JSValue qjs_location_get(JSContext *ctx, JSValueConst this_val,
 	(void)this_val; (void)argc; (void)argv;
 #ifdef __MACOS9__
 	{
-		struct gui_window *win = macos9_window_list_head();
+		struct qjs_realm_owner *owner = qjs_owner_for_ctx(ctx);
+		html_content *htmlc = owner ? (html_content *)owner->content : NULL;
+		struct gui_window *win = (htmlc != NULL && htmlc->bw != NULL) ?
+			macos9_window_for_browser_window(htmlc->bw) :
+			macos9_window_list_head();
 		struct browser_window *bw = win ? macos9_gw_bw(win) : NULL;
 		const char *href = "about:blank";
 		if (bw != NULL) {
@@ -1198,8 +1202,26 @@ static JSValue qjs_location_set(JSContext *ctx, JSValueConst this_val,
 	if (argc > 0) {
 		const char *url = JS_ToCString(ctx, argv[0]);
 		if (url) {
-			struct gui_window *win = macos9_window_list_head();
-			if (win != NULL) macos9_window_navigate(win, url);
+			struct qjs_realm_owner *owner = qjs_owner_for_ctx(ctx);
+			html_content *htmlc = owner ? (html_content *)owner->content : NULL;
+			struct gui_window *win = (htmlc != NULL && htmlc->bw != NULL) ?
+				macos9_window_for_browser_window(htmlc->bw) :
+				macos9_window_list_head();
+			struct nsurl *resolved = NULL;
+			const struct nsurl *base = htmlc ?
+				content_get_url((struct content *)htmlc) : NULL;
+			/* Location navigation is URL-reference navigation.  Passing a
+			 * relative string to macos9_window_navigate reaches nsurl_create(),
+			 * which only accepts absolute URLs; resolve against this realm's
+			 * document first, as native XHR already does. */
+			if (base != NULL && nsurl_join(base, url, &resolved) == NSERROR_OK &&
+					resolved != NULL) {
+				if (win != NULL)
+					macos9_window_navigate(win, nsurl_access(resolved));
+				nsurl_unref(resolved);
+			} else if (win != NULL) {
+				macos9_window_navigate(win, url);
+			}
 			JS_FreeCString(ctx, url);
 		}
 	}

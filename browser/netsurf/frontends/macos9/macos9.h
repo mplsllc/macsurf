@@ -335,6 +335,8 @@ void macos9_window_resize(struct gui_window *g);
 /* fixes641 - declared for the per-window close path in main.c (both defined
  * in window.c; previously only referenced internally). */
 struct gui_window *macos9_window_list_head(void);
+struct gui_window *macos9_window_for_browser_window(
+		struct browser_window *bw);
 void macos9_window_destroy(struct gui_window *g);
 void macos9_windows_te_idle(void);
 void macos9_windows_process_deferred(void);

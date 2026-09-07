@@ -193,6 +193,19 @@ static Rect macos9_active_favicon_src_rect;
 struct gui_window *macos9_find_window(WindowRef w) { struct gui_window *g; for(g=window_list;g;g=g->next) if(g->window==w) return g; return NULL; }
 struct gui_window *macos9_window_list_head(void) { return window_list; }
 
+/* Return the frontend window that owns this browser window.  Native JS
+ * bindings must navigate their realm's owner, not whichever window happens
+ * to be first in the process-global list. */
+struct gui_window *macos9_window_for_browser_window(struct browser_window *bw)
+{
+	struct gui_window *g;
+	if (bw == NULL) return NULL;
+	for (g = window_list; g != NULL; g = g->next) {
+		if (g->bw == bw) return g;
+	}
+	return NULL;
+}
+
 /* fixes612 - expose the front window's content viewport (device px) so the
  * core html_get_dimensions() media-query path has a real width even when the
  * CONTENT_MSG_GETDIMS broadcast returns nothing (content not yet bound to a
