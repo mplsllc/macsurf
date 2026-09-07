@@ -735,7 +735,8 @@ int main(int argc, char **argv)
 	/* The full reconvert harness intentionally exercises unrelated browser
 	 * surfaces before Test 102.  Keep a focused entry point for this bounded
 	 * diagnostics-state test so it remains independently runnable. */
-	if (argc == 2 && strcmp(argv[1], "--diag-phase2") == 0)
+	if (argc == 2 && (strcmp(argv[1], "--diag-phase2") == 0 ||
+			strcmp(argv[1], "--diag-phase3") == 0))
 		goto phase2_diag;
 
 	if (argc == 2 && strcmp(argv[1], "--cssprobe") == 0)
@@ -13256,6 +13257,70 @@ box_coords(bx, &cx, &cy);
 		macos9_content_unregister((struct content *)&t110c);
 
 		fprintf(stderr, "=== Test 110 PASS: DOM and Box entities verified across reconvert drift ===\n");
+	}
+
+	/* Test 111: Context histories are bounded, but their wire format must make
+	 * the missing prefix explicit.  Generate one more than each actual ring
+	 * capacity, then require both the displaced id and its loss accounting. */
+	{
+		char history[32768];
+		char needle[64];
+		char *pass_header;
+		char *stage_header;
+		struct ms_diag_provenance prov;
+		unsigned long first_doc, first_batch, first_pass;
+		int i;
+
+		fprintf(stderr, "\n=== Test 111: context history loss accounting ===\n");
+		memset(&prov, 0, sizeof(prov));
+		prov.nav = 111;
+		prov.frame = 1;
+		prov.doc = 11101;
+
+		first_doc = ms_diag_document_open(prov.nav, prov.frame);
+		for (i = 0; i < 32; i++)
+			(void)ms_diag_document_open(prov.nav, prov.frame);
+		(void)macsurf_diag_serialize_documents(history, (long)sizeof(history));
+		snprintf(needle, sizeof(needle), "doc=%lu ", first_doc);
+		if (strstr(history, "history=documents") == NULL ||
+			strstr(history, "first_available=") == NULL ||
+			strstr(history, "overwritten=0") != NULL ||
+			strstr(history, needle) != NULL) {
+			fprintf(stderr, "FAIL: Test 111 -- document history loss: %s\n", history);
+			return 1;
+		}
+
+		first_batch = ms_diag_batch_open(&prov);
+		for (i = 0; i < 64; i++)
+			(void)ms_diag_batch_open(&prov);
+		(void)macsurf_diag_serialize_mutations(history, (long)sizeof(history));
+		snprintf(needle, sizeof(needle), "batch=%lu ", first_batch);
+		if (strstr(history, "history=mutations") == NULL ||
+			strstr(history, "overwritten=0") != NULL ||
+			strstr(history, needle) != NULL) {
+			fprintf(stderr, "FAIL: Test 111 -- mutation history loss: %s\n", history);
+			return 1;
+		}
+
+		first_pass = ms_diag_render_open(&prov, MS_RENDER_RECONVERT);
+		for (i = 0; i < 64; i++)
+			(void)ms_diag_render_open(&prov, MS_RENDER_RECONVERT);
+		for (i = 0; i < 97; i++) {
+			ms_diag_render_stage(MS_STAGE_STYLEFAST, MS_SRES_DECLINE,
+				MS_SREASON_NONE, i, 0, 0, "history", 0);
+		}
+		(void)macsurf_diag_serialize_layout(history, (long)sizeof(history));
+		snprintf(needle, sizeof(needle), "pass=%lu ", first_pass);
+		pass_header = strstr(history, "history=passes");
+		stage_header = strstr(history, "history=stages");
+		if (pass_header == NULL || stage_header == NULL ||
+			strstr(pass_header, "overwritten=0\n") != NULL ||
+			strstr(stage_header, "overwritten=0\n") != NULL ||
+			strstr(history, needle) != NULL) {
+			fprintf(stderr, "FAIL: Test 111 -- layout history loss: %s\n", history);
+			return 1;
+		}
+		fprintf(stderr, "=== Test 111 PASS: overwritten context history is explicit ===\n");
 	}
 
 	return 0;

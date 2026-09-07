@@ -897,6 +897,35 @@ static unsigned long ms_next(unsigned long *seq)
 	return v;
 }
 
+/* All causal-context rings use this same retention contract.  Their ids are
+ * monotonically allocated write generations, so a reader need not guess from
+ * an empty slot whether nothing was recorded or older history was displaced.
+ * `first_available=0` means no record has ever existed; otherwise every id
+ * before first_available has been overwritten by the bounded ring. */
+static long ms_diag_history_header(char *buf, long cap, long n,
+	const char *history, unsigned long total, int capacity)
+{
+	unsigned long first = 0;
+	unsigned long overwritten = 0;
+
+	if (total != 0) {
+		if (total > (unsigned long) capacity) {
+			overwritten = total - (unsigned long) capacity;
+			first = overwritten + 1;
+		} else {
+			first = 1;
+		}
+	}
+	{
+		char line[160];
+		snprintf(line, sizeof(line),
+			"history=%s records_total=%lu capacity=%d first_available=%lu latest=%lu overwritten=%lu\n",
+			history, total, capacity, first, total, overwritten);
+		n = diag_cat(buf, cap, n, line);
+	}
+	return n;
+}
+
 void ms_diag_frame_open(void *bw)
 {
 	int i;
@@ -1380,6 +1409,8 @@ long macsurf_diag_serialize_documents(char *buf, long cap)
 	}
 	buf[0] = '\0';
 	n = diag_cat(buf, cap, n, "MSDIAG 1 documents\n");
+	n = ms_diag_history_header(buf, cap, n, "documents", g_doc_seq,
+		MS_DOC_RING_N);
 	for (i = 0; i < MS_DOC_RING_N; i++) {
 		int idx = (g_doc_ring_head - 1 - i + 2 * MS_DOC_RING_N)
 			% MS_DOC_RING_N;
@@ -1410,6 +1441,8 @@ long macsurf_diag_serialize_mutations(char *buf, long cap)
 	}
 	buf[0] = '\0';
 	n = diag_cat(buf, cap, n, "MSDIAG 1 mutations\n");
+	n = ms_diag_history_header(buf, cap, n, "mutations", g_batch_seq,
+		MS_BATCH_RING_N);
 	for (i = 0; i < MS_BATCH_RING_N; i++) {
 		int idx = (g_batch_ring_head - 1 - i + 2 * MS_BATCH_RING_N)
 			% MS_BATCH_RING_N;
@@ -1450,6 +1483,10 @@ long macsurf_diag_serialize_layout(char *buf, long cap)
 	}
 	buf[0] = '\0';
 	n = diag_cat(buf, cap, n, "MSDIAG 1 layout\n");
+	n = ms_diag_history_header(buf, cap, n, "passes", g_pass_seq,
+		MS_PASS_RING_N);
+	n = ms_diag_history_header(buf, cap, n, "stages", g_stage_seq,
+		MS_STAGE_RING_N);
 
 	for (i = 0; i < MS_PASS_RING_N; i++) {
 		int idx = (g_pass_ring_head - 1 - i + 2 * MS_PASS_RING_N)
