@@ -12834,6 +12834,8 @@ box_coords(bx, &cx, &cy);
 	/* --- Test 102a: script execution history must disclose rotation ------- */
 	{
 		char scripts[16384];
+		char page[16384];
+		char tiny[400];
 		char name[32];
 		int i;
 		fprintf(stderr, "\n=== Test 102a: script history loss accounting ===\n");
@@ -12848,6 +12850,40 @@ box_coords(bx, &cx, &cy);
 				strstr(scripts, "name=history-script-0") != NULL ||
 				strstr(scripts, "name=history-script-64") == NULL) {
 			fprintf(stderr, "FAIL: Test 102a script history loss contract\n"); return 1;
+		}
+		(void)macsurf_diag_serialize_scripts_since(page, (long)sizeof(page),
+			0, 3);
+		if (strstr(page, "lost_from=1\nlost_to=1\n") == NULL ||
+				strstr(page, "returned=3\nnext_after=4\ncomplete=0\ntruncated=0\n") == NULL ||
+				strstr(page, "script=2 ") == NULL ||
+				strstr(page, "script=4 ") == NULL ||
+				strstr(page, "script=5 ") != NULL) {
+			fprintf(stderr, "FAIL: Test 102a first script page\n"); return 1;
+		}
+		(void)macsurf_diag_serialize_scripts_since(page, (long)sizeof(page),
+			4, 60);
+		if (strstr(page, "returned=60\nnext_after=64\ncomplete=0\ntruncated=0\n") == NULL ||
+				strstr(page, "script=5 ") == NULL ||
+				strstr(page, "script=64 ") == NULL ||
+				strstr(page, "script=65 ") != NULL) {
+			fprintf(stderr, "FAIL: Test 102a continuation script page\n"); return 1;
+		}
+		(void)macsurf_diag_serialize_scripts_since(page, (long)sizeof(page),
+			64, 60);
+		if (strstr(page, "returned=1\nnext_after=65\ncomplete=1\ntruncated=0\n") == NULL ||
+				strstr(page, "script=65 ") == NULL) {
+			fprintf(stderr, "FAIL: Test 102a final script page\n"); return 1;
+		}
+		(void)macsurf_diag_serialize_scripts_since(page, (long)sizeof(page),
+			65, 60);
+		if (strstr(page, "returned=0\nnext_after=65\ncomplete=1\ntruncated=0\n") == NULL ||
+				strstr(page, "script=") != NULL) {
+			fprintf(stderr, "FAIL: Test 102a exhausted script cursor\n"); return 1;
+		}
+		(void)macsurf_diag_serialize_scripts_since(tiny, (long)sizeof(tiny),
+			2, 3);
+		if (strstr(tiny, "returned=0\nnext_after=2\ncomplete=0\ntruncated=1\n") == NULL) {
+			fprintf(stderr, "FAIL: Test 102a script reply truncation\n"); return 1;
 		}
 		fprintf(stderr, "=== Test 102a PASS: script history loss is explicit ===\n");
 	}

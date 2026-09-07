@@ -1945,6 +1945,8 @@ static pascal OSErr macos9_ae_diag(const AppleEvent *ae, AppleEvent *reply,
 	long n;
 	unsigned long trace_after = 0;
 	unsigned long trace_limit = 0;
+	unsigned long scripts_after = 0;
+	unsigned long scripts_limit = 0;
 	unsigned long dom_doc_id = 0;
 	unsigned long dom_after = 0;
 	unsigned long dom_limit = 0;
@@ -1975,6 +1977,10 @@ static pascal OSErr macos9_ae_diag(const AppleEvent *ae, AppleEvent *reply,
 		n = macsurf_diag_serialize_warnings(out, (long)sizeof(out));
 	} else if (strcmp(verb, "scripts") == 0) {
 		n = macsurf_diag_serialize_scripts(out, (long)sizeof(out));
+	} else if (macos9_diag_parse_cursor(verb, "scripts", &scripts_after,
+			&scripts_limit)) {
+		n = macsurf_diag_serialize_scripts_since(out, (long)sizeof(out),
+			scripts_after, scripts_limit);
 	} else if (strcmp(verb, "tasks") == 0) {
 		n = macsurf_diag_serialize_tasks(out, (long)sizeof(out));
 	} else if (strcmp(verb, "documents") == 0) {

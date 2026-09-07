@@ -163,6 +163,11 @@ unsigned long ms_diag_cur_task(void);
 unsigned long ms_diag_cur_nav(void);
 
 long macsurf_diag_serialize_scripts(char *buf, long cap);
+/* `scripts after=<script_id> limit=<n>` is the paged, chronological form.
+ * `after` is the last execution attempt the reader retained; the result says
+ * explicitly when that cursor predates the bounded ring. */
+long macsurf_diag_serialize_scripts_since(char *buf, long cap,
+	unsigned long after, unsigned long limit);
 long macsurf_diag_serialize_tasks(char *buf, long cap);
 
 /* ================= Browser API operation / error diagnostics =================

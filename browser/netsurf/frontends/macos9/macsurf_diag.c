@@ -538,6 +538,8 @@ static unsigned long g_script_seq;
 static unsigned long g_task_seq;
 
 #define MS_SCRIPT_RING_N 64
+#define MS_SCRIPT_DEFAULT_LIMIT 16
+#define MS_SCRIPT_FOOTER_RESERVE 256
 #define MS_TASK_RING_N   128
 #define MS_NAME_MAX      40
 
@@ -744,6 +746,104 @@ long macsurf_diag_serialize_scripts(char *buf, long cap)
 			e->name[0] ? e->name : "-");
 		n = diag_cat(buf, cap, n, line);
 	}
+	return n;
+}
+
+/* The v1 dump above stays for existing tools.  New tools drain this cursor
+ * view in increasing execution-attempt order.  The script ring is live rather
+ * than snapshotted: a page reports an overwritten requested interval instead
+ * of pretending its retained tail began at the caller's cursor. */
+long macsurf_diag_serialize_scripts_since(char *buf, long cap,
+	unsigned long after, unsigned long limit)
+{
+	char line[192];
+	long n = 0;
+	unsigned long latest;
+	unsigned long retained;
+	unsigned long first;
+	unsigned long want = 0;
+	unsigned long seq;
+	unsigned long max_return = 0;
+	unsigned long next_after;
+	unsigned long returned = 0;
+	unsigned long lost_from = 0;
+	unsigned long lost_to = 0;
+	int oldest_idx;
+	int have_wanted = 0;
+	int lost = 0;
+	int truncated = 0;
+
+	if (buf == NULL || cap < 2) return 0;
+	buf[0] = '\0';
+	latest = g_script_seq;
+	retained = latest;
+	if (retained > MS_SCRIPT_RING_N) retained = MS_SCRIPT_RING_N;
+	first = retained == 0 ? 0 : latest - retained + 1;
+	if (limit == 0) limit = MS_SCRIPT_DEFAULT_LIMIT;
+	if (limit > MS_SCRIPT_RING_N) limit = MS_SCRIPT_RING_N;
+
+	n = diag_cat(buf, cap, n, "MSDIAG 2 scripts\n");
+	n = ms_diag_history_header(buf, cap, n, "scripts", latest,
+		MS_SCRIPT_RING_N);
+	snprintf(line, sizeof(line), "requested_after=%lu\nlimit=%lu\n",
+		after, limit);
+	n = diag_cat(buf, cap, n, line);
+
+	if (after < latest) {
+		want = after + 1;
+		have_wanted = 1;
+	}
+	if (have_wanted && first != 0 && want < first) {
+		lost = 1;
+		lost_from = want;
+		lost_to = first - 1;
+		snprintf(line, sizeof(line), "lost_from=%lu\nlost_to=%lu\n",
+			lost_from, lost_to);
+		n = diag_cat(buf, cap, n, line);
+		want = first;
+	}
+	next_after = after;
+	if (have_wanted && first != 0 && want <= latest) {
+		max_return = want + limit;
+		if (max_return < want || max_return > latest + 1) {
+			max_return = latest + 1;
+		}
+		oldest_idx = (g_script_ring_head - (int)retained +
+			2 * MS_SCRIPT_RING_N) % MS_SCRIPT_RING_N;
+		for (seq = want; seq < max_return; seq++) {
+			int idx = (oldest_idx + (int)(seq - first)) % MS_SCRIPT_RING_N;
+			struct ms_diag_script *e = &g_script_ring[idx];
+
+			if (e->id != seq) {
+				lost = 1;
+				if (lost_from == 0) {
+					lost_from = seq;
+					lost_to = seq;
+					snprintf(line, sizeof(line),
+						"lost_from=%lu\nlost_to=%lu\n", lost_from,
+						lost_to);
+					n = diag_cat(buf, cap, n, line);
+				}
+				break;
+			}
+			snprintf(line, sizeof(line),
+				"script=%lu nav=%lu kind=%s state=%s name=%s\n",
+				e->id, e->nav_id, ms_script_kind_s(e->kind),
+				ms_script_state_s(e->state),
+				e->name[0] ? e->name : "-");
+			if (n + (long)strlen(line) >= cap - MS_SCRIPT_FOOTER_RESERVE) {
+				truncated = 1;
+				break;
+			}
+			n = diag_cat(buf, cap, n, line);
+			returned++;
+			next_after = seq;
+		}
+	}
+	snprintf(line, sizeof(line), "lost=%d\nreturned=%lu\nnext_after=%lu\n"
+		"complete=%d\ntruncated=%d\n", lost, returned, next_after,
+		next_after >= latest ? 1 : 0, truncated);
+	n = diag_cat(buf, cap, n, line);
 	return n;
 }
 
