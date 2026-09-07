@@ -1074,6 +1074,19 @@ macos9_js_fetch_flush(JSContext *old_ctx)
 	if (old_ctx == NULL) return;
 	for (i = 0; i < QJS_XHR_MAX; i++) {
 		if (s_xhr_arena[i].used && s_xhr_arena[i].ctx == old_ctx) {
+			/* This is the existing navigation/realm-teardown cancellation.
+			 * Preserve the immutable queue-time owner in the forensic record;
+			 * do not wait for xhr_deliver, because it is intentionally cancelled
+			 * and will never be entered. */
+			ms_diag_realm_invariant_record(MS_RI_DEFERRED_CALLBACK,
+				MS_RIS_CANCELLED_NAVIGATION_REPLACED,
+				s_xhr_arena[i].queued_realm.realm_id,
+				s_xhr_arena[i].queued_realm.frame_id,
+				s_xhr_arena[i].queued_realm.document_id, 0,
+				s_xhr_arena[i].queued_realm.nav_id, 0,
+				s_xhr_arena[i].queued_realm.heap_id,
+				s_xhr_arena[i].queued_realm.ctx_gen,
+				(unsigned long)s_xhr_arena[i].id);
 			ms_diag_operation_record(s_xhr_arena[i].operation_id, MS_OP_XHR,
 				MS_OP_ABORT, MS_OP_OK, MS_OPR_REALM_GONE,
 				MS_ANSWER_NATIVE, s_xhr_arena[i].last_request_id);
