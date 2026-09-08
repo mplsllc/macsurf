@@ -361,6 +361,7 @@ unsigned long ms_diag_error_record(unsigned long op_id, unsigned long request_id
 struct ms_diag_error_provenance {
 	unsigned long nav_id, frame_id, doc_id, source_id, script_id, task_id;
 	unsigned long realm_id, heap_id, ctx_gen;
+	unsigned long async_id;
 };
 void ms_diag_error_callback_swap(const struct ms_diag_error_provenance *next,
 	struct ms_diag_error_provenance *previous);
@@ -373,6 +374,16 @@ unsigned long ms_diag_error_record_ex(unsigned long op_id,
 long macsurf_diag_serialize_operations(char *buf, long cap);
 long macsurf_diag_serialize_errors(char *buf, long cap);
 long macsurf_diag_serialize_errors_since(char *buf, long cap,
+	unsigned long after, unsigned long limit);
+
+enum ms_diag_async_kind { MS_ASYNC_TIMER = 0, MS_ASYNC_XHR, MS_ASYNC_EVENT, MS_ASYNC_JOB };
+enum ms_diag_async_state { MS_ASYNC_REGISTERED = 0, MS_ASYNC_QUEUED, MS_ASYNC_FIRING,
+	MS_ASYNC_FIRED, MS_ASYNC_CANCELLED, MS_ASYNC_RETIRED, MS_ASYNC_ABANDONED };
+unsigned long ms_diag_async_register(int kind,
+	const struct ms_diag_error_provenance *origin);
+void ms_diag_async_state(unsigned long async_id, int state);
+void ms_diag_async_swap(unsigned long async_id, unsigned long *previous);
+long macsurf_diag_serialize_async_since(char *buf, long cap,
 	unsigned long after, unsigned long limit);
 
 /* ===================== Phase 2: expected-transition contracts =====================

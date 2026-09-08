@@ -3458,6 +3458,7 @@ struct ms_diag_error {
 	unsigned long realm_id;
 	unsigned long heap_id;
 	unsigned long ctx_gen;
+	unsigned long async_id;
 	/* classification */
 	unsigned char kind;         /* enum ms_error_kind */
 	unsigned char failure_kind; /* enum ms_diag_failure_kind */
@@ -3481,6 +3482,97 @@ static unsigned long g_err_messages_distinct_total, g_err_messages_dropped;
 static struct ms_diag_error g_err_ring[MS_ERR_RING_CAP];
 static int g_err_ring_head;
 static unsigned long g_err_seq;
+
+#define MS_ASYNC_RING_CAP 128
+struct ms_diag_async {
+	unsigned long id;
+	struct ms_diag_error_provenance origin;
+	unsigned char kind;
+	unsigned char state;
+};
+static struct ms_diag_async g_async_ring[MS_ASYNC_RING_CAP];
+static int g_async_ring_head;
+static unsigned long g_async_seq;
+static unsigned long g_cur_async;
+
+static const char *ms_diag_async_kind_s(int kind)
+{
+	switch (kind) {
+	case MS_ASYNC_TIMER: return "timer";
+	case MS_ASYNC_XHR: return "xhr";
+	case MS_ASYNC_EVENT: return "event";
+	case MS_ASYNC_JOB: return "job";
+	default: return "unknown";
+	}
+}
+
+static const char *ms_diag_async_state_s(int state)
+{
+	switch (state) {
+	case MS_ASYNC_REGISTERED: return "registered";
+	case MS_ASYNC_QUEUED: return "queued";
+	case MS_ASYNC_FIRING: return "firing";
+	case MS_ASYNC_FIRED: return "fired";
+	case MS_ASYNC_CANCELLED: return "cancelled";
+	case MS_ASYNC_RETIRED: return "retired";
+	case MS_ASYNC_ABANDONED: return "abandoned";
+	default: return "unknown";
+	}
+}
+
+unsigned long ms_diag_async_register(int kind,
+	const struct ms_diag_error_provenance *origin)
+{
+	struct ms_diag_async *a = &g_async_ring[g_async_ring_head];
+	g_async_ring_head = (g_async_ring_head + 1) % MS_ASYNC_RING_CAP;
+	memset(a, 0, sizeof(*a));
+	a->id = ++g_async_seq;
+	if (origin != NULL) a->origin = *origin;
+	a->kind = (unsigned char)kind;
+	a->state = (unsigned char)MS_ASYNC_REGISTERED;
+	return a->id;
+}
+
+void ms_diag_async_state(unsigned long async_id, int state)
+{
+	int i;
+	if (async_id == 0) return;
+	for (i = 0; i < MS_ASYNC_RING_CAP; i++) {
+		if (g_async_ring[i].id == async_id) {
+			g_async_ring[i].state = (unsigned char)state;
+			return;
+		}
+	}
+}
+
+void ms_diag_async_swap(unsigned long async_id, unsigned long *previous)
+{
+	if (previous != NULL) *previous = g_cur_async;
+	g_cur_async = async_id;
+}
+
+long macsurf_diag_serialize_async_since(char *buf, long cap,
+	unsigned long after, unsigned long limit)
+{
+	char line[384]; long n = 0; unsigned long first, latest, seq, returned = 0;
+	int i;
+	if (buf == NULL || cap < 2) return 0;
+	buf[0] = '\0'; latest = g_async_seq;
+	if (limit == 0 || limit > MS_ASYNC_RING_CAP) limit = MS_ASYNC_RING_CAP;
+	n = diag_cat(buf, cap, n, "MSDIAG 2 async\n");
+	n = ms_diag_history_header(buf, cap, n, "async", latest, MS_ASYNC_RING_CAP);
+	first = latest > MS_ASYNC_RING_CAP ? latest - MS_ASYNC_RING_CAP + 1 : 1;
+	for (seq = after + 1; seq <= latest && returned < limit; seq++) {
+		if (seq < first) continue;
+		for (i = 0; i < MS_ASYNC_RING_CAP; i++) if (g_async_ring[i].id == seq) break;
+		if (i == MS_ASYNC_RING_CAP) continue;
+		snprintf(line, sizeof(line), "async=%lu kind=%s state=%s nav=%lu frame=%lu doc=%lu source=%lu script=%lu task=%lu realm=%lu heap=%lu ctx_gen=%lu\n", g_async_ring[i].id, ms_diag_async_kind_s(g_async_ring[i].kind), ms_diag_async_state_s(g_async_ring[i].state), g_async_ring[i].origin.nav_id, g_async_ring[i].origin.frame_id, g_async_ring[i].origin.doc_id, g_async_ring[i].origin.source_id, g_async_ring[i].origin.script_id, g_async_ring[i].origin.task_id, g_async_ring[i].origin.realm_id, g_async_ring[i].origin.heap_id, g_async_ring[i].origin.ctx_gen);
+		if (n + (long)strlen(line) >= cap - 32) break;
+		n = diag_cat(buf, cap, n, line); returned++;
+	}
+	snprintf(line, sizeof(line), "next_after=%lu\nreturned=%lu\n", returned ? after + returned : after, returned);
+	return diag_cat(buf, cap, n, line);
+}
 
 static unsigned long ms_error_text_hash(const char *str, unsigned long len)
 {
@@ -3765,6 +3857,7 @@ static unsigned long ms_diag_error_create(unsigned long op_id,
 	e->realm_id = p->realm_id;
 	e->heap_id = p->heap_id;
 	e->ctx_gen = p->ctx_gen;
+	e->async_id = p->async_id ? p->async_id : g_cur_async;
 	e->op_id = op_id;
 	e->request_id = request_id;
 	e->name_id = ms_diag_error_text_intern(g_err_names, &g_err_name_count,
@@ -3887,7 +3980,7 @@ long macsurf_diag_serialize_errors(char *buf, long cap)
 		line_len = snprintf(line, sizeof(line),
 			"err=%lu nav=%lu script=%lu task=%lu kind=%s "
 			"failure=%s phase=%s boundary=%s reason=%s "
-			"frame=%lu doc=%lu source=%lu realm=%lu heap=%lu ctx_gen=%lu "
+			"frame=%lu doc=%lu source=%lu realm=%lu heap=%lu ctx_gen=%lu async=%lu "
 			"op=%lu req=%lu name=%lu name_status=%s message=%lu message_status=%s\n",
 			e->id, e->nav_id, e->script_id, e->task_id,
 			ms_err_kind_s(e->kind),
@@ -3896,7 +3989,7 @@ long macsurf_diag_serialize_errors(char *buf, long cap)
 			boundary,
 			ms_op_reason_s(e->reason),
 			e->frame_id, e->doc_id, e->source_id,
-			e->realm_id, e->heap_id, e->ctx_gen,
+			e->realm_id, e->heap_id, e->ctx_gen, e->async_id,
 			e->op_id, e->request_id,
 			e->name_id, ms_error_text_status_s(e->name_status),
 			e->message_id, ms_error_text_status_s(e->message_status));

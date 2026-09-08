@@ -1951,6 +1951,8 @@ static pascal OSErr macos9_ae_diag(const AppleEvent *ae, AppleEvent *reply,
 	unsigned long sources_limit = 0;
 	unsigned long errors_after = 0;
 	unsigned long errors_limit = 0;
+	unsigned long async_after = 0;
+	unsigned long async_limit = 0;
 	unsigned long dom_doc_id = 0;
 	unsigned long dom_after = 0;
 	unsigned long dom_limit = 0;
@@ -2025,6 +2027,10 @@ static pascal OSErr macos9_ae_diag(const AppleEvent *ae, AppleEvent *reply,
 			&errors_limit)) {
 		n = macsurf_diag_serialize_errors_since(out, (long)sizeof(out),
 			errors_after, errors_limit);
+	} else if (macos9_diag_parse_cursor(verb, "async", &async_after,
+			&async_limit)) {
+		n = macsurf_diag_serialize_async_since(out, (long)sizeof(out),
+			async_after, async_limit);
 	} else if (strcmp(verb, "pending") == 0) {
 		n = macsurf_diag_serialize_pending(out, (long)sizeof(out));
 	} else if (strcmp(verb, "settlement") == 0) {

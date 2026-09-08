@@ -1485,6 +1485,7 @@ struct qjs_timer {
 	unsigned long origin_script_id;
 	unsigned long origin_source_id; /* E3: source_id at registration time */
 	unsigned long nav_id;
+	unsigned long async_id;
 };
 
 static struct qjs_timer s_timer_arena[QJS_MAX_TIMERS];
@@ -1776,6 +1777,21 @@ static JSValue qjs_settimeout_impl(JSContext *ctx,
 	t->origin_script_id = ms_diag_cur_script();
 	t->origin_source_id = ms_diag_cur_source(); /* E3 */
 	t->nav_id = ms_diag_cur_nav();
+	{
+		struct ms_diag_error_provenance ap;
+		memset(&ap, 0, sizeof(ap));
+		ap.nav_id = t->nav_id;
+		ap.source_id = t->origin_source_id;
+		ap.script_id = t->origin_script_id;
+		ap.task_id = ms_diag_cur_task();
+		ap.realm_id = t->realm_id;
+		ap.frame_id = t->frame_id;
+		ap.doc_id = t->document_id;
+		ap.heap_id = t->heap_id;
+		ap.ctx_gen = t->ctx_gen;
+		t->async_id = ms_diag_async_register(MS_ASYNC_TIMER, &ap);
+		ms_diag_async_state(t->async_id, MS_ASYNC_QUEUED);
+	}
 	ms_diag_timer_arm((unsigned long)id, t->nav_id, t->origin_script_id,
 		ms_diag_cur_task(), t->ctx_gen);
 	if (expect != NULL) {
@@ -1822,6 +1838,7 @@ static JSValue qjs_cleartimeout(JSContext *ctx, JSValueConst this_val,
 				/* owned_by() already proved t->ctx == ctx, so the
 				 * helper's free-against-t->ctx is this same ctx. */
 				ms_diag_timer_state((unsigned long)t->id, MS_TIMER_CANCELLED);
+				ms_diag_async_state(t->async_id, MS_ASYNC_CANCELLED);
 				timer_slot_clear(t, 1);
 				break;
 			}
@@ -2043,6 +2060,7 @@ void macsurf_qjs_run_timers(struct jscontext *ctx)
 		unsigned long __t_nav = t->nav_id;
 		unsigned long __t_scr = t->origin_script_id;
 		struct ms_diag_error_provenance ep;
+		unsigned long prev_async;
 
 		/* Revalidate: a prior callback may have cleared this timer, or
 		 * timer_alloc may have evicted+reused this slot for a different
@@ -2062,6 +2080,7 @@ void macsurf_qjs_run_timers(struct jscontext *ctx)
 		ep.realm_id = t->realm_id;
 		ep.heap_id = t->heap_id;
 		ep.ctx_gen = t->ctx_gen;
+		ep.async_id = t->async_id;
 
 		/* #265 - a timer callback is its own JS execution burst: clear the
 		 * settle-once geometry flag so its first read settles fresh. Two
@@ -2080,6 +2099,7 @@ void macsurf_qjs_run_timers(struct jscontext *ctx)
 		if (t->repeating) {
 			t->expiry_ms = macsurf_qjs_get_now() + t->interval_ms;
 		} else {
+			ms_diag_async_state(t->async_id, MS_ASYNC_RETIRED);
 			timer_slot_clear(t, 1);
 		}
 
@@ -2116,6 +2136,8 @@ void macsurf_qjs_run_timers(struct jscontext *ctx)
 		this_obj = JS_GetGlobalObject(qctx);
 		ms_diag_task_enter(&__tsk, MS_TASK_TIMER, __t_nav, __t_scr,
 			0, (const char *) 0);
+		ms_diag_async_swap(t->async_id, &prev_async);
+		ms_diag_async_state(t->async_id, MS_ASYNC_FIRING);
 		ep.task_id = ms_diag_cur_task();
 		ms_diag_timer_state((unsigned long)due_id[k], MS_TIMER_FIRING);
 		ret = JS_Call(qctx, fn, this_obj, call_nargs, call_args);
@@ -2125,6 +2147,8 @@ void macsurf_qjs_run_timers(struct jscontext *ctx)
 		if (JS_IsException(ret))
 			ms_diag_js_event_hit(MS_JS_EVENT_HANDLER_FAILED);
 		ms_diag_task_leave(&__tsk);
+		ms_diag_async_state(t->async_id, MS_ASYNC_FIRED);
+		ms_diag_async_swap(prev_async, NULL);
 		{	/* fixes1037 */
 			extern double macos9_micros(void);
 			double dt = macos9_micros() - g_timer_t0;
@@ -2147,6 +2171,7 @@ void macsurf_qjs_run_timers(struct jscontext *ctx)
 			    mydl != 0.0 && macsurf_qjs_get_now() >= mydl) {
 				macsurf_debug_log_writef(
 					"qjs: TIMER TIMEOUT -- repeating timer KILLED");
+				ms_diag_async_state(t->async_id, MS_ASYNC_RETIRED);
 				timer_slot_clear(t, 1);
 			}
 		}
