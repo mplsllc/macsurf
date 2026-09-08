@@ -92,6 +92,34 @@ Private per-attempt logs are under `.private/research/e3-audit/`. No local resul
 is hardware verification. `harness/e3-fixture/` supplies the controlled hardware
 workload; collect before and after navigating to `after.html`.
 
+## G3 hardware evidence
+
+Attempt 1421 built `c04be7c32` on the real G3 with an empty CodeWarrior
+Errors & Warnings export, a changed binary identity, successful launch, and
+`MacSurf1421.sit`. The controlled workload is committed in macsurf-web as
+`c4e78b5` and served at `https://macsurf.org/e3-provenance.html`.
+
+`2026-09-08_113446_msdiag.txt` recorded ten retained detailed errors with no
+ring overwrite, dictionary drop, or transport truncation. They prove one parse
+failure; four runtime failures; two separately reported Promise rejections;
+three handler failures (event, timer, XHR); two isolated frame/document rows
+for the same error text; frozen timer task/source/script ownership; and truthful
+unavailable event/Promise origins. The controlled hostile-value assertions did
+not produce `E3-COERCION-FAIL`.
+
+`2026-09-08_113821_msdiag.txt`, after navigation to `e3-after.html`, retained
+all ten E3 rows byte-for-byte, including their original nav/frame/doc/source/
+script/task/realm/heap/context-generation scalars. The hardware checker output
+is `attempt-1421/e3-before-check.txt` and `e3-after-check.txt`; both pass.
+
+The source ledger's historical `script=` display field remains zero in this
+capture, including pre-existing unrelated sources. E3 does not rely on that
+field: each failure joins its source through the frozen error `source=` and the
+authoritative execution-ledger `source=` scalar. This observation is outside
+the closed E3 change.
+
+JAVASCRIPT ERROR PROVENANCE GATE CLOSED.
+
 ## Remaining limits
 
 Event listener and Promise origins are unavailable as described above. Swallowed
