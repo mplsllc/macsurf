@@ -4149,7 +4149,7 @@ long macsurf_diag_serialize_errors_since(char *buf, long cap,
 			line_len = snprintf(line, sizeof(line),
 				"err=%lu nav=%lu script=%lu task=%lu kind=%s "
 				"failure=%s phase=%s boundary=%s reason=%s "
-				"frame=%lu doc=%lu source=%lu realm=%lu heap=%lu ctx_gen=%lu "
+				"frame=%lu doc=%lu source=%lu realm=%lu heap=%lu ctx_gen=%lu async=%lu "
 				"op=%lu req=%lu name_id=%lu name_status=%s name=%s "
 				"message_id=%lu message_status=%s message_hash=%08lx "
 				"message_len=%lu message_truncated=%d message=%s\n",
@@ -4160,7 +4160,7 @@ long macsurf_diag_serialize_errors_since(char *buf, long cap,
 				boundary,
 				ms_op_reason_s(e->reason),
 				e->frame_id, e->doc_id, e->source_id,
-				e->realm_id, e->heap_id, e->ctx_gen,
+				e->realm_id, e->heap_id, e->ctx_gen, e->async_id,
 				e->op_id, e->request_id,
 				e->name_id, ms_error_text_status_s(e->name_status), enc_name,
 				e->message_id, ms_error_text_status_s(e->message_status),
