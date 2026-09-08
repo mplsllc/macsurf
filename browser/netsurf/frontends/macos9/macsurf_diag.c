@@ -1390,6 +1390,16 @@ const char *ms_source_reason_s(int v)
 	}
 }
 
+const char *ms_error_text_status_s(int v)
+{
+	switch (v) {
+	case MS_ERR_TEXT_EMPTY:    return "empty";
+	case MS_ERR_TEXT_RETAINED: return "retained";
+	case MS_ERR_TEXT_DROPPED:  return "dropped";
+	default:                   return "unknown";
+	}
+}
+
 long macsurf_diag_serialize_scripts(char *buf, long cap)
 {
 	char line[288];
@@ -3410,12 +3420,16 @@ struct ms_diag_operation {
 };
 struct ms_diag_error_text {
 	unsigned long id;
+	unsigned long input_len;
+	unsigned long hash;
+	short truncated;
 	char text[MS_ERR_TEXT_MAX];
 };
 struct ms_diag_error {
 	unsigned long id, nav_id, script_id, task_id, op_id, request_id;
 	unsigned long name_id, message_id;
 	unsigned char kind, boundary, reason;
+	unsigned char name_status, message_status;
 };
 
 static struct ms_diag_operation g_op_ring[MS_OP_RING_CAP];
@@ -3425,9 +3439,98 @@ static struct ms_diag_error_text g_err_names[MS_ERR_NAME_CAP];
 static struct ms_diag_error_text g_err_messages[MS_ERR_MSG_CAP];
 static int g_err_name_count, g_err_message_count;
 static unsigned long g_err_name_seq, g_err_message_seq;
+static unsigned long g_err_names_distinct_total, g_err_names_dropped;
+static unsigned long g_err_messages_distinct_total, g_err_messages_dropped;
 static struct ms_diag_error g_err_ring[MS_ERR_RING_CAP];
 static int g_err_ring_head;
 static unsigned long g_err_seq;
+
+static unsigned long ms_error_text_hash(const char *str, unsigned long len)
+{
+	unsigned long hash = 5381UL;
+	unsigned long i;
+	if (str == NULL) return 0;
+	for (i = 0; i < len; i++) {
+		hash = ((hash << 5) + hash) + (unsigned long)(unsigned char)str[i];
+	}
+	return hash;
+}
+
+static void ms_error_text_percent_encode(char *dst, long dst_cap,
+	const char *src, unsigned long src_len)
+{
+	static const char hex[] = "0123456789ABCDEF";
+	long di = 0;
+	unsigned long si = 0;
+
+	if (dst == NULL || dst_cap <= 0) return;
+	dst[0] = '\0';
+	if (src == NULL) return;
+
+	while (si < src_len && di < dst_cap - 4) {
+		unsigned char c = (unsigned char)src[si++];
+		if (c <= 0x20 || c == '%' || c == '=' || c >= 0x7F) {
+			dst[di++] = '%';
+			dst[di++] = hex[(c >> 4) & 0x0F];
+			dst[di++] = hex[c & 0x0F];
+		} else {
+			dst[di++] = (char)c;
+		}
+	}
+	dst[di] = '\0';
+}
+
+static unsigned long ms_diag_error_text_intern(struct ms_diag_error_text *table,
+	int *count, int cap, unsigned long *seq, unsigned long *distinct_total,
+	unsigned long *dropped, const char *text, unsigned char *out_status)
+{
+	int i;
+	unsigned long len;
+	unsigned long hash;
+	short is_trunc;
+	unsigned long copy_len;
+
+	if (text == NULL || text[0] == '\0') {
+		if (out_status != NULL) *out_status = (unsigned char)MS_ERR_TEXT_EMPTY;
+		return 0;
+	}
+
+	len = (unsigned long)strlen(text);
+	hash = ms_error_text_hash(text, len);
+	is_trunc = (len >= (unsigned long)MS_ERR_TEXT_MAX) ? 1 : 0;
+
+	/* Exact dedup ONLY if complete input fits in bounded storage */
+	if (!is_trunc) {
+		for (i = 0; i < *count; i++) {
+			if (!table[i].truncated && table[i].input_len == len &&
+					strcmp(table[i].text, text) == 0) {
+				if (out_status != NULL) *out_status = (unsigned char)MS_ERR_TEXT_RETAINED;
+				return table[i].id;
+			}
+		}
+	}
+
+	/* Distinct entry needed */
+	(*distinct_total)++;
+
+	if (*count >= cap) {
+		(*dropped)++;
+		if (out_status != NULL) *out_status = (unsigned char)MS_ERR_TEXT_DROPPED;
+		return 0;
+	}
+
+	copy_len = is_trunc ? ((unsigned long)MS_ERR_TEXT_MAX - 1) : len;
+	table[*count].id = ++*seq;
+	table[*count].input_len = len;
+	table[*count].hash = hash;
+	table[*count].truncated = is_trunc;
+	memcpy(table[*count].text, text, copy_len);
+	table[*count].text[copy_len] = '\0';
+	(*count)++;
+
+	if (out_status != NULL) *out_status = (unsigned char)MS_ERR_TEXT_RETAINED;
+	return table[*count - 1].id;
+}
 
 static const char *ms_op_kind_s(int v)
 {
@@ -3541,22 +3644,6 @@ void ms_diag_operation_record(unsigned long op_id, int kind, int phase,
 	ms_diag_progress(MS_PROGRESS_CONTRACT);
 }
 
-static unsigned long ms_diag_error_text_id(struct ms_diag_error_text *table,
-	int *count, int cap, unsigned long *seq, const char *text)
-{
-	int i;
-	if (text == NULL || text[0] == '\0') return 0;
-	for (i = 0; i < *count; i++) {
-		if (strncmp(table[i].text, text, MS_ERR_TEXT_MAX - 1) == 0)
-			return table[i].id;
-	}
-	if (*count >= cap) return 0;
-	table[*count].id = ++*seq;
-	ms_name_copy(table[*count].text, text);
-	(*count)++;
-	return table[*count - 1].id;
-}
-
 unsigned long ms_diag_error_record(unsigned long op_id, unsigned long request_id,
 	int kind, int boundary, int reason, const char *name, const char *message)
 {
@@ -3569,10 +3656,12 @@ unsigned long ms_diag_error_record(unsigned long op_id, unsigned long request_id
 	e->task_id = ms_diag_cur_task();
 	e->op_id = op_id;
 	e->request_id = request_id;
-	e->name_id = ms_diag_error_text_id(g_err_names, &g_err_name_count,
-		MS_ERR_NAME_CAP, &g_err_name_seq, name);
-	e->message_id = ms_diag_error_text_id(g_err_messages, &g_err_message_count,
-		MS_ERR_MSG_CAP, &g_err_message_seq, message);
+	e->name_id = ms_diag_error_text_intern(g_err_names, &g_err_name_count,
+		MS_ERR_NAME_CAP, &g_err_name_seq, &g_err_names_distinct_total,
+		&g_err_names_dropped, name, &e->name_status);
+	e->message_id = ms_diag_error_text_intern(g_err_messages, &g_err_message_count,
+		MS_ERR_MSG_CAP, &g_err_message_seq, &g_err_messages_distinct_total,
+		&g_err_messages_dropped, message, &e->message_status);
 	e->kind = (unsigned char)kind;
 	e->boundary = (unsigned char)boundary;
 	e->reason = (unsigned char)reason;
@@ -3602,31 +3691,69 @@ long macsurf_diag_serialize_operations(char *buf, long cap)
 
 long macsurf_diag_serialize_errors(char *buf, long cap)
 {
-	char line[192]; long n = 0; int i;
+	char line[512];
+	char enc[384];
+	long n = 0;
+	int i;
+	int is_trunc = 0;
+	long footer_res = 32;
+
 	if (buf == NULL || cap < 2) return 0;
 	buf[0] = '\0';
+
 	n = diag_cat(buf, cap, n, "MSDIAG 1 errors\n");
+	n = ms_diag_history_header(buf, cap, n, "errors", g_err_seq, MS_ERR_RING_CAP);
+
+	snprintf(line, sizeof(line),
+		"dictionary=error_names distinct_total=%lu capacity=%d retained=%d dropped=%lu\n",
+		g_err_names_distinct_total, MS_ERR_NAME_CAP, g_err_name_count, g_err_names_dropped);
+	n = diag_cat(buf, cap, n, line);
+
+	snprintf(line, sizeof(line),
+		"dictionary=error_messages distinct_total=%lu capacity=%d retained=%d dropped=%lu\n",
+		g_err_messages_distinct_total, MS_ERR_MSG_CAP, g_err_message_count, g_err_messages_dropped);
+	n = diag_cat(buf, cap, n, line);
+
 	for (i = 0; i < g_err_name_count; i++) {
-		snprintf(line, sizeof line, "name=%lu text=%s\n",
-			g_err_names[i].id, g_err_names[i].text);
+		if (n >= cap - footer_res) { is_trunc = 1; break; }
+		ms_error_text_percent_encode(enc, sizeof(enc), g_err_names[i].text,
+			(unsigned long)strlen(g_err_names[i].text));
+		snprintf(line, sizeof(line),
+			"name=%lu input_len=%lu truncated=%d hash=%08lx text=%s\n",
+			g_err_names[i].id, g_err_names[i].input_len,
+			(int)g_err_names[i].truncated, g_err_names[i].hash, enc);
 		n = diag_cat(buf, cap, n, line);
 	}
+
 	for (i = 0; i < g_err_message_count; i++) {
-		snprintf(line, sizeof line, "message=%lu text=%s\n",
-			g_err_messages[i].id, g_err_messages[i].text);
+		if (n >= cap - footer_res) { is_trunc = 1; break; }
+		ms_error_text_percent_encode(enc, sizeof(enc), g_err_messages[i].text,
+			(unsigned long)strlen(g_err_messages[i].text));
+		snprintf(line, sizeof(line),
+			"message=%lu input_len=%lu truncated=%d hash=%08lx text=%s\n",
+			g_err_messages[i].id, g_err_messages[i].input_len,
+			(int)g_err_messages[i].truncated, g_err_messages[i].hash, enc);
 		n = diag_cat(buf, cap, n, line);
 	}
+
 	for (i = 0; i < MS_ERR_RING_CAP; i++) {
 		int idx = (g_err_ring_head - 1 - i + 2 * MS_ERR_RING_CAP) % MS_ERR_RING_CAP;
 		struct ms_diag_error *e = &g_err_ring[idx];
 		if (e->id == 0) continue;
-		snprintf(line, sizeof line,
-			"err=%lu nav=%lu script=%lu task=%lu kind=%s boundary=%d reason=%s op=%lu req=%lu name=%lu message=%lu\n",
+		if (n >= cap - footer_res) { is_trunc = 1; break; }
+		snprintf(line, sizeof(line),
+			"err=%lu nav=%lu script=%lu task=%lu kind=%s boundary=%d reason=%s "
+			"op=%lu req=%lu name=%lu name_status=%s message=%lu message_status=%s\n",
 			e->id, e->nav_id, e->script_id, e->task_id,
 			ms_err_kind_s(e->kind), (int)e->boundary, ms_op_reason_s(e->reason),
-			e->op_id, e->request_id, e->name_id, e->message_id);
+			e->op_id, e->request_id,
+			e->name_id, ms_error_text_status_s(e->name_status),
+			e->message_id, ms_error_text_status_s(e->message_status));
 		n = diag_cat(buf, cap, n, line);
 	}
+
+	snprintf(line, sizeof(line), "truncated=%d\n", is_trunc);
+	n = diag_cat(buf, cap, n, line);
 	return n;
 }
 

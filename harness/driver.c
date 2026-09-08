@@ -13131,6 +13131,118 @@ box_coords(bx, &cx, &cy);
 		fprintf(stderr, "=== Test 102c PASS: script source outcomes are granular and monotonic ===\n");
 	}
 
+	/* --- Test 102d: error history and text dictionary loss semantics --- */
+	{
+		char errs[16384];
+		char errs_repeat[16384];
+		char long_msg1[160];
+		char long_msg2[160];
+		char name_buf[32];
+		char msg_buf[32];
+		unsigned long base_seq = 0;
+		unsigned long base_overwritten = 0;
+		unsigned long base_name_dist = 0;
+		unsigned long base_msg_dist = 0;
+		int base_name_ret = 0;
+		int base_msg_ret = 0;
+		unsigned long e_id;
+		int i;
+
+		fprintf(stderr, "\n=== Test 102d: error history and text dictionary loss semantics ===\n");
+
+		/* Baseline read */
+		(void)macsurf_diag_serialize_errors(errs, (long)sizeof(errs));
+		if (strstr(errs, "MSDIAG 1 errors\n") == NULL ||
+				strstr(errs, "history=errors records_total=") == NULL ||
+				strstr(errs, "dictionary=error_names distinct_total=") == NULL ||
+				strstr(errs, "dictionary=error_messages distinct_total=") == NULL) {
+			fprintf(stderr, "FAIL: Test 102d initial serializer header\n"); return 1;
+		}
+
+		/* Parse baseline counters */
+		{
+			const char *p = strstr(errs, "records_total=");
+			if (p) base_seq = strtoul(p + 14, NULL, 10);
+			p = strstr(errs, "overwritten=");
+			if (p) base_overwritten = strtoul(p + 12, NULL, 10);
+			p = strstr(errs, "dictionary=error_names distinct_total=");
+			if (p) base_name_dist = strtoul(p + 38, NULL, 10);
+			p = strstr(errs, "retained=");
+			if (p) base_name_ret = (int)strtoul(p + 9, NULL, 10);
+			p = strstr(errs, "dictionary=error_messages distinct_total=");
+			if (p) base_msg_dist = strtoul(p + 41, NULL, 10);
+			p = p ? strstr(p, "retained=") : NULL;
+			if (p) base_msg_ret = (int)strtoul(p + 9, NULL, 10);
+		}
+
+		/* 1. Basic error with name and message */
+		e_id = ms_diag_error_record(0, 0, MS_ERR_JS_EXCEPTION, 0, 0, "TypeError", "Cannot read properties");
+		(void)macsurf_diag_serialize_errors(errs, (long)sizeof(errs));
+		if (strstr(errs, "name_status=retained") == NULL ||
+				strstr(errs, "message_status=retained") == NULL ||
+				strstr(errs, "text=Cannot%20read%20properties") == NULL) {
+			fprintf(stderr, "FAIL: Test 102d retained text encoding and status\n"); return 1;
+		}
+
+		/* 2. Distinction between NULL/empty text vs dropped */
+		e_id = ms_diag_error_record(0, 0, MS_ERR_JS_EXCEPTION, 0, 0, NULL, "");
+		(void)macsurf_diag_serialize_errors(errs, (long)sizeof(errs));
+		if (strstr(errs, "name=0 name_status=empty message=0 message_status=empty") == NULL) {
+			fprintf(stderr, "FAIL: Test 102d empty text status\n"); return 1;
+		}
+
+		/* 3. Long text truncation with pre-truncation hash */
+		memset(long_msg1, 'A', 140);
+		long_msg1[140] = '\0';
+		long_msg1[135] = '1';
+		memset(long_msg2, 'A', 140);
+		long_msg2[140] = '\0';
+		long_msg2[135] = '2';
+
+		e_id = ms_diag_error_record(0, 0, MS_ERR_JS_EXCEPTION, 0, 0, "Long1", long_msg1);
+		e_id = ms_diag_error_record(0, 0, MS_ERR_JS_EXCEPTION, 0, 0, "Long2", long_msg2);
+		(void)macsurf_diag_serialize_errors(errs, (long)sizeof(errs));
+		if (strstr(errs, "input_len=140 truncated=1") == NULL) {
+			fprintf(stderr, "FAIL: Test 102d truncated text tracking\n"); return 1;
+		}
+		/* Two long messages with same 119-byte prefix must not falsely deduplicate */
+		if (strstr(errs, "name=") == NULL || strstr(errs, "Long1") == NULL || strstr(errs, "Long2") == NULL) {
+			fprintf(stderr, "FAIL: Test 102d long messages separation\n"); return 1;
+		}
+
+		/* 4. Fill name and message dictionaries to saturation (capacity 64) */
+		for (i = base_name_ret; i < 66; i++) {
+			snprintf(name_buf, sizeof(name_buf), "N_%d", i);
+			snprintf(msg_buf, sizeof(msg_buf), "M_%d", i);
+			(void)ms_diag_error_record(0, 0, MS_ERR_JS_EXCEPTION, 0, 0, name_buf, msg_buf);
+		}
+
+		(void)macsurf_diag_serialize_errors(errs, (long)sizeof(errs));
+		if (strstr(errs, "name_status=dropped") == NULL ||
+				strstr(errs, "message_status=dropped") == NULL ||
+				strstr(errs, "dropped=0") != NULL && strstr(errs, "retained=64") == NULL) {
+			fprintf(stderr, "FAIL: Test 102d dictionary saturation & dropped status\n"); return 1;
+		}
+
+		/* 5. Error ring overflow & overwrite accounting (capacity 128) */
+		for (i = 0; i < 135; i++) {
+			(void)ms_diag_error_record(0, 0, MS_ERR_JS_EXCEPTION, 0, 0, "Overflow", "OverflowMsg");
+		}
+		(void)macsurf_diag_serialize_errors(errs, (long)sizeof(errs));
+		(void)macsurf_diag_serialize_errors(errs_repeat, (long)sizeof(errs_repeat));
+
+		/* Verify stable repeat read */
+		if (strcmp(errs, errs_repeat) != 0) {
+			fprintf(stderr, "FAIL: Test 102d repeat read stability\n"); return 1;
+		}
+		if (strstr(errs, "overwritten=") == NULL ||
+				strstr(errs, "truncated=") == NULL) {
+			fprintf(stderr, "FAIL: Test 102d ring overwrite or truncation accounting\n"); return 1;
+		}
+
+		fprintf(stderr, "=== Test 102d PASS: error history and text dictionary loss semantics ===\n");
+	}
+
 	/* --- Test 103: Phase 3 capability/CSS gap aggregates --------------- */
 	{
 		char caps[16384], cssg[16384], caps_again[16384];

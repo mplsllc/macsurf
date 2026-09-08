@@ -314,6 +314,12 @@ enum ms_error_kind {
 	MS_ERR_JS_EXCEPTION = 0, MS_ERR_API_DECLINE, MS_ERR_PROMISE_REJECTION,
 	MS_ERR_CALLBACK_FAILURE
 };
+enum ms_error_text_status {
+	MS_ERR_TEXT_EMPTY = 0,
+	MS_ERR_TEXT_RETAINED,
+	MS_ERR_TEXT_DROPPED
+};
+const char *ms_error_text_status_s(int v);
 
 unsigned long ms_diag_operation_begin(int kind, int quality);
 void ms_diag_operation_record(unsigned long op_id, int kind, int phase,
