@@ -13243,6 +13243,163 @@ box_coords(bx, &cx, &cy);
 		fprintf(stderr, "=== Test 102d PASS: error history and text dictionary loss semantics ===\n");
 	}
 
+	/* --- Test 102e: paged error transport and monotonic cursor loss semantics --- */
+	{
+		char page[16384];
+		char page_repeat[16384];
+		char tiny[220];
+		char med[750];
+		char needle[64];
+		unsigned long base_seq = 0;
+		unsigned long cur_seq = 0;
+		unsigned long first_avail = 0;
+		unsigned long page_after = 0;
+		int i;
+
+		fprintf(stderr, "\n=== Test 102e: paged error transport semantics ===\n");
+
+		/* Baseline read */
+		(void)macsurf_diag_serialize_errors_since(page, (long)sizeof(page), 0, 16);
+		{
+			const char *p = strstr(page, "records_total=");
+			if (p) base_seq = strtoul(p + 14, NULL, 10);
+		}
+
+		/* 1. Cursor at latest produces returned=0 complete=1 */
+		(void)macsurf_diag_serialize_errors_since(page, (long)sizeof(page), base_seq, 16);
+		if (strstr(page, "MSDIAG 2 errors\n") == NULL ||
+				strstr(page, "returned=0\n") == NULL ||
+				strstr(page, "complete=1\n") == NULL ||
+				strstr(page, "truncated=0\n") == NULL ||
+				strstr(page, "err=") != NULL) {
+			fprintf(stderr, "FAIL: Test 102e empty cursor\n"); return 1;
+		}
+
+		/* 2. Record 27 errors: test limit=16 paging (16 on p1, 11 on p2, 0 on p3) */
+		for (i = 1; i <= 27; i++) {
+			if (i == 26) {
+				/* Test dictionary saturation / dropped status on page 2 */
+				(void)ms_diag_error_record(0, 0, MS_ERR_JS_EXCEPTION, 0, 0, "UnretainedName", "UnretainedMsg");
+			} else {
+				/* Uses retained text interned in earlier tests */
+				(void)ms_diag_error_record(0, 0, MS_ERR_JS_EXCEPTION, 0, 0, "TypeError", "Cannot read properties");
+			}
+		}
+
+		/* Page 1: after=base_seq limit=16 */
+		(void)macsurf_diag_serialize_errors_since(page, (long)sizeof(page), base_seq, 16);
+		snprintf(needle, sizeof(needle), "returned=16\nnext_after=%lu\ncomplete=0\ntruncated=0\n", base_seq + 16);
+		if (strstr(page, needle) == NULL) {
+			fprintf(stderr, "FAIL: Test 102e page 1 count/cursor\n"); return 1;
+		}
+		snprintf(needle, sizeof(needle), "err=%lu ", base_seq + 1);
+		if (strstr(page, needle) == NULL) {
+			fprintf(stderr, "FAIL: Test 102e page 1 first row\n"); return 1;
+		}
+		snprintf(needle, sizeof(needle), "err=%lu ", base_seq + 16);
+		if (strstr(page, needle) == NULL) {
+			fprintf(stderr, "FAIL: Test 102e page 1 last row\n"); return 1;
+		}
+		snprintf(needle, sizeof(needle), "err=%lu ", base_seq + 17);
+		if (strstr(page, needle) != NULL) {
+			fprintf(stderr, "FAIL: Test 102e page 1 leak into page 2\n"); return 1;
+		}
+
+		/* Repeat read of page 1 is byte-stable */
+		(void)macsurf_diag_serialize_errors_since(page_repeat, (long)sizeof(page_repeat), base_seq, 16);
+		if (strcmp(page, page_repeat) != 0) {
+			fprintf(stderr, "FAIL: Test 102e repeat read stability\n"); return 1;
+		}
+
+		/* Page 2: after=base_seq + 16 limit=16 */
+		(void)macsurf_diag_serialize_errors_since(page, (long)sizeof(page), base_seq + 16, 16);
+		snprintf(needle, sizeof(needle), "returned=11\nnext_after=%lu\ncomplete=1\ntruncated=0\n", base_seq + 27);
+		if (strstr(page, needle) == NULL) {
+			fprintf(stderr, "FAIL: Test 102e page 2 count/cursor\n"); return 1;
+		}
+		snprintf(needle, sizeof(needle), "err=%lu ", base_seq + 17);
+		if (strstr(page, needle) == NULL) {
+			fprintf(stderr, "FAIL: Test 102e page 2 first row\n"); return 1;
+		}
+		snprintf(needle, sizeof(needle), "err=%lu ", base_seq + 27);
+		if (strstr(page, needle) == NULL) {
+			fprintf(stderr, "FAIL: Test 102e page 2 last row\n"); return 1;
+		}
+		/* Check self-contained text resolution on page 2: retained and dropped */
+		if (strstr(page, "name=TypeError") == NULL ||
+				strstr(page, "message=Cannot%20read%20properties") == NULL ||
+				strstr(page, "name_status=retained") == NULL ||
+				strstr(page, "message_status=retained") == NULL ||
+				strstr(page, "name_status=dropped") == NULL ||
+				strstr(page, "message_status=dropped") == NULL) {
+			fprintf(stderr, "FAIL: Test 102e page 2 self-contained text resolution\n"); return 1;
+		}
+
+		/* Page 3: after=base_seq + 27 limit=16 -> zero records, complete=1 */
+		(void)macsurf_diag_serialize_errors_since(page, (long)sizeof(page), base_seq + 27, 16);
+		snprintf(needle, sizeof(needle), "returned=0\nnext_after=%lu\ncomplete=1\ntruncated=0\n", base_seq + 27);
+		if (strstr(page, needle) == NULL || strstr(page, "err=") != NULL) {
+			fprintf(stderr, "FAIL: Test 102e page 3 exhausted cursor\n"); return 1;
+		}
+
+		/* 3. Tiny reply buffer: truncation and no cursor advance */
+		(void)macsurf_diag_serialize_errors_since(tiny, (long)sizeof(tiny), base_seq, 16);
+		snprintf(needle, sizeof(needle), "returned=0\nnext_after=%lu\ncomplete=0\ntruncated=1\n", base_seq);
+		if (strstr(tiny, needle) == NULL) {
+			fprintf(stderr, "FAIL: Test 102e tiny buffer truncation\n"); return 1;
+		}
+
+		/* 4. Medium reply buffer: fits exactly 1 row (cap=750, row ~260 bytes) */
+		(void)macsurf_diag_serialize_errors_since(med, (long)sizeof(med), base_seq, 16);
+		snprintf(needle, sizeof(needle), "returned=1\nnext_after=%lu\ncomplete=0\ntruncated=1\n", base_seq + 1);
+		if (strstr(med, needle) == NULL || strstr(med, "err=") == NULL) {
+			fprintf(stderr, "FAIL: Test 102e partial page truncation cursor advance\n"); return 1;
+		}
+
+		/* 5. Forced ring rollover: add 135 errors to overflow the 128-entry ring */
+		cur_seq = base_seq + 27;
+		for (i = 1; i <= 135; i++) {
+			(void)ms_diag_error_record(0, 0, MS_ERR_JS_EXCEPTION, 0, 0, "Rollover", "RollMsg");
+		}
+		cur_seq += 135;
+		first_avail = cur_seq - 128 + 1;
+
+		/* Query with after=base_seq -> reports lost_from and lost_to */
+		(void)macsurf_diag_serialize_errors_since(page, (long)sizeof(page), base_seq, 16);
+		snprintf(needle, sizeof(needle), "lost_from=%lu\nlost_to=%lu\n", base_seq + 1, first_avail - 1);
+		if (strstr(page, "lost=1\n") == NULL || strstr(page, needle) == NULL) {
+			fprintf(stderr, "FAIL: Test 102e lost_from/lost_to accounting\n"); return 1;
+		}
+		snprintf(needle, sizeof(needle), "err=%lu ", first_avail);
+		if (strstr(page, needle) == NULL) {
+			fprintf(stderr, "FAIL: Test 102e first row after lost range\n"); return 1;
+		}
+
+		/* 6. Ring rotates between pages */
+		/* Read first page: after=first_avail - 1, limit=5 */
+		(void)macsurf_diag_serialize_errors_since(page, (long)sizeof(page), first_avail - 1, 5);
+		page_after = first_avail - 1 + 5;
+		snprintf(needle, sizeof(needle), "next_after=%lu\n", page_after);
+		if (strstr(page, needle) == NULL) {
+			fprintf(stderr, "FAIL: Test 102e pre-rotation page\n"); return 1;
+		}
+		/* Now rotate ring again by adding 130 errors */
+		for (i = 1; i <= 130; i++) {
+			(void)ms_diag_error_record(0, 0, MS_ERR_JS_EXCEPTION, 0, 0, "Rotate2", "RotateMsg2");
+		}
+		cur_seq += 130;
+		first_avail = cur_seq - 128 + 1;
+
+		/* Second page query with after=page_after -> reports newly lost interval */
+		(void)macsurf_diag_serialize_errors_since(page, (long)sizeof(page), page_after, 16);
+		snprintf(needle, sizeof(needle), "lost_from=%lu\nlost_to=%lu\n", page_after + 1, first_avail - 1);
+		if (strstr(page, "lost=1\n") == NULL || strstr(page, needle) == NULL) {
+			fprintf(stderr, "FAIL: Test 102e ring rotation between pages lost range\n"); return 1;
+		}
+
+		fprintf(stderr, "=== Test 102e PASS: paged error transport semantics ===\n");
+	}
+
 	/* --- Test 103: Phase 3 capability/CSS gap aggregates --------------- */
 	{
 		char caps[16384], cssg[16384], caps_again[16384];

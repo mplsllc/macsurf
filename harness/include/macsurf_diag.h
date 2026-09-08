@@ -328,6 +328,8 @@ unsigned long ms_diag_error_record(unsigned long op_id, unsigned long request_id
 	int kind, int boundary, int reason, const char *name, const char *message);
 long macsurf_diag_serialize_operations(char *buf, long cap);
 long macsurf_diag_serialize_errors(char *buf, long cap);
+long macsurf_diag_serialize_errors_since(char *buf, long cap,
+	unsigned long after, unsigned long limit);
 
 /* ===================== Phase 2: expected-transition contracts =====================
  * A contract is MacSurf-owned durable state, not an inferred page outcome.

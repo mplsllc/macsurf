@@ -3413,6 +3413,8 @@ long macsurf_diag_serialize_readiness(char *buf, long cap)
 #define MS_ERR_NAME_CAP 64
 #define MS_ERR_MSG_CAP 64
 #define MS_ERR_TEXT_MAX 120
+#define MS_ERR_DEFAULT_LIMIT 16
+#define MS_ERR_FOOTER_RESERVE 256
 
 struct ms_diag_operation {
 	unsigned long id, nav_id, script_id, task_id, request_id;
@@ -3753,6 +3755,165 @@ long macsurf_diag_serialize_errors(char *buf, long cap)
 	}
 
 	snprintf(line, sizeof(line), "truncated=%d\n", is_trunc);
+	n = diag_cat(buf, cap, n, line);
+	return n;
+}
+
+static struct ms_diag_error_text *ms_diag_get_error_text(
+	struct ms_diag_error_text *table, int count, unsigned long id)
+{
+	int i;
+	if (id == 0) return NULL;
+	if (id <= (unsigned long)count && table[id - 1].id == id) {
+		return &table[id - 1];
+	}
+	for (i = 0; i < count; i++) {
+		if (table[i].id == id) {
+			return &table[i];
+		}
+	}
+	return NULL;
+}
+
+long macsurf_diag_serialize_errors_since(char *buf, long cap,
+	unsigned long after, unsigned long limit)
+{
+	char line[1024];
+	char enc_name[384];
+	char enc_msg[384];
+	long n = 0;
+	unsigned long latest;
+	unsigned long retained;
+	unsigned long first;
+	unsigned long want = 0;
+	unsigned long seq;
+	unsigned long max_return = 0;
+	unsigned long next_after;
+	unsigned long returned = 0;
+	unsigned long lost_from = 0;
+	unsigned long lost_to = 0;
+	int oldest_idx;
+	int have_wanted = 0;
+	int lost = 0;
+	int truncated = 0;
+	int idx;
+	struct ms_diag_error *e;
+	struct ms_diag_error_text *nt;
+	struct ms_diag_error_text *mt;
+	unsigned long msg_hash;
+	unsigned long msg_len;
+	int msg_trunc;
+
+	if (buf == NULL || cap < 2) return 0;
+	buf[0] = '\0';
+	latest = g_err_seq;
+	retained = latest;
+	if (retained > MS_ERR_RING_CAP) retained = MS_ERR_RING_CAP;
+	first = retained == 0 ? 0 : latest - retained + 1;
+	if (limit == 0) limit = MS_ERR_DEFAULT_LIMIT;
+	if (limit > MS_ERR_RING_CAP) limit = MS_ERR_RING_CAP;
+
+	n = diag_cat(buf, cap, n, "MSDIAG 2 errors\n");
+	n = ms_diag_history_header(buf, cap, n, "errors", latest,
+		MS_ERR_RING_CAP);
+	snprintf(line, sizeof(line), "requested_after=%lu\nlimit=%lu\n",
+		after, limit);
+	n = diag_cat(buf, cap, n, line);
+
+	if (after < latest) {
+		want = after + 1;
+		have_wanted = 1;
+	}
+	if (have_wanted && first != 0 && want < first) {
+		lost = 1;
+		lost_from = want;
+		lost_to = first - 1;
+		snprintf(line, sizeof(line), "lost_from=%lu\nlost_to=%lu\n",
+			lost_from, lost_to);
+		n = diag_cat(buf, cap, n, line);
+		want = first;
+	}
+	next_after = after;
+	if (have_wanted && first != 0 && want <= latest) {
+		max_return = want + limit;
+		if (max_return < want || max_return > latest + 1) {
+			max_return = latest + 1;
+		}
+		oldest_idx = (g_err_ring_head - (int)retained +
+			2 * MS_ERR_RING_CAP) % MS_ERR_RING_CAP;
+		for (seq = want; seq < max_return; seq++) {
+			idx = (oldest_idx + (int)(seq - first)) % MS_ERR_RING_CAP;
+			e = &g_err_ring[idx];
+			msg_hash = 0UL;
+			msg_len = 0UL;
+			msg_trunc = 0;
+
+			if (e->id != seq) {
+				lost = 1;
+				if (lost_from == 0) {
+					lost_from = seq;
+					lost_to = seq;
+					snprintf(line, sizeof(line),
+						"lost_from=%lu\nlost_to=%lu\n", lost_from,
+						lost_to);
+					n = diag_cat(buf, cap, n, line);
+				}
+				break;
+			}
+
+			enc_name[0] = '\0';
+			if (e->name_status == (unsigned char)MS_ERR_TEXT_RETAINED) {
+				nt = ms_diag_get_error_text(g_err_names, g_err_name_count, e->name_id);
+				if (nt != NULL && nt->text[0] != '\0') {
+					ms_error_text_percent_encode(enc_name, sizeof(enc_name),
+						nt->text, (unsigned long)strlen(nt->text));
+				}
+			}
+			if (enc_name[0] == '\0') {
+				strcpy(enc_name, "-");
+			}
+
+			enc_msg[0] = '\0';
+			if (e->message_status == (unsigned char)MS_ERR_TEXT_RETAINED) {
+				mt = ms_diag_get_error_text(g_err_messages, g_err_message_count, e->message_id);
+				if (mt != NULL) {
+					msg_hash = mt->hash;
+					msg_len = mt->input_len;
+					msg_trunc = (int)mt->truncated;
+					if (mt->text[0] != '\0') {
+						ms_error_text_percent_encode(enc_msg, sizeof(enc_msg),
+							mt->text, (unsigned long)strlen(mt->text));
+					}
+				}
+			}
+			if (enc_msg[0] == '\0') {
+				strcpy(enc_msg, "-");
+			}
+
+			snprintf(line, sizeof(line),
+				"err=%lu nav=%lu script=%lu task=%lu kind=%s boundary=%d reason=%s "
+				"op=%lu req=%lu name_id=%lu name_status=%s name=%s "
+				"message_id=%lu message_status=%s message_hash=%08lx "
+				"message_len=%lu message_truncated=%d message=%s\n",
+				e->id, e->nav_id, e->script_id, e->task_id,
+				ms_err_kind_s(e->kind), (int)e->boundary, ms_op_reason_s(e->reason),
+				e->op_id, e->request_id,
+				e->name_id, ms_error_text_status_s(e->name_status), enc_name,
+				e->message_id, ms_error_text_status_s(e->message_status),
+				msg_hash, msg_len, msg_trunc, enc_msg);
+
+			if (n + (long)strlen(line) >= cap - MS_ERR_FOOTER_RESERVE) {
+				truncated = 1;
+				break;
+			}
+			n = diag_cat(buf, cap, n, line);
+			returned++;
+			next_after = seq;
+		}
+	}
+	snprintf(line, sizeof(line), "lost=%d\nreturned=%lu\nnext_after=%lu\n"
+		"complete=%d\ntruncated=%d\n", lost, returned, next_after,
+		next_after >= latest ? 1 : 0, truncated);
 	n = diag_cat(buf, cap, n, line);
 	return n;
 }
