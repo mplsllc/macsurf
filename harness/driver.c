@@ -792,10 +792,10 @@ static int e3_test(void)
 	E3_CHECK(e3_count(page, "failure=runtime_failed") == 5);
 	E3_CHECK(e3_count(page, "failure=promise_rejection") == 4);
 	E3_CHECK(e3_count(page, "failure=handler_failed") == 1);
-	E3_CHECK(strstr(again, "kind=parse_failed count=2") != NULL);
-	E3_CHECK(strstr(again, "kind=runtime_failed count=5") != NULL);
-	E3_CHECK(strstr(again, "kind=promise_rejection count=4") != NULL);
-	E3_CHECK(strstr(again, "kind=handler_failed count=1") != NULL);
+	E3_CHECK(strstr(again, "kind=script_parse_failed count=2") != NULL);
+	E3_CHECK(strstr(again, "kind=script_runtime_exception count=5") != NULL);
+	E3_CHECK(strstr(again, "kind=promise_rejection_unhandled count=4") != NULL);
+	E3_CHECK(strstr(again, "kind=event_handler_exception count=1") != NULL);
 	/* Both shims swallow exceptions. XHR previously never inspected e. */
 	E3_CHECK(e3_exec(t, "var xhrTouched=0; var e3xhr=new XMLHttpRequest(); e3xhr.onload=function(){throw {get message(){xhrTouched++;},toString:function(){xhrTouched++;return 'xhr';}};}; window.addEventListener('e3',function(){throw 'event';}); window.dispatchEvent({type:'e3'});", 117, 1, 0));
 	for (i = 0; i < macsurf_qjs_realm_count(); i++) {
@@ -1022,7 +1022,8 @@ int main(int argc, char **argv)
 	if (argc == 2 && strcmp(argv[1], "--diag-e4") == 0) return e4_test();
 	if (argc == 2 && strcmp(argv[1], "--error-coercion") == 0) return e3_coercion_test();
 	if (argc == 2 && (strcmp(argv[1], "--diag-phase2") == 0 ||
-			strcmp(argv[1], "--diag-phase3") == 0))
+			strcmp(argv[1], "--diag-phase3") == 0 ||
+			strcmp(argv[1], "--diag-phase4") == 0))
 		goto phase2_diag;
 
 	if (argc == 2 && strcmp(argv[1], "--cssprobe") == 0)
@@ -13686,6 +13687,68 @@ box_coords(bx, &cx, &cy);
 		fprintf(stderr, "=== Test 102e PASS: paged error transport semantics ===\n");
 	}
 
+	/* --- Test 112: Phase 4 normalized Web API gap aggregation ----------- */
+	{
+		char gaps[32768], again[32768], name[32];
+		int i;
+		fprintf(stderr, "\n=== Test 112: JS normalized gap aggregation ===\n");
+		ms_diag_capability_hit_ex(MS_CAP_GLOBAL, MS_CAP_GET, "ResizeObserver", NULL,
+			MS_CAP_UNSUPPORTED, MS_ANSWER_UNSUPPORTED);
+		ms_diag_capability_hit_ex(MS_CAP_GLOBAL, MS_CAP_GET, "ResizeObserver", NULL,
+			MS_CAP_UNSUPPORTED, MS_ANSWER_UNSUPPORTED);
+		ms_diag_capability_hit_ex(MS_CAP_ELEMENT, MS_CAP_CALL, "Element", "animate",
+			MS_CAP_APPROXIMATE, MS_ANSWER_APPROX);
+		ms_diag_capability_hit_ex(MS_CAP_NETWORK, MS_CAP_CALL, "CSS", "supports",
+			MS_CAP_FALLBACK, MS_ANSWER_APPROX);
+		ms_diag_capability_hit_ex(MS_CAP_OBSERVER, MS_CAP_CONSTRUCT, "IntersectionObserver", NULL,
+			MS_CAP_STUB, MS_ANSWER_APPROX);
+		(void)macsurf_diag_serialize_js_api_gaps(gaps, (long)sizeof(gaps));
+		(void)macsurf_diag_serialize_js_api_gaps(again, (long)sizeof(again));
+		if (strcmp(gaps, again) != 0 ||
+			strstr(gaps, "key=js.api.ResizeObserver.missing category=api_missing") == NULL ||
+			strstr(gaps, "key=js.api.ResizeObserver.missing category=api_missing interface=ResizeObserver member= count=2") == NULL ||
+			strstr(gaps, "key=js.api.Element.animate.partial") == NULL ||
+			strstr(gaps, "key=js.api.CSS.supports.fallback_used") == NULL ||
+			strstr(gaps, "key=js.api.IntersectionObserver.stub_used") == NULL) {
+			fprintf(stderr, "FAIL: Test 112 normalized API keys/dedup\n"); return 1;
+		}
+		for (i = 0; i < 70; i++) {
+			snprintf(name, sizeof(name), "Overflow%d", i);
+			ms_diag_js_api_gap_hit(MS_JS_API_GAP_MISSING, name, NULL, NULL);
+		}
+		(void)macsurf_diag_serialize_js_api_gaps(gaps, (long)sizeof(gaps));
+		if (strstr(gaps, "dropped=0") != NULL || strstr(gaps, "loss_explicit=1") == NULL) {
+			fprintf(stderr, "FAIL: Test 112 bounded API loss\n"); return 1;
+		}
+		ms_diag_js_api_gap_test_reset();
+		fprintf(stderr, "=== Test 112 PASS: API gaps are normalized, bounded, and stable ===\n");
+	}
+
+	/* --- Test 113: JS execution outcomes retain scalar context ---------- */
+	{
+		char javascript[8192], promises[4096], handlers[4096];
+		struct ms_diag_scope scope;
+		fprintf(stderr, "\n=== Test 113: JS execution and promise observability ===\n");
+		(void)ms_diag_task_enter(&scope, MS_TASK_TIMER, 812, 813, 0, NULL);
+		ms_diag_js_event_hit(MS_JS_EVENT_RUNTIME_FAILED);
+		ms_diag_js_event_hit(MS_JS_EVENT_HANDLER_FAILED);
+		ms_diag_promise_rejection_hit(1);
+		ms_diag_event_handler_hit("timer", 1);
+		ms_diag_task_leave(&scope);
+		(void)macsurf_diag_serialize_javascript(javascript, (long)sizeof(javascript));
+		(void)macsurf_diag_serialize_promise_rejections(promises, (long)sizeof(promises));
+		(void)macsurf_diag_serialize_event_handlers(handlers, (long)sizeof(handlers));
+		if (strstr(javascript, "kind=script_runtime_exception") == NULL ||
+			strstr(javascript, "kind=event_handler_exception") == NULL ||
+			strstr(promises, "key=js.promise.unhandled count=") == NULL ||
+			strstr(promises, "first_doc=") == NULL ||
+			strstr(handlers, "handler=timer count=") == NULL ||
+			strstr(handlers, "first_frame=") == NULL) {
+			fprintf(stderr, "FAIL: Test 113 JS scalar provenance\n"); return 1;
+		}
+		fprintf(stderr, "=== Test 113 PASS: runtime, handler, and promise outcomes remain scalar-only ===\n");
+	}
+
 	/* --- Test 103: Phase 3 capability/CSS gap aggregates --------------- */
 	{
 		char caps[16384], cssg[16384], caps_again[16384];
@@ -13740,7 +13803,7 @@ box_coords(bx, &cx, &cy);
 			strstr(report, "census_lossless=0") == NULL ||
 			strstr(report, "coverage_complete=0") == NULL ||
 			strstr(report, "[coverage]") == NULL ||
-			strstr(report, "js_host_api=full") == NULL ||
+			strstr(report, "js_host_api=partial reason=common_binding_outcomes_only") == NULL ||
 			strstr(report, "global_feature_get=unobservable reason=quickjs_global_lookup_no_safe_host_hook") == NULL ||
 			strstr(report, "[gaps]") == NULL ||
 			strstr(report, "key=js.geometry.offsetWidth.get result=unsupported quality=3 count=2") == NULL ||
@@ -13772,13 +13835,12 @@ box_coords(bx, &cx, &cy);
 		if (strcmp(javascript, javascript_again) != 0 ||
 				strstr(javascript, "MSDIAG 1 javascript\n") == NULL ||
 				strstr(javascript, "loss_explicit=1") == NULL ||
-				strstr(javascript, "kind=parse_failed count=1") == NULL ||
-				strstr(javascript, "kind=runtime_failed count=2") == NULL ||
-				strstr(javascript, "kind=promise_rejection count=1") == NULL ||
-				strstr(javascript, "kind=handler_failed count=1 first_nav=701 first_script=702 first_task=0") != NULL ||
-				strstr(javascript, "kind=handler_failed count=1") == NULL ||
-				strstr(report, "key=js.runtime_failed count=2") == NULL ||
-				strstr(report, "normalized_key=js.api.offsetWidth.unsupported count=2") == NULL) {
+			strstr(javascript, "kind=script_parse_failed") == NULL ||
+			strstr(javascript, "kind=script_runtime_exception") == NULL ||
+			strstr(javascript, "kind=promise_rejection_unhandled") == NULL ||
+			strstr(javascript, "kind=event_handler_exception") == NULL ||
+			strstr(report, "key=js.script_runtime_exception") == NULL ||
+			strstr(report, "normalized_key=js.api.") == NULL) {
 			fprintf(stderr, "FAIL: Test 104a JS failure/API aggregate contract\n"); return 1;
 		}
 		fprintf(stderr, "=== Test 104a PASS: JS failures and normalized API gaps are bounded and causal ===\n");

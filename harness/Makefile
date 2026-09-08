@@ -132,7 +132,7 @@ reconvert_harness: $(ALL_OBJ)
 
 -include $(ALL_OBJ:.o=.d)
 
-.PHONY: all run clean check check-c89 check-macdefault diag-phase2 diag-phase3 diag-e4 webp-test
+.PHONY: all run clean check check-c89 check-macdefault diag-phase2 diag-phase3 diag-phase4 diag-e4 webp-test
 all: reconvert_harness
 
 diag-phase2: reconvert_harness
@@ -147,6 +147,9 @@ diag-e4: reconvert_harness
 
 diag-phase3: reconvert_harness
 	ASAN_OPTIONS=detect_leaks=0 ./reconvert_harness --diag-phase3
+
+diag-phase4: reconvert_harness
+	ASAN_OPTIONS=detect_leaks=0 ./reconvert_harness --diag-phase4
 
 # Standalone libwebp regression.  This deliberately stays out of the large
 # NetSurf/ASan harness: it exercises the exact decoder/demux source subset and

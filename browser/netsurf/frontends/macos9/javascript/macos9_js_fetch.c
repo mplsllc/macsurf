@@ -431,6 +431,7 @@ xhr_deliver(void *p)
 		ms_diag_error_callback_swap(&previous_ep, NULL);
 		if (JS_IsException(ret))
 			ms_diag_js_event_hit(MS_JS_EVENT_HANDLER_FAILED);
+			ms_diag_event_handler_hit("xhr", 1);
 		ms_diag_task_leave(&__xtsk);
 		ms_diag_async_state(async_id, MS_ASYNC_FIRED);
 		ms_diag_async_swap(previous_async, NULL);

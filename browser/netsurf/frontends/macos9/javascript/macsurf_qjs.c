@@ -741,6 +741,7 @@ static void qjs_error_capture_realm(JSContext *ctx,
 		p->heap_id = r.heap_id;
 		p->ctx_gen = r.ctx_gen;
 	}
+	ms_diag_js_context_set(p->nav_id, p->doc_id, p->frame_id);
 	p->task_id = ms_diag_cur_task();
 }
 
@@ -761,6 +762,7 @@ static JSValue qjs_callback_error(JSContext *ctx, JSValueConst this_val,
 			ep = callback;
 	}
 	ms_diag_js_event_hit(MS_JS_EVENT_HANDLER_FAILED);
+	ms_diag_event_handler_hit("event", 1);
 	(void)ms_diag_error_record_ex(0, 0, MS_FAIL_HANDLER_FAILED,
 		MS_PHASE_CALLBACK, boundary, &ep, "Error", NULL);
 	return JS_UNDEFINED;
@@ -2170,6 +2172,7 @@ void macsurf_qjs_run_timers(struct jscontext *ctx)
 		 * Popping first turns a real handler failure into task=0 evidence. */
 		if (JS_IsException(ret))
 			ms_diag_js_event_hit(MS_JS_EVENT_HANDLER_FAILED);
+			ms_diag_event_handler_hit("timer", 1);
 		ms_diag_task_leave(&__tsk);
 		ms_diag_async_state(__t_async, MS_ASYNC_FIRED);
 		ms_diag_async_swap(prev_async, NULL);
@@ -7361,6 +7364,7 @@ static void qjs_fire_dispatch(JSContext *ctx, JSValueConst obj,
 			qjs_error_capture_realm(ctx, &ep);
 			/* Listener registration origin is not carried by this dispatch. */
 			ms_diag_js_event_hit(MS_JS_EVENT_HANDLER_FAILED);
+			ms_diag_event_handler_hit(what, 1);
 			(void)qjs_log_exc_record(ctx, ex, "event handler threw", what,
 				&ep, MS_FAIL_HANDLER_FAILED, MS_PHASE_CALLBACK, MS_BOUND_EVENT);
 			JS_FreeValue(ctx, ex);
@@ -11110,8 +11114,10 @@ static JSValue qjs_ms_capability(JSContext *ctx, JSValueConst this_val,
 {
 	int domain = 0, operation = 0, result = 0, quality = 0;
 	const char *name = NULL;
+	struct ms_diag_error_provenance ep;
 	(void)this_val;
 	if (argc < 5) return JS_UNDEFINED;
+	qjs_error_capture_realm(ctx, &ep);
 	(void)JS_ToInt32(ctx, &domain, argv[0]);
 	(void)JS_ToInt32(ctx, &operation, argv[1]);
 	name = JS_ToCString(ctx, argv[2]);
@@ -15368,6 +15374,7 @@ static void qjs_promise_rejection_tracker(JSContext *ctx, JSValueConst promise,
 	(void)promise; (void)opaque;
 	if (is_handled) return;
 	ms_diag_js_event_hit(MS_JS_EVENT_PROMISE_REJECTION);
+	ms_diag_promise_rejection_hit(1);
 	/* Tracker reports rejection now; no origin is exposed for queued jobs. */
 	qjs_error_capture_realm(ctx, &ep);
 	msg = JS_ToCString(ctx, reason);
@@ -17439,6 +17446,7 @@ unsigned char js_fire_script_load(struct jsthread *thread,
 	JSContext *ctx;
 	JSValue fn, el, args[2], ret;
 
+	if (!ok) ms_diag_js_event_hit(MS_JS_EVENT_SCRIPT_LOAD_FAILED);
 	if (thread == NULL || thread->ctx == NULL || node == NULL) return 0;
 	ctx = thread->ctx;
 
