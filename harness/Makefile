@@ -138,6 +138,10 @@ all: reconvert_harness
 diag-phase2: reconvert_harness
 	ASAN_OPTIONS=detect_leaks=0 ./reconvert_harness --diag-phase2
 
+diag-e3: reconvert_harness
+	ASAN_OPTIONS=detect_leaks=0 ./reconvert_harness --diag-e3
+	ASAN_OPTIONS=detect_leaks=0 ./reconvert_harness --error-coercion
+
 diag-phase3: reconvert_harness
 	ASAN_OPTIONS=detect_leaks=0 ./reconvert_harness --diag-phase3
 

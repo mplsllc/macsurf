@@ -1,0 +1,14 @@
+<!doctype html><html><head><title>E3 controlled error provenance</title></head><body>
+<h1>E3 controlled error provenance</h1>
+<script>var e3Touched=0,e3StackReads=0;window.e3Success=true;</script>
+<script>var = ;</script>
+<script>throw new Error('e3-runtime');</script>
+<script>setTimeout(function(){throw new Error('e3-timer');},250);</script>
+<script>Promise.resolve(1);Promise.reject('e3-promise');Promise.resolve().then(function(){throw 'e3-job';});</script>
+<script>throw {toString:function(){e3Touched++;return 'e3-hostile';},get stack(){e3StackReads++;return 'e3-stack';}};</script>
+<script>if(e3Touched!==1||e3StackReads!==1)throw 'E3-COERCION-FAIL';</script>
+<script>window.addEventListener('e3-event',function(){throw new Error('e3-event');});window.dispatchEvent({type:'e3-event'});</script>
+<script>var e3xhr=new XMLHttpRequest();e3xhr.open('GET','/response.txt');e3xhr.onload=function(){throw {toString:function(){throw 'E3-XHR-COERCION-FAIL';}};};e3xhr.send();</script>
+<iframe src="frame.html?frame=1"></iframe><iframe src="frame.html?frame=2"></iframe>
+<p id="checks">The successful check script asserts one toString and one stack getter.</p>
+</body></html>

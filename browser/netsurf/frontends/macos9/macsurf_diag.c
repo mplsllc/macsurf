@@ -378,6 +378,7 @@ static void ms_diag_realm_count_text(char *buf, size_t cap,
 long macsurf_diag_serialize_realms(char *buf, long cap)
 {
 	char line[512];
+	char boundary[32];
 	char timers[24], xhr[24], microtasks[24], modules[24];
 	char listeners[24], wrappers[24], deferred[24];
 	long n = 0;
@@ -534,6 +535,7 @@ long macsurf_diag_serialize_warnings(char *buf, long cap)
 static unsigned long g_cur_script;
 static unsigned long g_cur_task;
 static unsigned long g_cur_nav;
+static unsigned long g_cur_source; /* E3: source_id of the script currently executing */
 static unsigned long g_script_seq;
 static unsigned long g_task_seq;
 
@@ -902,6 +904,7 @@ void ms_diag_script_enter(struct ms_diag_scope *s, unsigned long nav_id,
 	struct ms_diag_script *act = NULL;
 
 	s->prev_script = g_cur_script;
+	s->prev_source = g_cur_source;
 	s->prev_task = g_cur_task;
 	s->my_id = ++g_script_seq;
 	if (g_script_seq == 0) {
@@ -938,6 +941,7 @@ void ms_diag_script_enter(struct ms_diag_scope *s, unsigned long nav_id,
 	*e = *act;
 
 	g_cur_script = s->my_id;
+	g_cur_source = 0;
 	if (nav_id != 0) {
 		g_cur_nav = nav_id;
 	}
@@ -1004,6 +1008,11 @@ void ms_diag_script_set_source_id(struct ms_diag_scope *s,
 			g_script_ring[i].source_id = source_id;
 			break;
 		}
+	}
+	/* E3: track the live source_id so ms_diag_error_record_ex can read it
+	 * without chasing the active-script ring from inside a failure handler. */
+	if (g_cur_script == s->my_id) {
+		g_cur_source = source_id;
 	}
 }
 
@@ -1186,6 +1195,7 @@ void ms_diag_script_leave(struct ms_diag_scope *s, int state)
 	}
 
 	g_cur_script = s->prev_script;
+	g_cur_source = s->prev_source;
 	g_cur_task = s->prev_task;
 	ms_diag_progress(MS_PROGRESS_SCRIPT);
 }
@@ -1197,6 +1207,7 @@ unsigned long ms_diag_task_enter(struct ms_diag_scope *s, int kind,
 	struct ms_diag_task *e;
 
 	s->prev_script = g_cur_script;
+	s->prev_source = g_cur_source;
 	s->prev_task = g_cur_task;
 
 	/* Nested rule: a dispatch from inside a live task is NOT a new turn. */
@@ -1221,6 +1232,7 @@ unsigned long ms_diag_task_enter(struct ms_diag_scope *s, int kind,
 	ms_name_copy(e->name, name);
 
 	g_cur_task = s->my_id;
+	g_cur_source = 0;
 	if (nav_id != 0) {
 		g_cur_nav = nav_id;
 	}
@@ -1234,6 +1246,7 @@ unsigned long ms_diag_task_enter(struct ms_diag_scope *s, int kind,
 void ms_diag_task_leave(struct ms_diag_scope *s)
 {
 	g_cur_script = s->prev_script;
+	g_cur_source = s->prev_source;
 	g_cur_task = s->prev_task;
 	if (s->my_id != 0) ms_diag_progress(MS_PROGRESS_TASK);
 }
@@ -1258,6 +1271,7 @@ void ms_diag_task_set_jobs(struct ms_diag_scope *s, unsigned long jobs,
 unsigned long ms_diag_cur_script(void) { return g_cur_script; }
 unsigned long ms_diag_cur_task(void)   { return g_cur_task; }
 unsigned long ms_diag_cur_nav(void)    { return g_cur_nav; }
+unsigned long ms_diag_cur_source(void) { return g_cur_source; }
 
 const char *ms_script_kind_s(int k)
 {
@@ -3428,10 +3442,31 @@ struct ms_diag_error_text {
 	char text[MS_ERR_TEXT_MAX];
 };
 struct ms_diag_error {
-	unsigned long id, nav_id, script_id, task_id, op_id, request_id;
-	unsigned long name_id, message_id;
-	unsigned char kind, boundary, reason;
-	unsigned char name_status, message_status;
+	/* scalar IDs frozen at the failure boundary */
+	unsigned long id;
+	unsigned long nav_id;
+	unsigned long script_id;
+	unsigned long task_id;
+	unsigned long op_id;
+	unsigned long request_id;
+	unsigned long name_id;
+	unsigned long message_id;
+	/* E3 provenance fields */
+	unsigned long frame_id;
+	unsigned long doc_id;
+	unsigned long source_id;
+	unsigned long realm_id;
+	unsigned long heap_id;
+	unsigned long ctx_gen;
+	/* classification */
+	unsigned char kind;         /* enum ms_error_kind */
+	unsigned char failure_kind; /* enum ms_diag_failure_kind */
+	unsigned char phase;        /* enum ms_diag_error_phase */
+	unsigned char boundary;     /* enum ms_diag_error_boundary */
+	unsigned char reason;       /* enum ms_op_reason */
+	unsigned char name_status;  /* enum ms_error_text_status */
+	unsigned char message_status; /* enum ms_error_text_status */
+	unsigned char _pad;
 };
 
 static struct ms_diag_operation g_op_ring[MS_OP_RING_CAP];
@@ -3646,16 +3681,90 @@ void ms_diag_operation_record(unsigned long op_id, int kind, int phase,
 	ms_diag_progress(MS_PROGRESS_CONTRACT);
 }
 
-unsigned long ms_diag_error_record(unsigned long op_id, unsigned long request_id,
-	int kind, int boundary, int reason, const char *name, const char *message)
+const char *ms_diag_failure_kind_s(int v)
+{
+	switch (v) {
+	case MS_FAIL_PARSE_FAILED:      return "parse_failed";
+	case MS_FAIL_RUNTIME_FAILED:    return "runtime_failed";
+	case MS_FAIL_PROMISE_REJECTION: return "promise_rejection";
+	case MS_FAIL_HANDLER_FAILED:    return "handler_failed";
+	default:                        return "none";
+	}
+}
+const char *ms_diag_error_phase_s(int v)
+{
+	switch (v) {
+	case MS_PHASE_COMPILE:  return "compile";
+	case MS_PHASE_EXECUTE:  return "execute";
+	case MS_PHASE_CALLBACK: return "callback";
+	case MS_PHASE_PROMISE:  return "promise";
+	default:                return "none";
+	}
+}
+const char *ms_diag_error_boundary_s(int v)
+{
+	switch (v) {
+	case MS_BOUND_SCRIPT:  return "script";
+	case MS_BOUND_TIMER:   return "timer";
+	case MS_BOUND_XHR:     return "xhr";
+	case MS_BOUND_EVENT:   return "event";
+	case MS_BOUND_PROMISE: return "promise";
+	case MS_BOUND_API:     return "api";
+	case MS_BOUND_MODULE:  return "module";
+	default:               return "none";
+	}
+}
+
+static struct ms_diag_error_provenance g_error_callback;
+
+void ms_diag_error_callback_swap(const struct ms_diag_error_provenance *next,
+	struct ms_diag_error_provenance *previous)
+{
+	struct ms_diag_error_provenance saved = g_error_callback;
+	g_error_callback = *next;
+	if (previous != NULL) *previous = saved;
+}
+
+void ms_diag_error_capture_callback(struct ms_diag_error_provenance *p)
+{
+	*p = g_error_callback;
+}
+
+void ms_diag_error_capture_script(struct ms_diag_error_provenance *p)
+{
+	struct ms_diag_script *act;
+	memset(p, 0, sizeof(*p));
+	act = ms_diag_find_active_script(g_cur_script);
+	if (act == NULL) return;
+	p->nav_id = act->nav_id;
+	p->frame_id = act->frame_id;
+	p->doc_id = act->doc_id;
+	p->source_id = act->source_id;
+	p->script_id = act->id;
+	p->task_id = g_cur_task;
+	p->realm_id = act->realm_id;
+	p->heap_id = act->heap_id;
+	p->ctx_gen = act->ctx_gen;
+}
+
+static unsigned long ms_diag_error_create(unsigned long op_id,
+	unsigned long request_id, int kind, int failure_kind, int phase,
+	int boundary, int reason, const struct ms_diag_error_provenance *p,
+	const char *name, const char *message)
 {
 	struct ms_diag_error *e = &g_err_ring[g_err_ring_head];
 	g_err_ring_head = (g_err_ring_head + 1) % MS_ERR_RING_CAP;
+	memset(e, 0, sizeof(*e));
 	e->id = ++g_err_seq;
-	e->nav_id = ms_diag_cur_nav();
-	if (e->nav_id == 0) e->nav_id = g_diag_last_nav;
-	e->script_id = ms_diag_cur_script();
-	e->task_id = ms_diag_cur_task();
+	e->nav_id = p->nav_id;
+	e->frame_id = p->frame_id;
+	e->doc_id = p->doc_id;
+	e->source_id = p->source_id;
+	e->script_id = p->script_id;
+	e->task_id = p->task_id;
+	e->realm_id = p->realm_id;
+	e->heap_id = p->heap_id;
+	e->ctx_gen = p->ctx_gen;
 	e->op_id = op_id;
 	e->request_id = request_id;
 	e->name_id = ms_diag_error_text_intern(g_err_names, &g_err_name_count,
@@ -3665,9 +3774,35 @@ unsigned long ms_diag_error_record(unsigned long op_id, unsigned long request_id
 		MS_ERR_MSG_CAP, &g_err_message_seq, &g_err_messages_distinct_total,
 		&g_err_messages_dropped, message, &e->message_status);
 	e->kind = (unsigned char)kind;
+	e->failure_kind = (unsigned char)failure_kind;
+	e->phase = (unsigned char)phase;
 	e->boundary = (unsigned char)boundary;
 	e->reason = (unsigned char)reason;
 	return e->id;
+}
+
+unsigned long ms_diag_error_record_ex(unsigned long op_id,
+	unsigned long request_id, int failure_kind, int phase, int boundary,
+	const struct ms_diag_error_provenance *p,
+	const char *name, const char *message)
+{
+	int kind = MS_ERR_JS_EXCEPTION;
+	if (failure_kind == MS_FAIL_PROMISE_REJECTION) kind = MS_ERR_PROMISE_REJECTION;
+	if (failure_kind == MS_FAIL_HANDLER_FAILED) kind = MS_ERR_CALLBACK_FAILURE;
+	return ms_diag_error_create(op_id, request_id, kind, failure_kind,
+		phase, boundary, MS_OPR_NONE, p, name, message);
+}
+
+unsigned long ms_diag_error_record(unsigned long op_id, unsigned long request_id,
+	int kind, int boundary, int reason, const char *name, const char *message)
+{
+	struct ms_diag_error_provenance p;
+	memset(&p, 0, sizeof(p));
+	p.nav_id = ms_diag_cur_nav();
+	p.script_id = ms_diag_cur_script();
+	p.task_id = ms_diag_cur_task();
+	return ms_diag_error_create(op_id, request_id, kind, MS_FAIL_NONE,
+		MS_PHASE_NONE, boundary, reason, &p, name, message);
 }
 
 long macsurf_diag_serialize_operations(char *buf, long cap)
@@ -3694,6 +3829,8 @@ long macsurf_diag_serialize_operations(char *buf, long cap)
 long macsurf_diag_serialize_errors(char *buf, long cap)
 {
 	char line[512];
+	char boundary[32];
+	int line_len;
 	char enc[384];
 	long n = 0;
 	int i;
@@ -3743,14 +3880,28 @@ long macsurf_diag_serialize_errors(char *buf, long cap)
 		struct ms_diag_error *e = &g_err_ring[idx];
 		if (e->id == 0) continue;
 		if (n >= cap - footer_res) { is_trunc = 1; break; }
-		snprintf(line, sizeof(line),
-			"err=%lu nav=%lu script=%lu task=%lu kind=%s boundary=%d reason=%s "
+		if (e->failure_kind == MS_FAIL_NONE)
+			snprintf(boundary, sizeof(boundary), "%u", (unsigned int)e->boundary);
+		else
+			strcpy(boundary, ms_diag_error_boundary_s(e->boundary));
+		line_len = snprintf(line, sizeof(line),
+			"err=%lu nav=%lu script=%lu task=%lu kind=%s "
+			"failure=%s phase=%s boundary=%s reason=%s "
+			"frame=%lu doc=%lu source=%lu realm=%lu heap=%lu ctx_gen=%lu "
 			"op=%lu req=%lu name=%lu name_status=%s message=%lu message_status=%s\n",
 			e->id, e->nav_id, e->script_id, e->task_id,
-			ms_err_kind_s(e->kind), (int)e->boundary, ms_op_reason_s(e->reason),
+			ms_err_kind_s(e->kind),
+			ms_diag_failure_kind_s(e->failure_kind),
+			ms_diag_error_phase_s(e->phase),
+			boundary,
+			ms_op_reason_s(e->reason),
+			e->frame_id, e->doc_id, e->source_id,
+			e->realm_id, e->heap_id, e->ctx_gen,
 			e->op_id, e->request_id,
 			e->name_id, ms_error_text_status_s(e->name_status),
 			e->message_id, ms_error_text_status_s(e->message_status));
+		if (line_len < 0 || line_len >= (int)sizeof(line) ||
+			n + line_len >= cap - footer_res) { is_trunc = 1; break; }
 		n = diag_cat(buf, cap, n, line);
 	}
 
@@ -3778,7 +3929,9 @@ static struct ms_diag_error_text *ms_diag_get_error_text(
 long macsurf_diag_serialize_errors_since(char *buf, long cap,
 	unsigned long after, unsigned long limit)
 {
-	char line[1024];
+	char line[1536];
+	char boundary[32];
+	int line_len;
 	char enc_name[384];
 	char enc_msg[384];
 	long n = 0;
@@ -3890,19 +4043,32 @@ long macsurf_diag_serialize_errors_since(char *buf, long cap,
 				strcpy(enc_msg, "-");
 			}
 
-			snprintf(line, sizeof(line),
-				"err=%lu nav=%lu script=%lu task=%lu kind=%s boundary=%d reason=%s "
+			if (e->failure_kind == MS_FAIL_NONE)
+				snprintf(boundary, sizeof(boundary), "%u", (unsigned int)e->boundary);
+			else
+				strcpy(boundary, ms_diag_error_boundary_s(e->boundary));
+			line_len = snprintf(line, sizeof(line),
+				"err=%lu nav=%lu script=%lu task=%lu kind=%s "
+				"failure=%s phase=%s boundary=%s reason=%s "
+				"frame=%lu doc=%lu source=%lu realm=%lu heap=%lu ctx_gen=%lu "
 				"op=%lu req=%lu name_id=%lu name_status=%s name=%s "
 				"message_id=%lu message_status=%s message_hash=%08lx "
 				"message_len=%lu message_truncated=%d message=%s\n",
 				e->id, e->nav_id, e->script_id, e->task_id,
-				ms_err_kind_s(e->kind), (int)e->boundary, ms_op_reason_s(e->reason),
+				ms_err_kind_s(e->kind),
+				ms_diag_failure_kind_s(e->failure_kind),
+				ms_diag_error_phase_s(e->phase),
+				boundary,
+				ms_op_reason_s(e->reason),
+				e->frame_id, e->doc_id, e->source_id,
+				e->realm_id, e->heap_id, e->ctx_gen,
 				e->op_id, e->request_id,
 				e->name_id, ms_error_text_status_s(e->name_status), enc_name,
 				e->message_id, ms_error_text_status_s(e->message_status),
 				msg_hash, msg_len, msg_trunc, enc_msg);
 
-			if (n + (long)strlen(line) >= cap - MS_ERR_FOOTER_RESERVE) {
+			if (line_len < 0 || line_len >= (int)sizeof(line) ||
+			n + line_len >= cap - MS_ERR_FOOTER_RESERVE) {
 				truncated = 1;
 				break;
 			}

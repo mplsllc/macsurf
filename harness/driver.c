@@ -1,3 +1,4 @@
+extern void macsurf_qjs_pump_all(void);
 /* S0 harness driver — reconvert dom_string UAF repro.
  *
  * Sequence: parse a small HTML doc -> build the box tree (like the initial
@@ -682,6 +683,208 @@ static JSValue t93_job_mark_b(JSContext *ctx, int argc, JSValueConst *argv)
 	return JS_UNDEFINED;
 }
 
+extern void macsurf_qjs_pump_all(void);
+
+/* E3 uses real engine failure boundaries, in a fresh process so text dictionaries
+ * and aggregate counters have a known starting point. */
+#define E3_CHECK(x) do { if (!(x)) { fprintf(stderr, "FAIL: E3 line %d: %s\n", __LINE__, #x); return 1; } } while (0)
+static unsigned long e3_exec(struct jsthread *t, const char *code,
+	unsigned long source, int expected, int module)
+{
+	struct ms_diag_scope s;
+	unsigned char ok;
+	ms_diag_script_enter(&s, 700, module ? MS_SCRIPT_MODULE : MS_SCRIPT_CLASSIC, "e3");
+	ms_diag_script_set_provenance(&s, 701, 702);
+	ms_diag_script_set_source_id(&s, source);
+	ok = module ? js_exec_module(t, (const unsigned char *)code, strlen(code), "e3-module") :
+		js_exec(t, (const unsigned char *)code, strlen(code), "e3-script");
+	ms_diag_script_leave(&s, ok ? MS_SCR_DONE : MS_SCR_RUN_FAIL);
+	if (ok != expected) return 0;
+	return s.my_id;
+}
+
+extern int macos9_js_fetch_test_deliver(JSContext *, JSValueConst, unsigned long, unsigned long);
+
+static int e3_count(const char *text, const char *key)
+{
+	int count = 0;
+	while ((text = strstr(text, key)) != NULL) { count++; text += strlen(key); }
+	return count;
+}
+
+static int e3_test(void)
+{
+	struct jsheap *h = NULL;
+	struct jsthread *t = NULL;
+	struct ms_diag_scope a, b;
+	struct ms_diag_error_provenance ep;
+	char page[32768], again[32768], scripts[32768], needle[160];
+	char text[120], tiny[300], medium[1400];
+	unsigned long sid, timer_sid, source, id, after;
+	int i;
+	struct qjs_realm_diag realm;
+	JSValue xhr;
+	extern void macsurf_qjs_pump_all(void);
+
+	fprintf(stderr, "=== Test 102f: JavaScript error provenance ===\n");
+	ms_diag_script_enter(&a, 700, MS_SCRIPT_CLASSIC, "outer");
+	ms_diag_script_set_source_id(&a, 101);
+	ms_diag_script_enter(&b, 700, MS_SCRIPT_CLASSIC, "inner");
+	E3_CHECK(ms_diag_cur_source() == 0);
+	ms_diag_script_set_source_id(&b, 202);
+	ms_diag_script_leave(&b, MS_SCR_DONE);
+	E3_CHECK(ms_diag_cur_source() == 101);
+	ms_diag_script_leave(&a, MS_SCR_DONE);
+	E3_CHECK(ms_diag_cur_source() == 0);
+
+	E3_CHECK(js_newheap(20000, &h) == NSERROR_OK);
+	E3_CHECK(js_newthread(h, NULL, NULL, &t) == NSERROR_OK);
+	sid = e3_exec(t, "var touched=0, stackReads=0;", 103, 1, 0);
+	E3_CHECK(sid != 0);
+	E3_CHECK(e3_exec(t, "var = ;", 104, 0, 0));
+	E3_CHECK(e3_exec(t, "throw 123;", 105, 0, 0));
+	E3_CHECK(e3_exec(t, "throw 'string';", 106, 0, 0));
+	E3_CHECK(e3_exec(t, "throw {};", 107, 0, 0));
+	E3_CHECK(e3_exec(t, "throw {toString:function(){touched++;return 'boom';},get stack(){stackReads++;return 'stack';}};", 108, 0, 0));
+	E3_CHECK(e3_exec(t, "if(touched!==1||stackReads!==1)throw 'extra observation';", 109, 1, 0));
+	E3_CHECK(e3_exec(t, "throw new Proxy({},{get:function(o,k){if(k==='stack'){stackReads++;return 'stack';}if(k==='toString')return function(){touched++;return 'proxy';};}});", 110, 0, 0));
+	E3_CHECK(e3_exec(t, "if(touched!==2||stackReads!==2)throw 'extra proxy observation';", 111, 1, 0));
+	E3_CHECK(e3_exec(t, "Promise.resolve(1); Promise.reject('rejected');", 112, 1, 0));
+	E3_CHECK(e3_exec(t, "Promise.resolve().then(function(){throw 'job rejected';});", 113, 1, 0));
+	E3_CHECK(e3_exec(t, "export var = ;", 114, 0, 1));
+	E3_CHECK(e3_exec(t, "throw 'module runtime';", 115, 1, 1));
+	(void)macsurf_diag_serialize_errors_since(page, sizeof(page), 0, 32);
+	E3_CHECK(strstr(page, "failure=parse_failed phase=compile boundary=script") != NULL);
+	E3_CHECK(strstr(page, "failure=runtime_failed phase=execute boundary=script") != NULL);
+	E3_CHECK(strstr(page, "frame=701 doc=702 source=104 realm=0") == NULL);
+	E3_CHECK(strstr(page, "failure=parse_failed phase=compile boundary=module") != NULL);
+	/* QuickJS module evaluation returns a Promise; rejection is separate. */
+	E3_CHECK(strstr(page, "err=1 nav=700 script=4") != NULL);
+	(void)macsurf_diag_serialize_scripts(scripts, sizeof(scripts));
+	E3_CHECK(strstr(scripts, "state=compile_fail reason=compile_failed error=1") != NULL);
+	E3_CHECK(strstr(scripts, "state=run_fail reason=runtime_failed error=2") != NULL);
+	snprintf(needle, sizeof(needle), "script=%lu ", sid);
+	E3_CHECK(strstr(scripts, needle) != NULL);
+
+	source = ms_diag_source_create(700, 701, 702);
+	timer_sid = e3_exec(t, "setTimeout(function(){throw {toString:function(){touched++;return 'timer';},get stack(){stackReads++;return 'stack';}};},0);", source, 1, 0);
+	E3_CHECK(timer_sid != 0);
+	(void)macsurf_diag_serialize_scripts(scripts, sizeof(scripts));
+	E3_CHECK(strstr(scripts, "error=0") != NULL);
+	for (i = 0; i < 140; i++) {
+		ms_diag_source_create(700, 701, 702);
+		ms_diag_script_enter(&a, 700, MS_SCRIPT_CLASSIC, "rollover");
+		ms_diag_script_set_source_id(&a, 500 + i);
+		ms_diag_script_leave(&a, MS_SCR_DONE);
+	}
+	for (i = 0; i < 5; i++) macsurf_qjs_pump_all();
+	E3_CHECK(e3_exec(t, "if(touched!==3||stackReads!==3)throw 'timer observation';", 116, 1, 0));
+	(void)macsurf_diag_serialize_errors_since(page, sizeof(page), 0, 32);
+	E3_CHECK(strstr(page, "failure=handler_failed phase=callback boundary=timer") != NULL);
+	snprintf(needle, sizeof(needle), "script=%lu task=0", timer_sid);
+	E3_CHECK(strstr(page, needle) == NULL);
+	snprintf(needle, sizeof(needle), "script=%lu task=", timer_sid);
+	E3_CHECK(strstr(page, needle) != NULL);
+	snprintf(needle, sizeof(needle), "source=%lu realm=", source);
+	E3_CHECK(strstr(page, needle) != NULL);
+	(void)macsurf_diag_serialize_javascript(again, sizeof(again));
+	E3_CHECK(e3_count(page, "failure=parse_failed") == 2);
+	E3_CHECK(e3_count(page, "failure=runtime_failed") == 5);
+	E3_CHECK(e3_count(page, "failure=promise_rejection") == 4);
+	E3_CHECK(e3_count(page, "failure=handler_failed") == 1);
+	E3_CHECK(strstr(again, "kind=parse_failed count=2") != NULL);
+	E3_CHECK(strstr(again, "kind=runtime_failed count=5") != NULL);
+	E3_CHECK(strstr(again, "kind=promise_rejection count=4") != NULL);
+	E3_CHECK(strstr(again, "kind=handler_failed count=1") != NULL);
+	/* Both shims swallow exceptions. XHR previously never inspected e. */
+	E3_CHECK(e3_exec(t, "var xhrTouched=0; var e3xhr=new XMLHttpRequest(); e3xhr.onload=function(){throw {get message(){xhrTouched++;},toString:function(){xhrTouched++;return 'xhr';}};}; window.addEventListener('e3',function(){throw 'event';}); window.dispatchEvent({type:'e3'});", 117, 1, 0));
+	for (i = 0; i < macsurf_qjs_realm_count(); i++) {
+		if (macsurf_qjs_realm_get(i, &realm) && realm.state == QJS_REALM_LIVE && realm.ctx != NULL) break;
+	}
+	E3_CHECK(i < macsurf_qjs_realm_count());
+	xhr = JS_Eval(realm.ctx, "e3xhr", 5, "test", JS_EVAL_TYPE_GLOBAL);
+	E3_CHECK(macos9_js_fetch_test_deliver(realm.ctx, xhr, 117, timer_sid));
+	JS_FreeValue(realm.ctx, xhr);
+	E3_CHECK(e3_exec(t, "if(xhrTouched!==0)throw 'XHR coerced exception';", 118, 1, 0));
+	(void)macsurf_diag_serialize_errors_since(page, sizeof(page), 0, 32);
+	E3_CHECK(strstr(page, "failure=handler_failed phase=callback boundary=xhr") != NULL);
+	E3_CHECK(strstr(page, "failure=handler_failed phase=callback boundary=event") != NULL);
+	E3_CHECK(strstr(page, "source=117 realm=") != NULL);
+	js_destroythread(t);
+	js_destroyheap(h);
+	(void)macsurf_diag_serialize_errors_since(again, sizeof(again), 0, 32);
+	E3_CHECK(strcmp(page, again) == 0);
+
+	/* Max-width scalars and fully percent-encoded retained text exceed 1024. */
+	memset(&ep, 0, sizeof(ep));
+	ep.nav_id = ep.frame_id = ep.doc_id = ep.source_id = ep.script_id =
+		ep.task_id = ep.realm_id = ep.heap_id = ep.ctx_gen = 4294967295UL;
+	memset(text, '%', sizeof(text)-1); text[sizeof(text)-1] = 0;
+	id = ms_diag_error_record_ex(4294967295UL, 4294967295UL,
+		MS_FAIL_PROMISE_REJECTION, MS_PHASE_PROMISE, MS_BOUND_PROMISE, &ep, text, text);
+	(void)macsurf_diag_serialize_errors_since(page, sizeof(page), id-1, 1);
+	E3_CHECK(strstr(page, "message_len=119 message_truncated=0") != NULL);
+	E3_CHECK(strstr(page, "%25%25%25\n") != NULL);
+	E3_CHECK(strstr(page, "truncated=0\n") != NULL);
+	(void)macsurf_diag_serialize_errors_since(tiny, sizeof(tiny), id-1, 1);
+	E3_CHECK(strstr(tiny, "returned=0\n") != NULL);
+	E3_CHECK(strstr(tiny, "truncated=1\n") != NULL);
+	snprintf(needle, sizeof(needle), "next_after=%lu\n", id-1);
+	E3_CHECK(strstr(tiny, needle) != NULL);
+	(void)macsurf_diag_serialize_errors_since(medium, sizeof(medium), id-1, 1);
+	if (strstr(medium, "returned=0\n")) E3_CHECK(strstr(medium, needle) != NULL);
+	for (i = 0; i < 150; i++) {
+		snprintf(text, sizeof(text), "distinct-%d", i);
+		id = ms_diag_error_record_ex(0, 0, MS_FAIL_RUNTIME_FAILED,
+			MS_PHASE_EXECUTE, MS_BOUND_SCRIPT, &ep, text, text);
+	}
+	(void)macsurf_diag_serialize_errors_since(page, sizeof(page), id-1, 1);
+	E3_CHECK(strstr(page, "name_status=dropped") != NULL);
+	E3_CHECK(strstr(page, "message_status=dropped") != NULL);
+	E3_CHECK(strstr(page, "source=4294967295") != NULL);
+	after = id - 128;
+	while (after < id) {
+		unsigned long next;
+		(void)macsurf_diag_serialize_errors_since(page, sizeof(page), after, 7);
+		(void)macsurf_diag_serialize_errors_since(again, sizeof(again), after, 7);
+		E3_CHECK(strcmp(page, again) == 0);
+		E3_CHECK(strstr(page, "truncated=0\n") != NULL);
+		E3_CHECK(strstr(page, "lost=0\n") != NULL);
+		next = after + 7; if (next > id) next = id;
+		for (sid = after+1; sid <= next; sid++) {
+			snprintf(needle, sizeof(needle), "err=%lu ", sid);
+			E3_CHECK(strstr(page, needle) != NULL);
+		}
+		snprintf(needle, sizeof(needle), "next_after=%lu\n", next);
+		E3_CHECK(strstr(page, needle) != NULL);
+		after = next;
+	}
+	fprintf(stderr, "=== Test 102f PASS ===\n");
+	return 0;
+}
+#undef E3_CHECK
+
+static int e3_coercion_test(void)
+{
+	struct jsheap *h = NULL;
+	struct jsthread *t = NULL;
+	const char *code;
+	unsigned char ok;
+	extern void macsurf_qjs_pump_all(void);
+	if (js_newheap(20000, &h) != NSERROR_OK || js_newthread(h, NULL, NULL, &t) != NSERROR_OK) return 1;
+	code = "var touched=0,reads=0; throw {toString:function(){touched++;return 'boom';},get stack(){reads++;return 'stack';}};";
+	ok = js_exec(t, (const unsigned char *)code, strlen(code), "coercion");
+	if (ok) return 1;
+	code = "if(touched!==1||reads!==1)throw 'coercion count';setTimeout(function(){throw {toString:function(){touched++;return 'timer';},get stack(){reads++;return 'stack';}};},0);";
+	if (!js_exec(t, (const unsigned char *)code, strlen(code), "arm")) return 1;
+	macsurf_qjs_pump_all();
+	code = "if(touched!==2||reads!==2)throw 'timer coercion count';";
+	if (!js_exec(t, (const unsigned char *)code, strlen(code), "check")) return 1;
+	js_destroythread(t); js_destroyheap(h);
+	fprintf(stderr, "COERCION PASS: script=1+1 timer=1+1 (toString+stack getter)\n");
+	return 0;
+}
+
 int main(int argc, char **argv)
 {
 	char *html_src_big = build_large_doc(300);
@@ -735,6 +938,8 @@ int main(int argc, char **argv)
 	/* The full reconvert harness intentionally exercises unrelated browser
 	 * surfaces before Test 102.  Keep a focused entry point for this bounded
 	 * diagnostics-state test so it remains independently runnable. */
+	if (argc == 2 && strcmp(argv[1], "--diag-e3") == 0) return e3_test();
+	if (argc == 2 && strcmp(argv[1], "--error-coercion") == 0) return e3_coercion_test();
 	if (argc == 2 && (strcmp(argv[1], "--diag-phase2") == 0 ||
 			strcmp(argv[1], "--diag-phase3") == 0))
 		goto phase2_diag;

@@ -725,15 +725,61 @@ double macsurf_qjs_get_now(void)
  * that had drifted apart over time. */
 static void qjs_short_name(const char *name, char *out, int cap);
 
-static void qjs_log_exc(JSContext *ctx, JSValueConst exc,
-		const char *what, const char *name)
+/* Registry lookup copies scalars only; no exception properties are inspected. */
+static void qjs_error_capture_realm(JSContext *ctx,
+	struct ms_diag_error_provenance *p)
+{
+	struct qjs_realm_identity r;
+	memset(p, 0, sizeof(*p));
+	/* The registry also supplies the tuple after a callback requests navigation. */
+	(void)macsurf_qjs_realm_identity(ctx, &r);
+	{
+		p->nav_id = r.nav_id;
+		p->frame_id = r.frame_id;
+		p->doc_id = r.document_id;
+		p->realm_id = r.realm_id;
+		p->heap_id = r.heap_id;
+		p->ctx_gen = r.ctx_gen;
+	}
+	p->task_id = ms_diag_cur_task();
+}
+
+/* JS shims that already swallow listener exceptions report scalars only.
+ * In particular this function never receives or coerces the thrown value. */
+static JSValue qjs_callback_error(JSContext *ctx, JSValueConst this_val,
+	int argc, JSValueConst *argv)
+{
+	struct ms_diag_error_provenance ep, callback;
+	int boundary = MS_BOUND_EVENT;
+	(void)this_val;
+	qjs_error_capture_realm(ctx, &ep);
+	if (argc > 0 && JS_IsBool(argv[0]) && JS_ToBool(ctx, argv[0])) {
+		boundary = MS_BOUND_XHR;
+		ms_diag_error_capture_callback(&callback);
+		if (callback.realm_id == ep.realm_id && callback.ctx_gen == ep.ctx_gen &&
+			callback.task_id != 0 && callback.task_id == ep.task_id)
+			ep = callback;
+	}
+	ms_diag_js_event_hit(MS_JS_EVENT_HANDLER_FAILED);
+	(void)ms_diag_error_record_ex(0, 0, MS_FAIL_HANDLER_FAILED,
+		MS_PHASE_CALLBACK, boundary, &ep, "Error", NULL);
+	return JS_UNDEFINED;
+}
+
+static unsigned long qjs_log_exc_record(JSContext *ctx, JSValueConst exc,
+		const char *what, const char *name,
+		const struct ms_diag_error_provenance *p, int failure, int phase, int boundary)
 {
 	const char *msg;
 	JSValue stk;
 	const char *ss;
 	char sname[48];
+	unsigned long error_id = 0;
 
 	msg = JS_ToCString(ctx, exc);
+	if (p != NULL)
+		error_id = ms_diag_error_record_ex(0, 0, failure, phase, boundary,
+			p, "Error", msg);
 	macsurf_debug_log_writef("LIFE qjs %s: %s [%s]",
 			what, msg ? msg : "?",
 			name ? name : "?");
@@ -750,6 +796,14 @@ static void qjs_log_exc(JSContext *ctx, JSValueConst exc,
 		}
 	}
 	JS_FreeValue(ctx, stk);
+	return error_id;
+}
+
+static void qjs_log_exc(JSContext *ctx, JSValueConst exc,
+	const char *what, const char *name)
+{
+	(void)qjs_log_exc_record(ctx, exc, what, name, NULL,
+		MS_FAIL_NONE, MS_PHASE_NONE, MS_BOUND_NONE);
 }
 
 /* ------------------------------------------------------------------ */
@@ -1429,6 +1483,7 @@ struct qjs_timer {
 	unsigned long realm_id, frame_id, document_id, heap_id;
 	/* MacSurf Trace 1b: causal origin, captured at setTimeout registration. */
 	unsigned long origin_script_id;
+	unsigned long origin_source_id; /* E3: source_id at registration time */
 	unsigned long nav_id;
 };
 
@@ -1719,6 +1774,7 @@ static JSValue qjs_settimeout_impl(JSContext *ctx,
 	/* MacSurf Trace 1b: capture the causal origin NOW (registration time),
 	 * not at fire -- by then current_script / current_nav have moved on. */
 	t->origin_script_id = ms_diag_cur_script();
+	t->origin_source_id = ms_diag_cur_source(); /* E3 */
 	t->nav_id = ms_diag_cur_nav();
 	ms_diag_timer_arm((unsigned long)id, t->nav_id, t->origin_script_id,
 		ms_diag_cur_task(), t->ctx_gen);
@@ -1986,6 +2042,7 @@ void macsurf_qjs_run_timers(struct jscontext *ctx)
 		struct ms_diag_scope __tsk;	/* MacSurf Trace 1b */
 		unsigned long __t_nav = t->nav_id;
 		unsigned long __t_scr = t->origin_script_id;
+		struct ms_diag_error_provenance ep;
 
 		/* Revalidate: a prior callback may have cleared this timer, or
 		 * timer_alloc may have evicted+reused this slot for a different
@@ -1995,6 +2052,16 @@ void macsurf_qjs_run_timers(struct jscontext *ctx)
 		 * DIFFERENT heap's setTimeout since we snapshotted, which would make
 		 * the JS_DupValue below cross-runtime. */
 		if (!qjs_timer_owned_by(t, qctx) || t->id != due_id[k]) continue;
+
+		memset(&ep, 0, sizeof(ep));
+		ep.nav_id = t->nav_id;
+		ep.frame_id = t->frame_id;
+		ep.doc_id = t->document_id;
+		ep.source_id = t->origin_source_id;
+		ep.script_id = t->origin_script_id;
+		ep.realm_id = t->realm_id;
+		ep.heap_id = t->heap_id;
+		ep.ctx_gen = t->ctx_gen;
 
 		/* #265 - a timer callback is its own JS execution burst: clear the
 		 * settle-once geometry flag so its first read settles fresh. Two
@@ -2049,6 +2116,7 @@ void macsurf_qjs_run_timers(struct jscontext *ctx)
 		this_obj = JS_GetGlobalObject(qctx);
 		ms_diag_task_enter(&__tsk, MS_TASK_TIMER, __t_nav, __t_scr,
 			0, (const char *) 0);
+		ep.task_id = ms_diag_cur_task();
 		ms_diag_timer_state((unsigned long)due_id[k], MS_TIMER_FIRING);
 		ret = JS_Call(qctx, fn, this_obj, call_nargs, call_args);
 		ms_diag_timer_state((unsigned long)due_id[k], MS_TIMER_FIRED);
@@ -2065,7 +2133,8 @@ void macsurf_qjs_run_timers(struct jscontext *ctx)
 		JS_FreeValue(qctx, this_obj);
 		if (JS_IsException(ret)) {
 			JSValue exc = JS_GetException(qctx);
-			qjs_log_exc(qctx, exc, "timer exc", "setTimeout");
+			(void)qjs_log_exc_record(qctx, exc, "timer exc", "setTimeout",
+				&ep, MS_FAIL_HANDLER_FAILED, MS_PHASE_CALLBACK, MS_BOUND_TIMER);
 			JS_FreeValue(qctx, exc);
 			/* Deadline-abort of a still-live (repeating) timer: kill
 			 * it so the rogue interval can never re-freeze the UI. */
@@ -5926,13 +5995,13 @@ static void qjs_el_install_js_helpers(JSContext *ctx, JSValue proto)
 		"if(ph===1?!cap:cap)continue;"
 		"}"
 		"try{a[i].call(this,ev);}"
-		"catch(e){try{console.error('LIFE jsevent listener threw ['+t+']: '+"
+		"catch(e){__msCallbackError(false);try{console.error('LIFE jsevent listener threw ['+t+']: '+"
 		"((e&&e.message)||e));}catch(_){}}}}"
 		"if(ev&&ev.__msStopNow)return true;"
 		/* on* handlers are non-capture by definition, so they must never
 		 * run in the capturing phase. */
 		"if(ph!==1&&this._H&&this._H[t]){try{this._H[t].call(this,ev);}"
-		"catch(e){try{console.error('LIFE jsevent on'+t+' threw: '+"
+		"catch(e){__msCallbackError(false);try{console.error('LIFE jsevent on'+t+' threw: '+"
 		"((e&&e.message)||e));}catch(_){}}}"
 		"return true;};"
 		/* fixes1008 (2b) - THE MISSING DOM SURFACE.
@@ -7234,7 +7303,12 @@ static void qjs_fire_dispatch(JSContext *ctx, JSValueConst obj,
 		ret = JS_Call(ctx, fn, obj, 1, (JSValueConst *)argv);
 		if (JS_IsException(ret)) {
 			JSValue ex = JS_GetException(ctx);
-			qjs_log_exc(ctx, ex, "event handler threw", what);
+			struct ms_diag_error_provenance ep;
+			qjs_error_capture_realm(ctx, &ep);
+			/* Listener registration origin is not carried by this dispatch. */
+			ms_diag_js_event_hit(MS_JS_EVENT_HANDLER_FAILED);
+			(void)qjs_log_exc_record(ctx, ex, "event handler threw", what,
+				&ep, MS_FAIL_HANDLER_FAILED, MS_PHASE_CALLBACK, MS_BOUND_EVENT);
 			JS_FreeValue(ctx, ex);
 		}
 		JS_FreeValue(ctx, ret);
@@ -11334,6 +11408,7 @@ static void register_browser_globals(JSContext *ctx)
 	qjs_set_func(ctx, global, "__msOperationBegin", qjs_ms_operation_begin, 1);
 	qjs_set_func(ctx, global, "__msOperationEvent", qjs_ms_operation_event, 7);
 	qjs_set_func(ctx, global, "__msErrorEvent", qjs_ms_error_event, 7);
+	qjs_set_func(ctx, global, "__msCallbackError", qjs_callback_error, 1);
 	qjs_set_func(ctx, global, "__msCapability", qjs_ms_capability, 5);
 	/* localStorage persistence backend, consumed by the _Storage shim
 	 * below (register_browser_globals runs per navigation, so the saved
@@ -12179,7 +12254,7 @@ static void register_browser_globals(JSContext *ctx)
 			   "t==='pageshow'){"
 				"try{if(typeof __msLife==='function')"
 					"__msLife('winevt type='+t+' n='+n);}catch(_){}}"
-			"if(arr)arr.forEach(function(f){try{f(ev);}catch(e){"
+			"if(arr)arr.forEach(function(f){try{f(ev);}catch(e){__msCallbackError(false);"
 				"try{if(typeof __msLife==='function')"
 					"__msLife('winevt THREW type='+t+': '+"
 						"((e&&e.message)||e));}catch(_){}"
@@ -12473,9 +12548,9 @@ static void register_browser_globals(JSContext *ctx)
 		"};"
 		"XMLHttpRequest.prototype._fire=function(type){"
 			"var t='on'+type;"
-			"if(typeof this[t]==='function'){try{this[t]();}catch(e){}}"
+			"if(typeof this[t]==='function'){try{this[t]();}catch(e){__msCallbackError(true);}}"
 			"var a=this._listeners[type];"
-			"if(a)for(var i=0;i<a.length;i++){try{a[i]();}catch(e){}}"
+			"if(a)for(var i=0;i<a.length;i++){try{a[i]();}catch(e){__msCallbackError(true);}}"
 		"};"
 		"XMLHttpRequest.prototype.__onNativeComplete=function(){"
 			"var ok=this.status>=200&&this.status<300;"
@@ -15173,10 +15248,18 @@ static void qjs_promise_rejection_tracker(JSContext *ctx, JSValueConst promise,
 		JSValueConst reason, bool is_handled, void *opaque)
 {
 	const char *msg;
+	struct ms_diag_error_provenance ep;
 	(void)promise; (void)opaque;
 	if (is_handled) return;
 	ms_diag_js_event_hit(MS_JS_EVENT_PROMISE_REJECTION);
+	/* Tracker reports rejection now; no origin is exposed for queued jobs. */
+	qjs_error_capture_realm(ctx, &ep);
 	msg = JS_ToCString(ctx, reason);
+	/* Source/script are unavailable; the tracker supplies only the realm. */
+	ms_diag_error_record_ex(0, 0,
+		MS_FAIL_PROMISE_REJECTION, MS_PHASE_PROMISE, MS_BOUND_PROMISE,
+		&ep,
+		"UnhandledRejection", msg ? msg : "(no reason)");
 	macsurf_debug_log_writef("LIFE js unhandled rejection: %s",
 			msg ? msg : "(no reason)");
 	if (msg) JS_FreeCString(ctx, msg);
@@ -16712,10 +16795,17 @@ unsigned char js_exec(struct jsthread *thread,
 		unsigned long err_id = 0;
 		unsigned long cur_sid = ms_diag_cur_script();
 		JSValue exc = JS_GetException(thread->ctx);
-		const char *estr = JS_ToCString(thread->ctx, exc);
+		const char *estr;
+		struct ms_diag_error_provenance ep;
 
-		err_id = ms_diag_error_record(0, 0, MS_ERR_JS_EXCEPTION,
-			0, MS_OPR_NONE,
+		ms_diag_error_capture_script(&ep);
+		estr = JS_ToCString(thread->ctx, exc);
+
+		err_id = ms_diag_error_record_ex(0, 0,
+			compile_failed ? MS_FAIL_PARSE_FAILED : MS_FAIL_RUNTIME_FAILED,
+			compile_failed ? MS_PHASE_COMPILE : MS_PHASE_EXECUTE,
+			MS_BOUND_SCRIPT,
+			&ep,
 			compile_failed ? "SyntaxError" : "Error",
 			estr ? estr : (compile_failed ? "Syntax error" : "Runtime error"));
 		if (cur_sid != 0) {
@@ -16851,14 +16941,16 @@ unsigned char js_exec_module(struct jsthread *thread,
 			name, src, txtlen);
 	}
 
-	/* Compile and execute as a module in one call (same pattern
-	 * as js_exec's JS_EVAL_TYPE_GLOBAL).  JS_EVAL_TYPE_MODULE
-	 * compiles with strict mode + import/export, resolves
-	 * dependencies via the loader callback, and executes. */
+	/* Preserve the compile/execute boundary just as for classic scripts.
+	 * QuickJS can return a Promise for module evaluation: its rejection
+	 * is a separate tracker occurrence, not a synchronous execution failure. */
 	{
 		extern double macos9_micros(void);
 		double t0 = macos9_micros();
 		long mus;
+		long compile_us;
+		int compile_failed;
+		JSValue compiled;
 		unsigned long cur_sid = ms_diag_cur_script();
 		struct qjs_realm_identity r_id;
 
@@ -16866,38 +16958,46 @@ unsigned char js_exec_module(struct jsthread *thread,
 			ms_diag_script_note_realm(cur_sid, r_id.realm_id, r_id.heap_id, r_id.ctx_gen);
 		}
 
-		val = JS_Eval(ctx, src, txtlen,
+		compiled = JS_Eval(ctx, src, txtlen,
 			name ? name : "<module>",
-			JS_EVAL_TYPE_MODULE);
+			JS_EVAL_TYPE_MODULE | JS_EVAL_FLAG_COMPILE_ONLY);
+		compile_us = (long)(macos9_micros() - t0);
+		compile_failed = JS_IsException(compiled);
+		if (compile_failed) {
+			val = compiled;
+			ms_diag_js_event_hit(MS_JS_EVENT_PARSE_FAILED);
+		} else {
+			ms_diag_script_note_compile(cur_sid, MS_COMPILE_OK, compile_us, 0);
+			val = JS_EvalFunction(ctx, compiled);
+			if (JS_IsException(val))
+				ms_diag_js_event_hit(MS_JS_EVENT_RUNTIME_FAILED);
+		}
 		free(src);
 
 		ok = !JS_IsException(val);
 		mus = (long)(macos9_micros() - t0);
-		/* R1.3 - a module is compiled, resolved and executed in the one
-		 * JS_Eval call, so a failure cannot be attributed to a phase
-		 * here; the whole time lands in run_us. */
+		/* Keep the existing census totals; the execution ledger has split timings. */
 		qjs_census_note(name, (long)txtlen, SCRIPT_CENSUS_MODULE,
 				ok ? 1 : 0, ok ? 1 : 0, 0, mus);
 		if (!ok) {
-			unsigned long err_id = 0;
+			unsigned long err_id;
 			JSValue exc = JS_GetException(ctx);
-			const char *estr = JS_ToCString(ctx, exc);
-
-			err_id = ms_diag_error_record(0, 0, MS_ERR_JS_EXCEPTION,
-				0, MS_OPR_NONE,
-				"ModuleError", estr ? estr : "Module error");
-			if (estr) JS_FreeCString(ctx, estr);
+			struct ms_diag_error_provenance ep;
+			ms_diag_error_capture_script(&ep);
+			err_id = qjs_log_exc_record(ctx, exc, "exec module err", name,
+				&ep, compile_failed ? MS_FAIL_PARSE_FAILED : MS_FAIL_RUNTIME_FAILED,
+				compile_failed ? MS_PHASE_COMPILE : MS_PHASE_EXECUTE, MS_BOUND_MODULE);
 			if (cur_sid != 0) {
-				ms_diag_script_note_compile(cur_sid, MS_COMPILE_OK, 0, 0);
-				ms_diag_script_note_execute(cur_sid, MS_EXEC_FAILED, mus, err_id);
+				if (compile_failed)
+					ms_diag_script_note_compile(cur_sid, MS_COMPILE_FAILED, compile_us, err_id);
+				else
+					ms_diag_script_note_execute(cur_sid, MS_EXEC_FAILED, mus - compile_us, err_id);
 			}
-			qjs_log_exc(ctx, exc, "exec module err",
-				name ? name : "<module>");
 			JS_FreeValue(ctx, exc);
 		} else {
 			if (cur_sid != 0) {
-				ms_diag_script_note_compile(cur_sid, MS_COMPILE_OK, 0, 0);
-				ms_diag_script_note_execute(cur_sid, MS_EXEC_OK, mus, 0);
+				ms_diag_script_note_compile(cur_sid, MS_COMPILE_OK, compile_us, 0);
+				ms_diag_script_note_execute(cur_sid, MS_EXEC_OK, mus - compile_us, 0);
 			}
 		}
 		JS_FreeValue(ctx, val);

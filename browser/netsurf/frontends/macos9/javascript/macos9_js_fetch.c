@@ -72,6 +72,7 @@
 #include "content/fetch.h"
 #include "content/macsurf_nav_seed.h"
 #include "macsurf_diag.h"
+#include "macsurf_capability.h"
 #include "content/content_protected.h"
 
 #include "macsurf_debug.h"
@@ -98,6 +99,7 @@ struct qjs_xhr_slot {
 	unsigned long nav_id;		/* MacSurf Trace: owning nav, captured at send() */
 	unsigned long last_request_id;	/* previous hop's request_id, or 0 */
 	unsigned long origin_script_id;	/* MacSurf Trace 1b: script that called send() */
+	unsigned long origin_source_id;	/* E3: source_id at send() time */
 	unsigned long operation_id;	/* browser-operation attempt, before wire req */
 	char method[8];			/* upper-cased, NUL-terminated */
 	char *body;			/* owned copy of the send() body, or NULL */
@@ -317,6 +319,8 @@ xhr_deliver(void *p)
 	const char *ss = NULL;
 	struct qjs_realm_identity live_realm;
 	int realm_check;
+	struct ms_diag_error_provenance ep, previous_ep;
+	unsigned long error_op, error_req;
 
 	if (s == NULL || !s->used) return;
 	/* sendBeacon slots are fire-and-forget: nothing to deliver, and no
@@ -367,6 +371,18 @@ xhr_deliver(void *p)
 		return;
 	}
 
+	error_op = s->operation_id;
+	error_req = s->last_request_id;
+	memset(&ep, 0, sizeof(ep));
+	ep.nav_id = s->queued_realm.nav_id;
+	ep.frame_id = s->queued_realm.frame_id;
+	ep.doc_id = s->queued_realm.document_id;
+	ep.source_id = s->origin_source_id;
+	ep.script_id = s->origin_script_id;
+	ep.realm_id = s->queued_realm.realm_id;
+	ep.heap_id = s->queued_realm.heap_id;
+	ep.ctx_gen = s->queued_realm.ctx_gen;
+
 	body = (s->resp_buf != NULL) ? s->resp_buf : "";
 	hdrs = (s->hdr_buf != NULL) ? s->hdr_buf : "";
 	url_str = (s->url != NULL) ? nsurl_access(s->url) : "";
@@ -402,7 +418,12 @@ xhr_deliver(void *p)
 				macsurf_qjs_default_timeout_ms());
 		ms_diag_task_enter(&__xtsk, MS_TASK_XHR, s->nav_id,
 			s->origin_script_id, s->last_request_id, (const char *) 0);
+		ep.task_id = ms_diag_cur_task();
+		ms_diag_error_callback_swap(&ep, &previous_ep);
 		ret = JS_Call(ctx, fn, s->xhr_obj, 0, NULL);
+		ms_diag_error_callback_swap(&previous_ep, NULL);
+		if (JS_IsException(ret))
+			ms_diag_js_event_hit(MS_JS_EVENT_HANDLER_FAILED);
 		ms_diag_task_leave(&__xtsk);
 		macsurf_qjs_deadline_pop(prevdl);
 		if (JS_IsException(ret)) {
@@ -410,9 +431,11 @@ xhr_deliver(void *p)
 			msg = JS_ToCString(ctx, exc);
 			macsurf_debug_log_writef(
 					"LIFE qjs xhr deliver threw: %s url=%s",
-			msg ? msg : "?", url_str);
-			ms_diag_error_record(s->operation_id, s->last_request_id,
-				MS_ERR_CALLBACK_FAILURE, MS_OP_DELIVER, MS_OPR_NONE,
+				msg ? msg : "?", url_str);
+			/* E3: upgrade to record_ex with frozen queued-realm provenance. */
+			ms_diag_error_record_ex(error_op, error_req,
+				MS_FAIL_HANDLER_FAILED, MS_PHASE_CALLBACK, MS_BOUND_XHR,
+				&ep,
 				"Exception", msg);
 			if (msg) JS_FreeCString(ctx, msg);
 			stk = JS_GetPropertyStr(ctx, exc, "stack");
@@ -470,6 +493,29 @@ xhr_deliver(void *p)
 
 	xhr_slot_release(s);
 }
+
+#ifdef MACSURF_RECONVERT_TEST_HOOK
+/* Replace only transport in the Linux regression; run the real delivery. */
+int macos9_js_fetch_test_deliver(JSContext *ctx, JSValueConst xhr,
+	unsigned long source, unsigned long script)
+{
+	struct qjs_xhr_slot *s = xhr_slot_alloc();
+	if (s == NULL) return 0;
+	if (!macsurf_qjs_realm_identity(ctx, &s->queued_realm)) {
+		xhr_slot_wipe(s);
+		return 0;
+	}
+	s->ctx = ctx;
+	s->xhr_obj = JS_DupValue(ctx, xhr);
+	s->nav_id = s->queued_realm.nav_id;
+	s->origin_source_id = source;
+	s->origin_script_id = script;
+	s->status = 200;
+	xhr_deliver(s);
+	return 1;
+}
+#endif
+
 
 /* ---- redirect target resolution + method downgrade ---- */
 
@@ -836,6 +882,7 @@ qjs_xhr_native_send(JSContext *ctx, JSValueConst this_val,
 	s->nav_id = xhr_realm_nav_id(ctx);	/* MacSurf Trace 1a */
 	s->last_request_id = 0;
 	s->origin_script_id = ms_diag_cur_script();	/* MacSurf Trace 1b */
+	s->origin_source_id = ms_diag_cur_source();	/* E3 */
 	s->operation_id = operation_id;
 	ms_diag_realm_invariant_record(MS_RI_DEFERRED_CALLBACK, MS_RIS_QUEUED,
 		s->queued_realm.realm_id, s->queued_realm.frame_id,

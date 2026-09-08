@@ -196,6 +196,7 @@ enum ms_source_reason {
 /* Saved outer scope; scoped push/pop, NOT bare assignment. */
 struct ms_diag_scope {
 	unsigned long prev_script;
+	unsigned long prev_source;
 	unsigned long prev_task;
 	unsigned long my_id;		/* this scope's script or task id, 0 if inherited */
 };
@@ -319,13 +320,56 @@ enum ms_error_text_status {
 	MS_ERR_TEXT_RETAINED,
 	MS_ERR_TEXT_DROPPED
 };
+
+/* E3: frozen scalar provenance for a JS failure occurrence. */
+enum ms_diag_failure_kind {
+	MS_FAIL_NONE = 0,
+	MS_FAIL_PARSE_FAILED,
+	MS_FAIL_RUNTIME_FAILED,
+	MS_FAIL_PROMISE_REJECTION,
+	MS_FAIL_HANDLER_FAILED
+};
+enum ms_diag_error_phase {
+	MS_PHASE_NONE = 0,
+	MS_PHASE_COMPILE,
+	MS_PHASE_EXECUTE,
+	MS_PHASE_CALLBACK,
+	MS_PHASE_PROMISE
+};
+enum ms_diag_error_boundary {
+	MS_BOUND_NONE = 0,
+	MS_BOUND_SCRIPT,
+	MS_BOUND_TIMER,
+	MS_BOUND_XHR,
+	MS_BOUND_EVENT,
+	MS_BOUND_PROMISE,
+	MS_BOUND_API,
+	MS_BOUND_MODULE
+};
+const char *ms_diag_failure_kind_s(int v);
+const char *ms_diag_error_phase_s(int v);
+const char *ms_diag_error_boundary_s(int v);
 const char *ms_error_text_status_s(int v);
 
+unsigned long ms_diag_cur_source(void);
 unsigned long ms_diag_operation_begin(int kind, int quality);
 void ms_diag_operation_record(unsigned long op_id, int kind, int phase,
 	int result, int reason, int quality, unsigned long request_id);
 unsigned long ms_diag_error_record(unsigned long op_id, unsigned long request_id,
 	int kind, int boundary, int reason, const char *name, const char *message);
+/* Frozen before any exception coercion. Zero means unavailable, never inferred. */
+struct ms_diag_error_provenance {
+	unsigned long nav_id, frame_id, doc_id, source_id, script_id, task_id;
+	unsigned long realm_id, heap_id, ctx_gen;
+};
+void ms_diag_error_callback_swap(const struct ms_diag_error_provenance *next,
+	struct ms_diag_error_provenance *previous);
+void ms_diag_error_capture_callback(struct ms_diag_error_provenance *p);
+void ms_diag_error_capture_script(struct ms_diag_error_provenance *p);
+unsigned long ms_diag_error_record_ex(unsigned long op_id,
+	unsigned long request_id, int failure_kind, int phase, int boundary,
+	const struct ms_diag_error_provenance *p,
+	const char *name, const char *message);
 long macsurf_diag_serialize_operations(char *buf, long cap);
 long macsurf_diag_serialize_errors(char *buf, long cap);
 long macsurf_diag_serialize_errors_since(char *buf, long cap,
