@@ -43,3 +43,13 @@ safe engine continuation hook is recorded with `async=0`.
 Deferred surfaces: requestAnimationFrame, observers, fetch promise jobs,
 module continuations, window `on*`, and script load/error callbacks require
 their own accepted-registration boundary and are not inferred by E4.
+
+Hardware capacity observation (G3, artifact 1424): after loading Hackaday and
+then navigating to a lightweight page to regain AppleEvent responsiveness, the
+ledger reported `records_total=230`, `capacity=128`, `first_available=103`,
+`latest=230`, and `overwritten=102`. Of the retained rows, 75 were event
+registrations and 53 were timers. The post-quiesce dump was 16010 bytes.
+Rollover is therefore expected on substantial pages; 128 remains the current
+capacity because explicit loss is reported and the retained tail remained
+queryable. Revisit capacity only after broader workload evidence and a G3
+memory tradeoff review.
