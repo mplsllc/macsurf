@@ -132,7 +132,7 @@ reconvert_harness: $(ALL_OBJ)
 
 -include $(ALL_OBJ:.o=.d)
 
-.PHONY: all run clean check check-c89 check-macdefault diag-phase2 diag-phase3 webp-test
+.PHONY: all run clean check check-c89 check-macdefault diag-phase2 diag-phase3 diag-e4 webp-test
 all: reconvert_harness
 
 diag-phase2: reconvert_harness
@@ -140,6 +140,9 @@ diag-phase2: reconvert_harness
 
 diag-e3: reconvert_harness
 	ASAN_OPTIONS=detect_leaks=0 ./reconvert_harness --diag-e3
+
+diag-e4: reconvert_harness
+	ASAN_OPTIONS=detect_leaks=0 ./reconvert_harness --diag-e4
 	ASAN_OPTIONS=detect_leaks=0 ./reconvert_harness --error-coercion
 
 diag-phase3: reconvert_harness

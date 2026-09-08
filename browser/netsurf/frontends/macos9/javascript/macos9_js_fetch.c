@@ -100,6 +100,7 @@ struct qjs_xhr_slot {
 	unsigned long last_request_id;	/* previous hop's request_id, or 0 */
 	unsigned long origin_script_id;	/* MacSurf Trace 1b: script that called send() */
 	unsigned long origin_source_id;	/* E3: source_id at send() time */
+	unsigned long async_id;
 	unsigned long operation_id;	/* browser-operation attempt, before wire req */
 	char method[8];			/* upper-cased, NUL-terminated */
 	char *body;			/* owned copy of the send() body, or NULL */
@@ -320,7 +321,7 @@ xhr_deliver(void *p)
 	struct qjs_realm_identity live_realm;
 	int realm_check;
 	struct ms_diag_error_provenance ep, previous_ep;
-	unsigned long error_op, error_req;
+	unsigned long error_op, error_req, async_id, previous_async;
 
 	if (s == NULL || !s->used) return;
 	/* sendBeacon slots are fire-and-forget: nothing to deliver, and no
@@ -336,6 +337,7 @@ xhr_deliver(void *p)
 	}
 	ctx = s->ctx;
 	if (ctx == NULL) {
+		ms_diag_async_state(s->async_id, MS_ASYNC_ABANDONED);
 		ms_diag_operation_record(s->operation_id, MS_OP_XHR, MS_OP_DELIVER,
 			MS_OP_DECLINE, MS_OPR_REALM_GONE, MS_ANSWER_NATIVE,
 			s->last_request_id);
@@ -367,12 +369,14 @@ xhr_deliver(void *p)
 		ms_diag_operation_record(s->operation_id, MS_OP_XHR, MS_OP_DELIVER,
 			MS_OP_DECLINE, MS_OPR_REALM_GONE, MS_ANSWER_NATIVE,
 			s->last_request_id);
+		ms_diag_async_state(s->async_id, MS_ASYNC_ABANDONED);
 		xhr_slot_release(s);
 		return;
 	}
 
 	error_op = s->operation_id;
 	error_req = s->last_request_id;
+	async_id = s->async_id;
 	memset(&ep, 0, sizeof(ep));
 	ep.nav_id = s->queued_realm.nav_id;
 	ep.frame_id = s->queued_realm.frame_id;
@@ -382,6 +386,7 @@ xhr_deliver(void *p)
 	ep.realm_id = s->queued_realm.realm_id;
 	ep.heap_id = s->queued_realm.heap_id;
 	ep.ctx_gen = s->queued_realm.ctx_gen;
+	ep.async_id = async_id;
 
 	body = (s->resp_buf != NULL) ? s->resp_buf : "";
 	hdrs = (s->hdr_buf != NULL) ? s->hdr_buf : "";
@@ -418,6 +423,8 @@ xhr_deliver(void *p)
 				macsurf_qjs_default_timeout_ms());
 		ms_diag_task_enter(&__xtsk, MS_TASK_XHR, s->nav_id,
 			s->origin_script_id, s->last_request_id, (const char *) 0);
+		ms_diag_async_swap(async_id, &previous_async);
+		ms_diag_async_state(async_id, MS_ASYNC_FIRING);
 		ep.task_id = ms_diag_cur_task();
 		ms_diag_error_callback_swap(&ep, &previous_ep);
 		ret = JS_Call(ctx, fn, s->xhr_obj, 0, NULL);
@@ -425,6 +432,8 @@ xhr_deliver(void *p)
 		if (JS_IsException(ret))
 			ms_diag_js_event_hit(MS_JS_EVENT_HANDLER_FAILED);
 		ms_diag_task_leave(&__xtsk);
+		ms_diag_async_state(async_id, MS_ASYNC_FIRED);
+		ms_diag_async_swap(previous_async, NULL);
 		macsurf_qjs_deadline_pop(prevdl);
 		if (JS_IsException(ret)) {
 			exc = JS_GetException(ctx);
@@ -492,6 +501,7 @@ xhr_deliver(void *p)
 		MS_ANSWER_NATIVE, s->last_request_id);
 
 	xhr_slot_release(s);
+	ms_diag_async_state(async_id, MS_ASYNC_RETIRED);
 }
 
 #ifdef MACSURF_RECONVERT_TEST_HOOK
@@ -510,6 +520,16 @@ int macos9_js_fetch_test_deliver(JSContext *ctx, JSValueConst xhr,
 	s->nav_id = s->queued_realm.nav_id;
 	s->origin_source_id = source;
 	s->origin_script_id = script;
+	{
+		struct ms_diag_error_provenance ap;
+		memset(&ap, 0, sizeof(ap));
+		ap.nav_id = s->nav_id; ap.frame_id = s->queued_realm.frame_id;
+		ap.doc_id = s->queued_realm.document_id; ap.source_id = source;
+		ap.script_id = script; ap.realm_id = s->queued_realm.realm_id;
+		ap.heap_id = s->queued_realm.heap_id; ap.ctx_gen = s->queued_realm.ctx_gen;
+		s->async_id = ms_diag_async_register(MS_ASYNC_XHR, &ap);
+		ms_diag_async_state(s->async_id, MS_ASYNC_QUEUED);
+	}
 	s->status = 200;
 	xhr_deliver(s);
 	return 1;
@@ -883,6 +903,17 @@ qjs_xhr_native_send(JSContext *ctx, JSValueConst this_val,
 	s->last_request_id = 0;
 	s->origin_script_id = ms_diag_cur_script();	/* MacSurf Trace 1b */
 	s->origin_source_id = ms_diag_cur_source();	/* E3 */
+	{
+		struct ms_diag_error_provenance ap;
+		memset(&ap, 0, sizeof(ap));
+		ap.nav_id = s->nav_id; ap.frame_id = s->queued_realm.frame_id;
+		ap.doc_id = s->queued_realm.document_id;
+		ap.source_id = s->origin_source_id; ap.script_id = s->origin_script_id;
+		ap.task_id = ms_diag_cur_task(); ap.realm_id = s->queued_realm.realm_id;
+		ap.heap_id = s->queued_realm.heap_id; ap.ctx_gen = s->queued_realm.ctx_gen;
+		s->async_id = ms_diag_async_register(MS_ASYNC_XHR, &ap);
+		ms_diag_async_state(s->async_id, MS_ASYNC_QUEUED);
+	}
 	s->operation_id = operation_id;
 	ms_diag_realm_invariant_record(MS_RI_DEFERRED_CALLBACK, MS_RIS_QUEUED,
 		s->queued_realm.realm_id, s->queued_realm.frame_id,
@@ -968,6 +999,7 @@ qjs_xhr_native_abort(JSContext *ctx, JSValueConst this_val,
 	JS_ToInt32(ctx, &id, argv[0]);
 	s = xhr_slot_find(id);
 	if (s != NULL) {
+		ms_diag_async_state(s->async_id, MS_ASYNC_CANCELLED);
 		ms_diag_operation_record(s->operation_id, MS_OP_XHR, MS_OP_ABORT,
 			MS_OP_OK, MS_OPR_ABORTED, MS_ANSWER_NATIVE, s->last_request_id);
 		xhr_slot_release(s);
@@ -1144,6 +1176,7 @@ macos9_js_fetch_flush(JSContext *old_ctx)
 			ms_diag_operation_record(s_xhr_arena[i].operation_id, MS_OP_XHR,
 				MS_OP_ABORT, MS_OP_OK, MS_OPR_REALM_GONE,
 				MS_ANSWER_NATIVE, s_xhr_arena[i].last_request_id);
+			ms_diag_async_state(s_xhr_arena[i].async_id, MS_ASYNC_ABANDONED);
 			xhr_slot_release(&s_xhr_arena[i]);
 		}
 	}

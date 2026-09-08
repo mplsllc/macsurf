@@ -864,6 +864,86 @@ static int e3_test(void)
 }
 #undef E3_CHECK
 
+#define E4_CHECK(x) do { if (!(x)) { fprintf(stderr, "E4 FAIL %s:%d: %s\n", __FILE__, __LINE__, #x); return 1; } } while (0)
+static int e4_test(void)
+{
+	struct ms_diag_error_provenance p;
+	char page[32768], again[32768], needle[80];
+	unsigned long id[130], parent, child, i;
+	struct jsheap *h = NULL;
+	struct jsthread *t = NULL;
+	struct qjs_realm_diag realm;
+	JSValue xhr;
+	const char *code;
+	extern void macsurf_qjs_pump_all(void);
+	memset(&p, 0, sizeof(p));
+	p.nav_id = 7; p.frame_id = 8; p.doc_id = 9; p.source_id = 10;
+	p.script_id = 11; p.task_id = 12; p.realm_id = 13; p.heap_id = 14; p.ctx_gen = 15;
+	for (i = 0; i < 130; i++) id[i] = ms_diag_async_register(MS_ASYNC_TIMER, &p);
+	(void)macsurf_diag_serialize_async_since(page, sizeof(page), 0, 10);
+	E4_CHECK(strstr(page, "async=3 ") != NULL);
+	E4_CHECK(strstr(page, "next_after=12\n") != NULL);
+	(void)macsurf_diag_serialize_async_since(again, sizeof(again), 12, 10);
+	E4_CHECK(strstr(again, "async=13 ") != NULL);
+	ms_diag_async_state(id[129], MS_ASYNC_CANCELLED);
+	ms_diag_async_state(id[129], MS_ASYNC_FIRING);
+	(void)macsurf_diag_serialize_async_since(page, sizeof(page), id[129] - 1, 1);
+	E4_CHECK(strstr(page, "state=cancelled") != NULL);
+	ms_diag_async_swap(id[128], &parent);
+	child = ms_diag_async_register(MS_ASYNC_XHR, &p);
+	ms_diag_async_swap(parent, NULL);
+	(void)macsurf_diag_serialize_async_since(page, sizeof(page), child - 1, 1);
+	snprintf(needle, sizeof(needle), "parent_async=%lu", id[128]);
+	E4_CHECK(strstr(page, needle) != NULL);
+	(void)macsurf_diag_serialize_async_since(page, sizeof(page), child - 1, 1);
+	(void)macsurf_diag_serialize_async_since(again, sizeof(again), child - 1, 1);
+	E4_CHECK(strcmp(page, again) == 0);
+	E4_CHECK(js_newheap(20000, &h) == NSERROR_OK);
+	E4_CHECK(js_newthread(h, NULL, NULL, &t) == NSERROR_OK);
+	code = "setTimeout(function(){throw new Error('e4 timer');},0);";
+	E4_CHECK(js_exec(t, (const unsigned char *)code, strlen(code), "e4-timer"));
+	macsurf_qjs_pump_all();
+	(void)macsurf_diag_serialize_async_since(page, sizeof(page), child, 8);
+	E4_CHECK(strstr(page, "kind=timer state=retired") != NULL);
+	(void)macsurf_diag_serialize_errors(page, sizeof(page));
+	E4_CHECK(strstr(page, "boundary=timer") != NULL);
+	E4_CHECK(strstr(page, "async=0") == NULL);
+	code = "var e4xhr=new XMLHttpRequest();e4xhr.onload=function(){throw new Error('e4 xhr');};";
+	E4_CHECK(js_exec(t, (const unsigned char *)code, strlen(code), "e4-xhr"));
+	for (i = 0; i < macsurf_qjs_realm_count(); i++) {
+		if (macsurf_qjs_realm_get(i, &realm) && realm.state == QJS_REALM_LIVE && realm.ctx != NULL) break;
+	}
+	E4_CHECK(i < macsurf_qjs_realm_count());
+	xhr = JS_Eval(realm.ctx, "e4xhr", 5, "e4", JS_EVAL_TYPE_GLOBAL);
+	E4_CHECK(macos9_js_fetch_test_deliver(realm.ctx, xhr, 401, 402));
+	JS_FreeValue(realm.ctx, xhr);
+	(void)macsurf_diag_serialize_async_since(page, sizeof(page), 0, 128);
+	E4_CHECK(strstr(page, "kind=xhr state=retired") != NULL);
+	(void)macsurf_diag_serialize_errors(page, sizeof(page));
+	E4_CHECK(strstr(page, "boundary=xhr") != NULL);
+	code = "var e4el=document.createElement('div'),e4hits=[];document.body.appendChild(e4el);"
+		"function e4a(){e4hits.push('a');setTimeout(function(){e4hits.push('t');},0);}"
+		"function e4b(){e4hits.push('b');throw new Error('e4 event');}"
+		"function e4c(){e4hits.push('c');}"
+		"e4el.addEventListener('e4',e4a,false);"
+		"e4el.addEventListener('e4',e4b,true);"
+		"e4el.addEventListener('e4',e4c,false);"
+		"e4el.addEventListener('e4',e4a,false);"
+		"e4el.removeEventListener('e4',e4b,true);"
+		"e4el.__msFireLocal({type:'e4'});";
+	E4_CHECK(js_exec(t, (const unsigned char *)code, strlen(code), "e4-event"));
+	code = "if(e4hits.join('')!=='')throw new Error('e4 event alignment');";
+	E4_CHECK(js_exec(t, (const unsigned char *)code, strlen(code), "e4-event-check"));
+	macsurf_qjs_pump_all();
+	code = "if(e4hits.join('')!=='')throw new Error('e4 child timer');";
+	E4_CHECK(js_exec(t, (const unsigned char *)code, strlen(code), "e4-event-timer-check"));
+	(void)macsurf_diag_serialize_async_since(page, sizeof(page), 0, 128);
+	js_destroythread(t); js_destroyheap(h);
+	fprintf(stderr, "=== Test E4 ledger PASS ===\n");
+	return 0;
+}
+#undef E4_CHECK
+
 static int e3_coercion_test(void)
 {
 	struct jsheap *h = NULL;
@@ -939,6 +1019,7 @@ int main(int argc, char **argv)
 	 * surfaces before Test 102.  Keep a focused entry point for this bounded
 	 * diagnostics-state test so it remains independently runnable. */
 	if (argc == 2 && strcmp(argv[1], "--diag-e3") == 0) return e3_test();
+	if (argc == 2 && strcmp(argv[1], "--diag-e4") == 0) return e4_test();
 	if (argc == 2 && strcmp(argv[1], "--error-coercion") == 0) return e3_coercion_test();
 	if (argc == 2 && (strcmp(argv[1], "--diag-phase2") == 0 ||
 			strcmp(argv[1], "--diag-phase3") == 0))

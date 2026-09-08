@@ -3486,6 +3486,7 @@ static unsigned long g_err_seq;
 #define MS_ASYNC_RING_CAP 128
 struct ms_diag_async {
 	unsigned long id;
+	unsigned long parent_async;
 	struct ms_diag_error_provenance origin;
 	unsigned char kind;
 	unsigned char state;
@@ -3527,6 +3528,7 @@ unsigned long ms_diag_async_register(int kind,
 	g_async_ring_head = (g_async_ring_head + 1) % MS_ASYNC_RING_CAP;
 	memset(a, 0, sizeof(*a));
 	a->id = ++g_async_seq;
+	a->parent_async = g_cur_async;
 	if (origin != NULL) a->origin = *origin;
 	a->kind = (unsigned char)kind;
 	a->state = (unsigned char)MS_ASYNC_REGISTERED;
@@ -3539,6 +3541,10 @@ void ms_diag_async_state(unsigned long async_id, int state)
 	if (async_id == 0) return;
 	for (i = 0; i < MS_ASYNC_RING_CAP; i++) {
 		if (g_async_ring[i].id == async_id) {
+			if (g_async_ring[i].state == MS_ASYNC_CANCELLED ||
+				g_async_ring[i].state == MS_ASYNC_RETIRED ||
+				g_async_ring[i].state == MS_ASYNC_ABANDONED)
+				return;
 			g_async_ring[i].state = (unsigned char)state;
 			return;
 		}
@@ -3554,10 +3560,10 @@ void ms_diag_async_swap(unsigned long async_id, unsigned long *previous)
 long macsurf_diag_serialize_async_since(char *buf, long cap,
 	unsigned long after, unsigned long limit)
 {
-	char line[384]; long n = 0; unsigned long first, latest, seq, returned = 0;
+	char line[384]; long n = 0; unsigned long first, latest, seq, returned = 0, next_after;
 	int i;
 	if (buf == NULL || cap < 2) return 0;
-	buf[0] = '\0'; latest = g_async_seq;
+	buf[0] = '\0'; latest = g_async_seq; next_after = after;
 	if (limit == 0 || limit > MS_ASYNC_RING_CAP) limit = MS_ASYNC_RING_CAP;
 	n = diag_cat(buf, cap, n, "MSDIAG 2 async\n");
 	n = ms_diag_history_header(buf, cap, n, "async", latest, MS_ASYNC_RING_CAP);
@@ -3566,11 +3572,11 @@ long macsurf_diag_serialize_async_since(char *buf, long cap,
 		if (seq < first) continue;
 		for (i = 0; i < MS_ASYNC_RING_CAP; i++) if (g_async_ring[i].id == seq) break;
 		if (i == MS_ASYNC_RING_CAP) continue;
-		snprintf(line, sizeof(line), "async=%lu kind=%s state=%s nav=%lu frame=%lu doc=%lu source=%lu script=%lu task=%lu realm=%lu heap=%lu ctx_gen=%lu\n", g_async_ring[i].id, ms_diag_async_kind_s(g_async_ring[i].kind), ms_diag_async_state_s(g_async_ring[i].state), g_async_ring[i].origin.nav_id, g_async_ring[i].origin.frame_id, g_async_ring[i].origin.doc_id, g_async_ring[i].origin.source_id, g_async_ring[i].origin.script_id, g_async_ring[i].origin.task_id, g_async_ring[i].origin.realm_id, g_async_ring[i].origin.heap_id, g_async_ring[i].origin.ctx_gen);
+		snprintf(line, sizeof(line), "async=%lu parent_async=%lu kind=%s state=%s nav=%lu frame=%lu doc=%lu source=%lu script=%lu task=%lu realm=%lu heap=%lu ctx_gen=%lu\n", g_async_ring[i].id, g_async_ring[i].parent_async, ms_diag_async_kind_s(g_async_ring[i].kind), ms_diag_async_state_s(g_async_ring[i].state), g_async_ring[i].origin.nav_id, g_async_ring[i].origin.frame_id, g_async_ring[i].origin.doc_id, g_async_ring[i].origin.source_id, g_async_ring[i].origin.script_id, g_async_ring[i].origin.task_id, g_async_ring[i].origin.realm_id, g_async_ring[i].origin.heap_id, g_async_ring[i].origin.ctx_gen);
 		if (n + (long)strlen(line) >= cap - 32) break;
-		n = diag_cat(buf, cap, n, line); returned++;
+		n = diag_cat(buf, cap, n, line); returned++; next_after = seq;
 	}
-	snprintf(line, sizeof(line), "next_after=%lu\nreturned=%lu\n", returned ? after + returned : after, returned);
+	snprintf(line, sizeof(line), "next_after=%lu\nreturned=%lu\n", next_after, returned);
 	return diag_cat(buf, cap, n, line);
 }
 

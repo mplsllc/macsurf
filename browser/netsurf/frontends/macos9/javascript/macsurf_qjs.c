@@ -766,6 +766,30 @@ static JSValue qjs_callback_error(JSContext *ctx, JSValueConst this_val,
 	return JS_UNDEFINED;
 }
 
+static JSValue qjs_async_listener_enter(JSContext *ctx, JSValueConst this_val,
+	int argc, JSValueConst *argv)
+{
+	int32_t id = 0;
+	unsigned long previous;
+	(void)this_val;
+	if (argc > 0) JS_ToInt32(ctx, &id, argv[0]);
+	ms_diag_async_swap((unsigned long)id, &previous);
+	ms_diag_async_state((unsigned long)id, MS_ASYNC_FIRING);
+	return JS_NewInt32(ctx, (int32_t)previous);
+}
+
+static JSValue qjs_async_listener_leave(JSContext *ctx, JSValueConst this_val,
+	int argc, JSValueConst *argv)
+{
+	int32_t id = 0, previous = 0;
+	(void)this_val;
+	if (argc > 0) JS_ToInt32(ctx, &id, argv[0]);
+	if (argc > 1) JS_ToInt32(ctx, &previous, argv[1]);
+	ms_diag_async_state((unsigned long)id, MS_ASYNC_FIRED);
+	ms_diag_async_swap((unsigned long)previous, NULL);
+	return JS_UNDEFINED;
+}
+
 static unsigned long qjs_log_exc_record(JSContext *ctx, JSValueConst exc,
 		const char *what, const char *name,
 		const struct ms_diag_error_provenance *p, int failure, int phase, int boundary)
@@ -2059,6 +2083,7 @@ void macsurf_qjs_run_timers(struct jscontext *ctx)
 		struct ms_diag_scope __tsk;	/* MacSurf Trace 1b */
 		unsigned long __t_nav = t->nav_id;
 		unsigned long __t_scr = t->origin_script_id;
+		unsigned long __t_async = t->async_id;
 		struct ms_diag_error_provenance ep;
 		unsigned long prev_async;
 
@@ -2080,7 +2105,7 @@ void macsurf_qjs_run_timers(struct jscontext *ctx)
 		ep.realm_id = t->realm_id;
 		ep.heap_id = t->heap_id;
 		ep.ctx_gen = t->ctx_gen;
-		ep.async_id = t->async_id;
+		ep.async_id = __t_async;
 
 		/* #265 - a timer callback is its own JS execution burst: clear the
 		 * settle-once geometry flag so its first read settles fresh. Two
@@ -2099,7 +2124,6 @@ void macsurf_qjs_run_timers(struct jscontext *ctx)
 		if (t->repeating) {
 			t->expiry_ms = macsurf_qjs_get_now() + t->interval_ms;
 		} else {
-			ms_diag_async_state(t->async_id, MS_ASYNC_RETIRED);
 			timer_slot_clear(t, 1);
 		}
 
@@ -2136,8 +2160,8 @@ void macsurf_qjs_run_timers(struct jscontext *ctx)
 		this_obj = JS_GetGlobalObject(qctx);
 		ms_diag_task_enter(&__tsk, MS_TASK_TIMER, __t_nav, __t_scr,
 			0, (const char *) 0);
-		ms_diag_async_swap(t->async_id, &prev_async);
-		ms_diag_async_state(t->async_id, MS_ASYNC_FIRING);
+		ms_diag_async_swap(__t_async, &prev_async);
+		ms_diag_async_state(__t_async, MS_ASYNC_FIRING);
 		ep.task_id = ms_diag_cur_task();
 		ms_diag_timer_state((unsigned long)due_id[k], MS_TIMER_FIRING);
 		ret = JS_Call(qctx, fn, this_obj, call_nargs, call_args);
@@ -2147,8 +2171,12 @@ void macsurf_qjs_run_timers(struct jscontext *ctx)
 		if (JS_IsException(ret))
 			ms_diag_js_event_hit(MS_JS_EVENT_HANDLER_FAILED);
 		ms_diag_task_leave(&__tsk);
-		ms_diag_async_state(t->async_id, MS_ASYNC_FIRED);
+		ms_diag_async_state(__t_async, MS_ASYNC_FIRED);
 		ms_diag_async_swap(prev_async, NULL);
+		if (t->repeating && t->live && t->id == due_id[k])
+			ms_diag_async_state(__t_async, MS_ASYNC_QUEUED);
+		else
+			ms_diag_async_state(__t_async, MS_ASYNC_RETIRED);
 		{	/* fixes1037 */
 			extern double macos9_micros(void);
 			double dt = macos9_micros() - g_timer_t0;
@@ -6010,6 +6038,7 @@ static void qjs_el_install_js_helpers(JSContext *ctx, JSValue proto)
 		"if(this._L&&this._L[t]){"
 		"var a=this._L[t].slice();"
 		"var c=(this._LC&&this._LC[t])?this._LC[t].slice():null;"
+		"var ids=(this._LA&&this._LA[t])?this._LA[t].slice():null;"
 		"var i;for(i=0;i<a.length;i++){"
 		/* stopImmediatePropagation, observed BETWEEN handlers -- see
 		 * qjs_ev_stop_immediate_data. Checked before each call so the
@@ -6019,9 +6048,9 @@ static void qjs_el_install_js_helpers(JSContext *ctx, JSValue proto)
 		"var cap=c?!!c[i]:false;"
 		"if(ph===1?!cap:cap)continue;"
 		"}"
-		"try{a[i].call(this,ev);}"
+		"var aid=ids?(ids[i]||0):0,old=__msAsyncListenerEnter(aid);try{a[i].call(this,ev);}"
 		"catch(e){__msCallbackError(false);try{console.error('LIFE jsevent listener threw ['+t+']: '+"
-		"((e&&e.message)||e));}catch(_){}}}}"
+		"((e&&e.message)||e));}catch(_){}}finally{__msAsyncListenerLeave(aid,old);}}}"
 		"if(ev&&ev.__msStopNow)return true;"
 		/* on* handlers are non-capture by definition, so they must never
 		 * run in the capturing phase. */
@@ -8004,7 +8033,7 @@ static JSValue qjs_el_add_event_listener_data(JSContext *ctx,
 {
 	dom_node *node;
 	const char *type_c;
-	JSValue L, arr, lenv, C, carr, R, seen;
+	JSValue L, arr, lenv, C, carr, R, seen, A, aarr;
 	uint32_t len = 0;
 	int capture = 0;
 	int fresh = 0;
@@ -8050,6 +8079,25 @@ static JSValue qjs_el_add_event_listener_data(JSContext *ctx,
 	lenv = JS_GetPropertyStr(ctx, arr, "length");
 	JS_ToUint32(ctx, &len, lenv);
 	JS_FreeValue(ctx, lenv);
+	/* DOM listener identity is (type, callback, capture).  Do this before
+	 * allocating diagnostic state: a rejected duplicate has no accepted
+	 * continuation and must not consume an async ID. */
+	C = JS_GetPropertyStr(ctx, this_val, "_LC");
+	carr = JS_IsObject(C) ? JS_GetPropertyStr(ctx, C, type_c) : JS_UNDEFINED;
+	if (JS_IsObject(carr)) {
+		uint32_t j;
+		for (j = 0; j < len; j++) {
+			JSValue oldfn = JS_GetPropertyUint32(ctx, arr, j);
+			JSValue oldcap = JS_GetPropertyUint32(ctx, carr, j);
+			int same = JS_VALUE_GET_PTR(oldfn) == JS_VALUE_GET_PTR(argv[1]) &&
+				JS_ToBool(ctx, oldcap) == capture;
+			JS_FreeValue(ctx, oldfn); JS_FreeValue(ctx, oldcap);
+			if (same) { JS_FreeValue(ctx, carr); JS_FreeValue(ctx, C);
+				JS_FreeValue(ctx, arr); JS_FreeValue(ctx, L);
+				JS_FreeCString(ctx, type_c); return JS_UNDEFINED; }
+		}
+	}
+	JS_FreeValue(ctx, carr); JS_FreeValue(ctx, C);
 	JS_SetPropertyUint32(ctx, arr, len, JS_DupValue(ctx, argv[1]));
 	JS_FreeValue(ctx, arr);
 	JS_FreeValue(ctx, L);
@@ -8074,6 +8122,26 @@ static JSValue qjs_el_add_event_listener_data(JSContext *ctx,
 	JS_SetPropertyUint32(ctx, carr, len, JS_NewBool(ctx, capture));
 	JS_FreeValue(ctx, carr);
 	JS_FreeValue(ctx, C);
+	A = JS_GetPropertyStr(ctx, this_val, "_LA");
+	if (!JS_IsObject(A)) {
+		JS_FreeValue(ctx, A); A = JS_NewObject(ctx);
+		JS_SetPropertyStr(ctx, this_val, "_LA", JS_DupValue(ctx, A));
+	}
+	aarr = JS_GetPropertyStr(ctx, A, type_c);
+	if (JS_IsUndefined(aarr) || JS_IsNull(aarr)) {
+		JS_FreeValue(ctx, aarr); aarr = JS_NewArray(ctx);
+		JS_SetPropertyStr(ctx, A, type_c, JS_DupValue(ctx, aarr));
+	}
+	{
+		struct ms_diag_error_provenance ap;
+		qjs_error_capture_realm(ctx, &ap);
+		ap.source_id = ms_diag_cur_source();
+		ap.script_id = ms_diag_cur_script();
+		JS_SetPropertyUint32(ctx, aarr, len, JS_NewUint32(ctx,
+			ms_diag_async_register(MS_ASYNC_EVENT, &ap)));
+	}
+	JS_FreeValue(ctx, aarr);
+	JS_FreeValue(ctx, A);
 
 	/* fixes1040 (#264) - register with libdom once per (node, type, CAPTURE),
 	 * not once per (node, type).
@@ -8148,6 +8216,26 @@ static void qjs_lc_splice_at(JSContext *ctx, JSValueConst el,
 	JS_FreeValue(ctx, C);
 }
 
+static void qjs_la_splice_at(JSContext *ctx, JSValueConst el,
+	const char *type_c, uint32_t idx)
+{
+	JSValue A, aarr, sp;
+	A = JS_GetPropertyStr(ctx, el, "_LA");
+	if (!JS_IsObject(A)) { JS_FreeValue(ctx, A); return; }
+	aarr = JS_GetPropertyStr(ctx, A, type_c);
+	if (JS_IsObject(aarr)) {
+		sp = JS_GetPropertyStr(ctx, aarr, "splice");
+		if (JS_IsFunction(ctx, sp)) {
+			JSValue av[2], r;
+			av[0] = JS_NewUint32(ctx, idx); av[1] = JS_NewInt32(ctx, 1);
+			r = JS_Call(ctx, sp, aarr, 2, (JSValueConst *)av);
+			JS_FreeValue(ctx, r); JS_FreeValue(ctx, av[0]); JS_FreeValue(ctx, av[1]);
+		}
+		JS_FreeValue(ctx, sp);
+	}
+	JS_FreeValue(ctx, aarr); JS_FreeValue(ctx, A);
+}
+
 static JSValue qjs_el_remove_event_listener_data(JSContext *ctx,
 		JSValueConst this_val, int argc, JSValueConst *argv,
 		int magic, JSValueConst *func_data)
@@ -8195,6 +8283,7 @@ static JSValue qjs_el_remove_event_listener_data(JSContext *ctx,
 					 * the bug this whole change fixes. */
 					qjs_lc_splice_at(ctx, this_val,
 							type_c, i);
+					qjs_la_splice_at(ctx, this_val, type_c, i);
 					break;
 				}
 				JS_FreeValue(ctx, item);
@@ -11434,6 +11523,8 @@ static void register_browser_globals(JSContext *ctx)
 	qjs_set_func(ctx, global, "__msOperationEvent", qjs_ms_operation_event, 7);
 	qjs_set_func(ctx, global, "__msErrorEvent", qjs_ms_error_event, 7);
 	qjs_set_func(ctx, global, "__msCallbackError", qjs_callback_error, 1);
+	qjs_set_func(ctx, global, "__msAsyncListenerEnter", qjs_async_listener_enter, 1);
+	qjs_set_func(ctx, global, "__msAsyncListenerLeave", qjs_async_listener_leave, 2);
 	qjs_set_func(ctx, global, "__msCapability", qjs_ms_capability, 5);
 	/* localStorage persistence backend, consumed by the _Storage shim
 	 * below (register_browser_globals runs per navigation, so the saved
