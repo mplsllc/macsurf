@@ -1,0 +1,222 @@
+name: Apply safe targeted cosmetic rendering
+
+on:
+  push:
+    branches: [stabilization/reconvert-rework]
+    paths:
+      - '.github/workflows/apply-targeted-cosmetic.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: stabilization/reconvert-rework
+          fetch-depth: 0
+
+      - name: Apply targeted rendering patch
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          hp = Path('browser/netsurf/content/handlers/html/html.c')
+          hs = hp.read_text()
+
+          marker = 'int html_reconvert_fast_style(struct content *base_c, void *vnode)\n{\n'
+          assert marker in hs, 'fast-style marker missing'
+          helper = r'''/* stabilization/reconvert-rework: targeted style work must never trust the
+ * DOM -> box backlink.  Full reconvert has repeatedly made that backlink a
+ * lifetime hazard; box_for_node(node) can therefore hand a targeted update a
+ * pointer that no longer belongs to the current rendered tree.  Search the
+ * live tree we own instead.  This is O(boxes), but targeted batches are small
+ * and this path replaces an O(document) teardown/rebuild. */
+static struct box *
+html_find_live_box_for_node(html_content *c, dom_node *node)
+{
+	struct box *root;
+	struct box *b;
+
+	if (c == NULL || node == NULL || c->layout == NULL)
+		return NULL;
+	root = c->layout;
+	b = root;
+	while (b != NULL) {
+		if (b->node == node && !(b->flags & CLONE))
+			return b;
+		if (b->children != NULL) {
+			b = b->children;
+			continue;
+		}
+		while (b != root && b->next == NULL)
+			b = b->parent;
+		if (b == root)
+			break;
+		b = b->next;
+	}
+	return NULL;
+}
+
+'''
+          hs = hs.replace(marker, helper + marker, 1)
+
+          old = '''\tif (node == NULL || c == NULL) return -1;\n\tif (c->select_ctx == NULL) return -1;\n\t\n\tif (macos9_paint_gw != NULL || macsurf_reconvert_in_progress != 0 || base_c->active != 0) return -1;\n\n\tbox = box_for_node(node);\n'''
+          new = '''\tif (node == NULL || c == NULL) return -1;\n\tif (c->select_ctx == NULL || c->layout == NULL) return -1;\n\tif (base_c->status != CONTENT_STATUS_DONE) return -1;\n\t\n\tif (macos9_paint_gw != NULL || macsurf_reconvert_in_progress != 0 || base_c->active != 0) return -1;\n\n\tbox = html_find_live_box_for_node(c, node);\n'''
+          assert old in hs, 'fast-style precondition block changed'
+          hs = hs.replace(old, new, 1)
+
+          old = '''\tif (c == NULL || node == NULL || c->select_ctx == NULL ||\n\t\tc->layout == NULL || macos9_paint_gw != NULL ||\n\t\tmacsurf_reconvert_in_progress != 0 || base_c->active != 0)\n\t\treturn -1;\n\n\troot = box_for_node(node);\n'''
+          new = '''\tif (c == NULL || node == NULL || c->select_ctx == NULL ||\n\t\tc->layout == NULL || base_c->status != CONTENT_STATUS_DONE ||\n\t\tmacos9_paint_gw != NULL || macsurf_reconvert_in_progress != 0 ||\n\t\tbase_c->active != 0)\n\t\treturn -1;\n\n\troot = html_find_live_box_for_node(c, node);\n'''
+          assert old in hs, 'inherited precondition block changed'
+          hs = hs.replace(old, new, 1)
+          hp.write_text(hs)
+
+          rp = Path('browser/netsurf/frontends/macos9/macos9_reconvert.c')
+          rs = rp.read_text()
+
+          marker = 'static struct macos9_reconvert_pending g_pending[RECONVERT_MAX_PENDING];\n'
+          assert marker in rs, 'pending marker missing'
+          cosmetic = r'''static struct macos9_reconvert_pending g_pending[RECONVERT_MAX_PENDING];
+
+/* Targeted cosmetic queue.  Class/style mutations are kept OUT of the full
+ * reconvert pending table so geometry reads can never turn them into a forced
+ * document rebuild.  Each node is referenced across the short debounce and is
+ * validated against the content generation before use. */
+#define RECONVERT_MAX_COSMETIC 32
+#define RECONVERT_COSMETIC_DEBOUNCE_MS 80
+struct macos9_cosmetic_pending {
+	struct content *c;
+	unsigned long token;
+	void *node;
+	int kind;
+};
+static struct macos9_cosmetic_pending g_cosmetic[RECONVERT_MAX_COSMETIC];
+
+static void
+macos9_cosmetic_clear(int i)
+{
+	if (g_cosmetic[i].node != NULL)
+		macsurf_reconvert_node_unref(g_cosmetic[i].node);
+	g_cosmetic[i].c = NULL;
+	g_cosmetic[i].token = 0;
+	g_cosmetic[i].node = NULL;
+	g_cosmetic[i].kind = MACOS9_DOMMUT_UNKNOWN;
+}
+
+static void
+macos9_cosmetic_add(struct content *c, void *node, int kind)
+{
+	int i;
+	int free_slot = -1;
+
+	if (c == NULL || node == NULL)
+		return;
+	for (i = 0; i < RECONVERT_MAX_COSMETIC; i++) {
+		if (g_cosmetic[i].c == c && g_cosmetic[i].node == node &&
+		    g_cosmetic[i].kind == kind) {
+			g_cosmetic[i].token = macos9_content_token(c);
+			return;
+		}
+		if (g_cosmetic[i].c == NULL && free_slot < 0)
+			free_slot = i;
+	}
+	/* Overflow is deliberately lossy for cosmetics: never turn a paint/style
+	 * backlog into the full-document transaction we are removing.  The DOM is
+	 * authoritative and a later structural rebuild will incorporate it. */
+	if (free_slot < 0)
+		return;
+	g_cosmetic[free_slot].c = c;
+	g_cosmetic[free_slot].token = macos9_content_token(c);
+	g_cosmetic[free_slot].node = macsurf_reconvert_node_ref(node);
+	g_cosmetic[free_slot].kind = kind;
+}
+
+'''
+          rs = rs.replace(marker, cosmetic, 1)
+
+          # Insert the processor immediately before the main callback.
+          marker = 'static void\nmacos9_reconvert_cb(void *p)\n{\n'
+          assert marker in rs, 'callback marker missing'
+          processor = r'''static int
+macos9_process_cosmetic_pending(void)
+{
+	int i;
+	int remain = 0;
+	extern int html_reconvert_fast_style(struct content *c, void *node);
+	extern int html_reconvert_fast_inherited_color(struct content *c,
+		void *node);
+	extern struct gui_window *macos9_paint_gw;
+	extern int macsurf_reconvert_in_progress;
+
+	for (i = 0; i < RECONVERT_MAX_COSMETIC; i++) {
+		struct content *c = g_cosmetic[i].c;
+		int rc;
+		if (c == NULL)
+			continue;
+		if (!macos9_content_is_live(c) ||
+		    !macos9_content_token_valid(c, g_cosmetic[i].token)) {
+			macos9_cosmetic_clear(i);
+			continue;
+		}
+		/* Never enter CSS selection while the tree is loading, painting,
+		 * converting or carrying active object work.  These are transient;
+		 * retain the node and try once the event loop is quiet. */
+		if (c->status != CONTENT_STATUS_DONE || c->active != 0 ||
+		    macos9_paint_gw != NULL || macsurf_reconvert_in_progress != 0) {
+			remain = 1;
+			continue;
+		}
+
+		/* First try the single-box paint-only transaction.  It refreshes the
+		 * changed node's libcss node data.  If the change is inherited colour,
+		 * the transactional subtree recascade gets a chance next.  Any geometry
+		 * or topology change is intentionally left in the DOM with NO full
+		 * reconvert fallback. */
+		rc = html_reconvert_fast_style(c, g_cosmetic[i].node);
+		if (rc != 0)
+			rc = html_reconvert_fast_inherited_color(c,
+				g_cosmetic[i].node);
+		(void) rc;
+		macos9_cosmetic_clear(i);
+	}
+	return remain;
+}
+
+'''
+          rs = rs.replace(marker, processor + marker, 1)
+
+          # Process cosmetics before the full-reconvert floor; targeted work
+          # should not inherit the 600ms full-tree rate limit.
+          marker = '''\tnow = (unsigned long) TickCount();\n\n\t/* R1.4 - defer diagnostic.'''
+          replacement = '''\tnow = (unsigned long) TickCount();\n\n\tif (macos9_process_cosmetic_pending())\n\t\tbusy = 1;\n\n\t/* R1.4 - defer diagnostic.'''
+          assert marker in rs, 'callback now marker changed'
+          rs = rs.replace(marker, replacement, 1)
+
+          # Replace the structural-only cosmetic drop with targeted queuing.
+          old = '''\t/* stabilization/reconvert-rework: class/style writes are NOT reasons to\n\t * rebuild the entire document.  The hardware A/B proved that the full\n\t * reconvert transaction is the performance/crash multiplier, while the\n\t * recent targeted fast-style experiment itself crashed in\n\t * html_reconvert_fast_style during startup.  For now keep these mutations\n\t * in the persistent DOM and let the next genuine structural mutation fold\n\t * them into its rebuild.  This deliberately trades class/style-only visual\n\t * freshness for a stable baseline while a safe incremental recascade path\n\t * is built.  Do not queue a node ref, callback, or geometry-forced rebuild. */\n\tif (macos9_reconvert_kind_is_cosmetic(kind)) {\n\t\treturn;\n\t}\n'''
+          new = '''\t/* Class/style changes use the incremental queue, never the full-reconvert\n\t * pending table.  This is the actual replacement path: retain the precise\n\t * node, coalesce duplicates, and update only when the live DONE tree is\n\t * stable.  Unsupported geometry/topology changes stay in the DOM until a\n\t * later structural rebuild; they do not fall back to document reconvert. */\n\tif (macos9_reconvert_kind_is_cosmetic(kind)) {\n\t\textern int macos9_sched_is_queued(\n\t\t\tvoid (*callback)(void *p), void *p);\n\t\tmacos9_cosmetic_add(c, node, kind);\n\t\tif (!macos9_sched_is_queued(macos9_reconvert_cb, NULL)) {\n\t\t\t(void) macos9_schedule(RECONVERT_COSMETIC_DEBOUNCE_MS,\n\t\t\t\tmacos9_reconvert_cb, NULL);\n\t\t}\n\t\treturn;\n\t}\n'''
+          assert old in rs, 'structural-only cosmetic gate changed'
+          rs = rs.replace(old, new, 1)
+
+          rp.write_text(rs)
+          PY
+
+          git diff --check
+          grep -q 'html_find_live_box_for_node' browser/netsurf/content/handlers/html/html.c
+          grep -q 'RECONVERT_MAX_COSMETIC 32' browser/netsurf/frontends/macos9/macos9_reconvert.c
+          grep -q 'macos9_process_cosmetic_pending' browser/netsurf/frontends/macos9/macos9_reconvert.c
+
+      - name: Commit patch
+        shell: bash
+        run: |
+          git config user.name "OpenAI"
+          git config user.email "codex@openai.com"
+          git rm .github/workflows/apply-targeted-cosmetic.yml
+          git add browser/netsurf/content/handlers/html/html.c \
+                  browser/netsurf/frontends/macos9/macos9_reconvert.c
+          git commit -m "render: add safe targeted class/style updates" -m "Keep class/style mutations out of full reconvert, but restore real visual updates through a bounded precise-node queue. Resolve nodes by searching the current live box tree instead of trusting DOM-to-box backlinks; run targeted style/inherited recascade only after CONTENT_STATUS_DONE and never fall back to a full document rebuild for unsupported cosmetic changes."
+          git push origin HEAD:stabilization/reconvert-rework
