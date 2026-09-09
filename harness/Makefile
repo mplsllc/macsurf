@@ -258,3 +258,8 @@ check: check-macdefault run
 
 clean:
 	rm -rf $(OBJ) reconvert_harness
+
+.PHONY: render-batch-test
+render-batch-test: build/macos9_reconvert.c
+	$(CC) -O1 -std=c89 -pedantic -Werror=declaration-after-statement -g $(ASAN) $(INC) render_batch_test.c -o /tmp/macsurf-render-batch-test
+	ASAN_OPTIONS=detect_leaks=0 /tmp/macsurf-render-batch-test

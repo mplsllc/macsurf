@@ -1,3 +1,5 @@
+#include "macos9_reconvert.h"
+#include <assert.h>
 extern void macsurf_qjs_pump_all(void);
 /* S0 harness driver — reconvert dom_string UAF repro.
  *
@@ -6939,7 +6941,7 @@ box_coords(bx, &cx, &cy);
 		htmlc.base.active = 1;          /* the html fetch itself, as on a real load */
 		htmlc.object_list = NULL;
 		htmlc.num_objects = 0;
-		macos9_js_mark_dom_dirty((struct content *)&htmlc, NULL, 0);
+		macos9_js_mark_dom_dirty_node((struct content *)&htmlc, NULL, 0);
 		macos9_reconvert_sync_reset();
 		macos9_reconvert_sync_stats(&f0, &d0, &u0);
 		(void) macos9_reconvert_flush_now((void *)&htmlc);
@@ -6966,7 +6968,7 @@ box_coords(bx, &cx, &cy);
 		blocker->next = NULL;
 		htmlc.object_list = blocker;
 		htmlc.num_objects = 1;
-		macos9_js_mark_dom_dirty((struct content *)&htmlc, NULL, 0);
+		macos9_js_mark_dom_dirty_node((struct content *)&htmlc, NULL, 0);
 		macos9_reconvert_sync_reset();
 		macos9_reconvert_sync_stats(&f0, &d0, &u0);
 		(void) macos9_reconvert_flush_now((void *)&htmlc);
@@ -7133,7 +7135,7 @@ box_coords(bx, &cx, &cy);
 		 * the html fetch itself still counted active. */
 		htmlc.base.status = CONTENT_STATUS_LOADING;
 		htmlc.base.active = 1;
-		macos9_js_mark_dom_dirty((struct content *)&htmlc, NULL, 0);
+		macos9_js_mark_dom_dirty_node((struct content *)&htmlc, NULL, 0);
 
 		macos9_reconvert_sync_reset();
 		macos9_reconvert_sync_stats(&f0, &d0, &u0);
@@ -8811,9 +8813,16 @@ box_coords(bx, &cx, &cy);
 	{
 		static const char *t69_html =
 			"<!DOCTYPE html><html><head></head><body>"
-			"<div id=\"root\"><p id=\"p0\">hello</p></div>"
+			"<div id=\"root\"><p id=\"p0\">hello</p><p id=\"p1\">one</p><p id=\"p2\">two</p><p id=\"p3\">three</p><p id=\"p4\">four</p><p id=\"p5\">five</p></div>"
 			"</body></html>";
 		struct html_content t69c;
+        /* Minimal leading fields read by hlcache_handle_get_content and
+         * nscss_get_stylesheet. These borrowed adapters are never freed by
+         * hlcache; the fixture owns the stylesheet and content. */
+        struct { struct content base; css_stylesheet *sheet; } t69css;
+        struct { struct content *content; } t69entry;
+        struct { void *entry; } t69handle;
+        struct html_stylesheet t69sheets[1];
 		dom_hubbub_parser *t69p = NULL;
 		dom_document *t69doc = NULL;
 		dom_node *t69root = NULL;
@@ -8881,7 +8890,7 @@ box_coords(bx, &cx, &cy);
 		}
 		{
 			const char *ua_css =
-				"html,body,div,p{display:block}";
+				"html,body,div,p{display:block} .batch-red{color:#ff0000}";
 			css_error ae = css_stylesheet_append_data(t69ua,
 					(const uint8_t *)ua_css, strlen(ua_css));
 			if (ae != CSS_OK && ae != CSS_NEEDDATA) {
@@ -8896,7 +8905,17 @@ box_coords(bx, &cx, &cy);
 			return 1;
 		}
 
-		t69c.media.type = CSS_MEDIA_SCREEN;
+		memset(&t69css, 0, sizeof(t69css));
+        memset(t69sheets, 0, sizeof(t69sheets));
+        t69css.base.status = CONTENT_STATUS_DONE;
+        t69css.base.handler = &g_dummy_handler;
+        t69css.sheet = t69ua;
+        t69entry.content = &t69css.base;
+        t69handle.entry = &t69entry;
+        t69sheets[0].sheet = (struct hlcache_handle *)&t69handle;
+        t69c.stylesheets = t69sheets;
+        t69c.stylesheet_count = 1;
+        t69c.media.type = CSS_MEDIA_SCREEN;
 		t69c.media.width = INTTOFIX(993);
 		t69c.media.height = INTTOFIX(600);
 		t69c.media.orientation = CSS_MEDIA_ORIENTATION_LANDSCAPE;
@@ -8932,6 +8951,7 @@ box_coords(bx, &cx, &cy);
 			return 1;
 		}
 		harness_pump_all(100000);
+			macsurf_qjs_pump_all();
 		if (!g_initial_build_done || !g_initial_build_ok) {
 			fprintf(stderr, "FAIL: Test 69 initial build done=%d ok=%d\n",
 					g_initial_build_done, (int)g_initial_build_ok);
@@ -9042,6 +9062,7 @@ box_coords(bx, &cx, &cy);
 				return 1;
 			}
 			harness_pump_all(100000);
+			macsurf_qjs_pump_all();
 
 			t69c.reflowing = false;
 			t69c.box_conversion_context = NULL;
@@ -9056,6 +9077,7 @@ box_coords(bx, &cx, &cy);
 				return 1;
 			}
 			harness_pump_all(100000);
+			macsurf_qjs_pump_all();
 
 			ok3 = js_exec(t69thread, (const unsigned char *)mo_check_js,
 					strlen(mo_check_js), "driver-mo-check.js");
@@ -9074,6 +9096,7 @@ box_coords(bx, &cx, &cy);
 				return 1;
 			}
 			harness_pump_all(100000);
+			macsurf_qjs_pump_all();
 
 			t69c.reflowing = false;
 			t69c.box_conversion_context = NULL;
@@ -9086,6 +9109,7 @@ box_coords(bx, &cx, &cy);
 				return 1;
 			}
 			harness_pump_all(100000);
+			macsurf_qjs_pump_all();
 
 			ok3 = js_exec(t69thread,
 					(const unsigned char *)mo_inner_check_js,
@@ -9105,6 +9129,7 @@ box_coords(bx, &cx, &cy);
 				return 1;
 			}
 			harness_pump_all(100000);
+			macsurf_qjs_pump_all();
 
 			t69c.reflowing = false;
 			t69c.box_conversion_context = NULL;
@@ -9117,6 +9142,7 @@ box_coords(bx, &cx, &cy);
 				return 1;
 			}
 			harness_pump_all(100000);
+			macsurf_qjs_pump_all();
 
 			ok3 = js_exec(t69thread,
 					(const unsigned char *)mo_attr_check_js,
@@ -9128,6 +9154,94 @@ box_coords(bx, &cx, &cy);
 				return 1;
 			}
 		}
+        /* Real DOM + style engine + timer delivery, independent of reconvert
+         * completion. Compare counters and preserve the published tree. */
+        {
+            struct macos9_render_stats before, after;
+            struct box *published;
+            const char *setup =
+                "globalThis.__batchCalls=0;"
+                "globalThis.__batchRecords=0;"
+                "globalThis.__batchObserver=new MutationObserver(function(rs){"
+                "__batchCalls++;__batchRecords+=rs.length;});"
+                "__batchObserver.observe(document.getElementById('root'),"
+                "{attributes:true,childList:true,subtree:true});";
+            const char *paint =
+                "var bp=document.getElementById('p0');"
+                "bp.style.backgroundColor='red';"
+                "bp.style.backgroundColor='blue';"
+                "bp.style.backgroundColor='green';";
+            const char *check =
+                "if(__batchCalls!==1||__batchRecords!==3)"
+                "throw Error('batch observer '+__batchCalls+'/'+__batchRecords);";
+            const char *mixed =
+                "__batchCalls=0;__batchRecords=0;"
+                "bp.style.backgroundColor='yellow';"
+                "document.getElementById('root').appendChild(document.createElement('p'));";
+            const char *mixed_check =
+                "if(__batchCalls!==1||__batchRecords!==2)"
+                "throw Error('fallback observer '+__batchCalls+'/'+__batchRecords);";
+            int n;
+            extern int macos9_reconvert_flush_now(void *cv);
+            (void)macos9_reconvert_flush_now(&t69c);
+            macsurf_qjs_pump_all();
+            assert(js_exec(t69thread, (const unsigned char *)setup,
+                strlen(setup), "batch-observer-setup.js"));
+            published = t69c.layout;
+            macos9_reconvert_render_stats(&before);
+            assert(js_exec(t69thread, (const unsigned char *)paint,
+                strlen(paint), "batch-paint.js"));
+            assert(macos9_reconvert_flush_now(&t69c));
+            macos9_reconvert_render_stats(&after);
+            assert(after.batches_processed == before.batches_processed + 1);
+            assert(after.invalidations_deduped >= before.invalidations_deduped + 2);
+            assert(after.targeted_paint == before.targeted_paint + 1);
+            assert(after.full_fallback == before.full_fallback);
+            assert(t69c.layout == published);
+            for (n = 0; n < 4; n++) macsurf_qjs_pump_all();
+            assert(js_exec(t69thread, (const unsigned char *)check,
+                strlen(check), "batch-observer-paint-check.js"));
+            macos9_reconvert_render_stats(&before);
+            assert(js_exec(t69thread, (const unsigned char *)mixed,
+                strlen(mixed), "batch-mixed.js"));
+            assert(macos9_reconvert_flush_now(&t69c));
+            macos9_reconvert_render_stats(&after);
+            assert(after.full_fallback == before.full_fallback + 1);
+            assert(after.batches_processed == before.batches_processed + 1);
+            for (n = 0; n < 4; n++) macsurf_qjs_pump_all();
+            assert(js_exec(t69thread, (const unsigned char *)mixed_check,
+                strlen(mixed_check), "batch-observer-fallback-check.js"));
+            /* Ten precise writes across five elements, followed by a class
+             * change whose selector reaches an existing element subtree. */
+            macos9_reconvert_render_stats(&before);
+            published = t69c.layout;
+            {
+                const char *many =
+                    "for(var bi=1;bi<=5;bi++){var be=document.getElementById('p'+bi);"
+                    "be.style.backgroundColor='red';be.style.backgroundColor='blue';}";
+                assert(js_exec(t69thread, (const unsigned char *)many,
+                    strlen(many), "batch-many.js"));
+            }
+            assert(macos9_reconvert_flush_now(&t69c));
+            macos9_reconvert_render_stats(&after);
+            assert(after.batches_processed == before.batches_processed + 1);
+            assert(after.targeted_paint == before.targeted_paint + 5);
+            assert(after.full_fallback == before.full_fallback);
+            assert(t69c.layout == published);
+            macos9_reconvert_render_stats(&before);
+            {
+                const char *klass = "document.getElementById('p0').className='batch-red';";
+                assert(js_exec(t69thread, (const unsigned char *)klass,
+                    strlen(klass), "batch-class.js"));
+            }
+            assert(macos9_reconvert_flush_now(&t69c));
+            macos9_reconvert_render_stats(&after);
+            assert(after.targeted_inherited == before.targeted_inherited + 1);
+            assert(after.full_fallback == before.full_fallback);
+            assert(t69c.layout == published);
+            fprintf(stderr, "=== Render B PASS: five precise paint nodes and class colour recascade ===\n");
+            fprintf(stderr, "=== Render A/C/F PASS: real paint, one fallback, observer once per task ===\n");
+        }
 		/* --- Test 69a (Round 1A): MediaQueryList must use libcss's media
 		 * parser/matcher, retain a live per-document result, and notify every
 		 * supported listener form when a completed layout publishes a changed
@@ -9214,7 +9328,7 @@ box_coords(bx, &cx, &cy);
 		js_destroyheap(t69heap);
 	}
 	fprintf(stderr, "=== Test 69 PASS: MutationObserver delivers a real "
-			"record after html_reconvert_done ===\n");
+			"record through JS timer checkpoint ===\n");
 
 	fprintf(stderr, "\n=== Test 70: querySelectorAll + textContent + :not() "
 			"+ comma-lists read a real "
