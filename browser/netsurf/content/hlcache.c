@@ -180,14 +180,14 @@ hlcache_node_deathrow_teardown(void *p)
 }
 
 static void
-hlcache_entry_deferred_free(hlcache_entry *entry)
+hlcache_entry_deferred_free(hlcache_entry *entry, struct content *pin_key)
 {
 	if (entry == NULL || entry->dr_queued) {
 		return;
 	}
 	entry->dr_queued = 1;
 	macos9_deathrow_add(entry, hlcache_node_deathrow_teardown,
-			entry->content, MACOS9_DR_HLCACHE_ENTRY);
+			pin_key, MACOS9_DR_HLCACHE_ENTRY);
 }
 
 static void
@@ -234,6 +234,7 @@ hlcache_rctx_deferred_free(hlcache_retrieval_ctx *ctx)
 static void hlcache_clean(void *force_clean_flag)
 {
 	hlcache_entry *entry, *next;
+	struct content *c_to_destroy;
 	bool force_clean = (force_clean_flag != NULL);
 
 	for (entry = hlcache->content_list; entry != NULL; entry = next) {
@@ -296,7 +297,7 @@ static void hlcache_clean(void *force_clean_flag)
 		 * the double-destroy, but we skip the call entirely here
 		 * to avoid even entering content_destroy on freed memory. */
 		{
-			struct content *c_to_destroy = entry->content;
+			c_to_destroy = entry->content;
 			if (c_to_destroy->handler == NULL) {
 				macsurf_debug_log_writef(
 					"hlcache: skip already-destroyed entry=%p content=%p",
@@ -311,9 +312,11 @@ static void hlcache_clean(void *force_clean_flag)
 			}
 		}
 
-		/* Destroy entry (Stage 1: deferred to the quiescent drain,
-		 * gated on its content's pending continuations) */
-		hlcache_entry_deferred_free(entry);
+		/* entry->content must be cleared before content_destroy so a stale
+		 * handle cannot follow it.  Keep the pre-clear content as the death-row
+		 * pin key, though: scheduling work is keyed by that content and must
+		 * finish before the entry itself can be reclaimed. */
+		hlcache_entry_deferred_free(entry, c_to_destroy);
 	}
 
 	/* Attempt to clean the llcache */
