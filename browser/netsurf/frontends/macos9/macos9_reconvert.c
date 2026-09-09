@@ -1172,6 +1172,32 @@ macos9_js_mark_dom_dirty_node(struct content *c, void *node, int kind)
 	if (!g_reconvert_enabled)
 		return;
 
+#ifdef MACSURF_RECONVERT_DISABLED
+	/* DIAGNOSTIC A/B EXPERIMENT - CONTROL_RECONVERT_OFF.
+	 *
+	 * This build suppresses the entire JS-driven reconvert transaction.
+	 * DOM mutations still occur; JS, timers, events, networking, and
+	 * navigation are all fully operational.  The independent variable is
+	 * RECONVERT ON vs RECONVERT OFF; nothing else differs.
+	 *
+	 * Gate placement: BEFORE macos9_reconvert_pending_add() and before
+	 * macos9_schedule(), so no pending slot is allocated, no dom_node ref
+	 * is taken, and no callback is queued.  No dirty state, no lifetime
+	 * exposure.  The initial document conversion (html_reconvert_content
+	 * called directly by html.c, not through this file) is NOT affected.
+	 *
+	 * Log once per session; not per mutation. */
+	{
+		static int s_disabled_logged = 0;
+		if (!s_disabled_logged) {
+			s_disabled_logged = 1;
+			macsurf_debug_log_writef("LIFE RECONVERT DISABLED");
+		}
+	}
+	(void) node; (void) kind; (void) c; (void) ms_prov;
+	return;
+#endif /* MACSURF_RECONVERT_DISABLED */
+
 	/* fixes874 (#303) - the facebook.com-family allow-list that used to sit
 	 * here is GONE. JS-mutated DOM now repaints on every site.
 	 *
