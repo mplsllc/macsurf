@@ -1,0 +1,69 @@
+name: Apply structural-only reconvert experiment
+
+on:
+  push:
+    branches: [stabilization/reconvert-rework]
+    paths:
+      - '.github/workflows/apply-reconvert-rework.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: stabilization/reconvert-rework
+          fetch-depth: 0
+
+      - name: Apply structural-only reconvert patch
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path('browser/netsurf/frontends/macos9/macos9_reconvert.c')
+          s = p.read_text()
+
+          old = '''/* DIAGNOSTIC A/B EXPERIMENT - CONTROL_RECONVERT_OFF build.\n * Comment out this line and rebuild for CONTROL_RECONVERT_ON. */\n#define MACSURF_RECONVERT_DISABLED\n'''
+          new = '''/* Diagnostic CONTROL_RECONVERT_OFF remains available by defining\n * MACSURF_RECONVERT_DISABLED in the CodeWarrior target.  Do not force it\n * in-source on the implementation branch. */\n'''
+          assert old in s, 'reconvert-off activation block changed'
+          s = s.replace(old, new, 1)
+
+          old = '''\tif (c->status != CONTENT_STATUS_LOADING &&\n\t    c->status != CONTENT_STATUS_READY &&\n\t    c->status != CONTENT_STATUS_DONE) {\n\t\tg_sync_r_notdone++; g_sync_declined++; return 0;\n\t}\n'''
+          new = '''\t/* stabilization/reconvert-rework: never tear down/rebuild the box tree\n\t * while the initial document is still loading or merely READY.  The OFF\n\t * control proved that reconvert is the destabilizing variable, and the\n\t * startup crash family is especially sensitive to rebuilding while object\n\t * callbacks and initial JS are still active.  Geometry therefore declines\n\t * until DONE instead of forcing a synchronous full reconvert. */\n\tif (c->status != CONTENT_STATUS_DONE) {\n\t\tg_sync_r_notdone++; g_sync_declined++; return 0;\n\t}\n'''
+          assert old in s, 'sync status gate changed'
+          s = s.replace(old, new, 1)
+
+          needle = '''\t\tif (!macos9_content_is_live(c) ||\n\t\t    !macos9_content_token_valid(c, g_pending[i].token)) {\n\t\t\tmacos9_reconvert_slot_clear(i);\n\t\t\tcontinue;\n\t\t}\n\n'''
+          insert = needle + '''\t\t/* stabilization/reconvert-rework: structural reconvert is only\n\t\t * allowed after the document reaches DONE.  Marks that arrive during\n\t\t * load remain coalesced in this slot and are retried later; we never\n\t\t * destroy the live box tree underneath initial layout/object/JS work. */\n\t\tif (c->status != CONTENT_STATUS_DONE) {\n\t\t\tbusy = 1;\n\t\t\tcontinue;\n\t\t}\n\n'''
+          assert needle in s, 'callback liveness block changed'
+          s = s.replace(needle, insert, 1)
+
+          needle = '''#endif /* MACSURF_RECONVERT_DISABLED */\n\n\t/* fixes874 (#303) - the facebook.com-family allow-list that used to sit\n'''
+          insert = '''#endif /* MACSURF_RECONVERT_DISABLED */\n\n\t/* stabilization/reconvert-rework: class/style writes are NOT reasons to\n\t * rebuild the entire document.  The hardware A/B proved that the full\n\t * reconvert transaction is the performance/crash multiplier, while the\n\t * recent targeted fast-style experiment itself crashed in\n\t * html_reconvert_fast_style during startup.  For now keep these mutations\n\t * in the persistent DOM and let the next genuine structural mutation fold\n\t * them into its rebuild.  This deliberately trades class/style-only visual\n\t * freshness for a stable baseline while a safe incremental recascade path\n\t * is built.  Do not queue a node ref, callback, or geometry-forced rebuild. */\n\tif (macos9_reconvert_kind_is_cosmetic(kind)) {\n\t\treturn;\n\t}\n\n\t/* fixes874 (#303) - the facebook.com-family allow-list that used to sit\n'''
+          assert needle in s, 'mark gate insertion point changed'
+          s = s.replace(needle, insert, 1)
+
+          p.write_text(s)
+          PY
+
+          git diff --check
+
+          # Guard the intent mechanically: no forced OFF define, cosmetic marks
+          # return before pending_add, and both async/sync rebuilds require DONE.
+          ! grep -q '^#define MACSURF_RECONVERT_DISABLED' browser/netsurf/frontends/macos9/macos9_reconvert.c
+          grep -q 'if (macos9_reconvert_kind_is_cosmetic(kind))' browser/netsurf/frontends/macos9/macos9_reconvert.c
+          test "$(grep -c 'if (c->status != CONTENT_STATUS_DONE)' browser/netsurf/frontends/macos9/macos9_reconvert.c)" -ge 2
+
+      - name: Commit patch
+        shell: bash
+        run: |
+          git config user.name "OpenAI"
+          git config user.email "codex@openai.com"
+          git rm .github/workflows/apply-reconvert-rework.yml
+          git add browser/netsurf/frontends/macos9/macos9_reconvert.c
+          git commit -m "render: make JS reconvert structural-only" -m "Stop class/style DOM writes from queuing either the fragile style fast path or a full-document reconvert. Preserve structural mutation rebuilds, but defer both asynchronous and geometry-forced full reconvert until CONTENT_STATUS_DONE. Keep the compile-time CONTROL_RECONVERT_OFF gate available without forcing it in-source."
+          git push origin HEAD:stabilization/reconvert-rework
