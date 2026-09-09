@@ -1,0 +1,24 @@
+name: Inspect media checkpoint
+on:
+  push:
+    branches:
+      - stabilization/reconvert-rework
+    paths:
+      - .github/workflows/inspect-media-checkpoint.yml
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: stabilization/reconvert-rework
+      - name: Show media checkpoint code
+        run: |
+          f=browser/netsurf/frontends/macos9/javascript/macsurf_qjs.c
+          grep -n -B 35 -A 90 'js_media_state_checkpoint' "$f" || true
+          echo '--- media changed ---'
+          grep -n -B 35 -A 90 'js_media_state_changed' "$f" || true
+          echo '--- pump all ---'
+          grep -n -B 25 -A 80 'macsurf_qjs_pump_all' "$f" | tail -140 || true
+          echo '--- queue refs ---'
+          grep -n -E -B 12 -A 30 'media_state|media.*pending|checkpoint' "$f" | tail -400 || true
