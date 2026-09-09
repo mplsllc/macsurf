@@ -189,6 +189,57 @@ extern int macos9_content_token_valid(struct content *c, unsigned long token);
 #define macos9_content_token_valid(c, t) (1)
 #endif
 
+/* stabilization/reconvert-rework: class/style invalidations live in a
+ * separate bounded queue. They can never be consumed by flush_now(), so a
+ * geometry read cannot turn cosmetic churn into a whole-document rebuild. */
+#define RECONVERT_MAX_COSMETIC 32
+#define RECONVERT_COSMETIC_DEBOUNCE_MS 80
+struct macos9_cosmetic_pending {
+	struct content *c;
+	unsigned long token;
+	void *node;
+	int kind;
+};
+static struct macos9_cosmetic_pending g_cosmetic[RECONVERT_MAX_COSMETIC];
+
+static void
+macos9_cosmetic_clear(int i)
+{
+	if (g_cosmetic[i].node != NULL)
+		macsurf_reconvert_node_unref(g_cosmetic[i].node);
+	g_cosmetic[i].c = NULL;
+	g_cosmetic[i].token = 0;
+	g_cosmetic[i].node = NULL;
+	g_cosmetic[i].kind = MACOS9_DOMMUT_UNKNOWN;
+}
+
+static void
+macos9_cosmetic_add(struct content *c, void *node, int kind)
+{
+	int i;
+	int free_slot = -1;
+
+	if (c == NULL || node == NULL)
+		return;
+	for (i = 0; i < RECONVERT_MAX_COSMETIC; i++) {
+		if (g_cosmetic[i].c == c && g_cosmetic[i].node == node &&
+		    g_cosmetic[i].kind == kind) {
+			g_cosmetic[i].token = macos9_content_token(c);
+			return;
+		}
+		if (g_cosmetic[i].c == NULL && free_slot < 0)
+			free_slot = i;
+	}
+	/* Cosmetic overflow is deliberately lossy. Never escalate paint/style
+	 * backlog into the full-document transaction we are trying to remove. */
+	if (free_slot < 0)
+		return;
+	g_cosmetic[free_slot].c = c;
+	g_cosmetic[free_slot].token = macos9_content_token(c);
+	g_cosmetic[free_slot].node = macsurf_reconvert_node_ref(node);
+	g_cosmetic[free_slot].kind = kind;
+}
+
 /*
  * fixes925 (census) - WHAT KIND of DOM mutation are real pages actually doing?
  *
@@ -855,6 +906,45 @@ macos9_reconvert_front_content(void)
 	return hlcache_handle_get_content(h);
 }
 
+static int
+macos9_process_cosmetic_pending(void)
+{
+	int i;
+	int remain = 0;
+	extern int html_reconvert_fast_style(struct content *c, void *node);
+	extern int html_reconvert_fast_inherited_color(struct content *c,
+		void *node);
+	extern struct gui_window *macos9_paint_gw;
+	extern int macsurf_reconvert_in_progress;
+
+	for (i = 0; i < RECONVERT_MAX_COSMETIC; i++) {
+		struct content *c = g_cosmetic[i].c;
+		int rc;
+		if (c == NULL)
+			continue;
+		if (!macos9_content_is_live(c) ||
+		    !macos9_content_token_valid(c, g_cosmetic[i].token)) {
+			macos9_cosmetic_clear(i);
+			continue;
+		}
+		if (c->status != CONTENT_STATUS_DONE || c->active != 0 ||
+		    macos9_paint_gw != NULL || macsurf_reconvert_in_progress != 0) {
+			remain = 1;
+			continue;
+		}
+		rc = html_reconvert_fast_style(c, g_cosmetic[i].node);
+		if (rc != 0)
+			rc = html_reconvert_fast_inherited_color(c,
+				g_cosmetic[i].node);
+		/* Geometry/topology differences intentionally do NOT fall back to
+		 * html_reconvert_content(). The DOM remains authoritative and a later
+		 * structural rebuild incorporates the change. */
+		(void) rc;
+		macos9_cosmetic_clear(i);
+	}
+	return remain;
+}
+
 static void
 macos9_reconvert_cb(void *p)
 {
@@ -878,6 +968,9 @@ macos9_reconvert_cb(void *p)
 	(void) p;	/* dedup key only - value is never dereferenced */
 
 	now = (unsigned long) TickCount();
+
+	if (macos9_process_cosmetic_pending())
+		busy = 1;
 
 	/* R1.4 - defer diagnostic. A batch whose mark-to-fire window grew well
 	 * past the base debounce (cosmetic cadence escalation to 6400ms, floor
@@ -1215,16 +1308,17 @@ macos9_js_mark_dom_dirty_node(struct content *c, void *node, int kind)
 	return;
 #endif /* MACSURF_RECONVERT_DISABLED */
 
-	/* stabilization/reconvert-rework: class/style writes are NOT reasons to
-	 * rebuild the entire document.  The hardware A/B proved that the full
-	 * reconvert transaction is the performance/crash multiplier, while the
-	 * recent targeted fast-style experiment itself crashed in
-	 * html_reconvert_fast_style during startup.  For now keep these mutations
-	 * in the persistent DOM and let the next genuine structural mutation fold
-	 * them into its rebuild.  This deliberately trades class/style-only visual
-	 * freshness for a stable baseline while a safe incremental recascade path
-	 * is built.  Do not queue a node ref, callback, or geometry-forced rebuild. */
+	/* Class/style writes use the incremental queue only. They never enter the
+	 * full-reconvert pending table and therefore never trigger a document
+	 * rebuild merely because targeted styling declines. */
 	if (macos9_reconvert_kind_is_cosmetic(kind)) {
+		extern int macos9_sched_is_queued(
+			void (*callback)(void *p), void *p);
+		macos9_cosmetic_add(c, node, kind);
+		if (!macos9_sched_is_queued(macos9_reconvert_cb, NULL)) {
+			(void) macos9_schedule(RECONVERT_COSMETIC_DEBOUNCE_MS,
+				macos9_reconvert_cb, NULL);
+		}
 		return;
 	}
 

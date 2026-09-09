@@ -28,6 +28,7 @@
 #include "macsurf_qjs.h"
 
 /* All writers run on the cooperative main / notifier context; no locking. */
+/* stabilization/reconvert-rework: canonical diagnostics source sync. */
 
 /* Phase 2 contract helpers are defined below the existing trace rings, but
  * module/observer writers occur earlier in this file. */
