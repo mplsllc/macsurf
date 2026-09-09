@@ -4061,6 +4061,7 @@ static JSValue qjs_el_setAttribute_data(JSContext *ctx,
 	const char *name_cstr, *val_cstr;
 	dom_string *name_ds, *val_ds, *old_ds;
 	int attr_kind;	/* fixes926 */
+	int value_changed;
 
 	(void)this_val; (void)magic;
 	el = (dom_element *)qjs_get_node(this_val);
@@ -4088,10 +4089,17 @@ static JSValue qjs_el_setAttribute_data(JSContext *ctx,
 	qjs_mut_audit("setattr", (dom_node *)el, name_cstr, val_cstr);
 	if (name_ds && val_ds) {
 		(void)macsurf_dom_element_get_attribute(el, name_ds, &old_ds);
+		/* DOM still receives the write (and observers still see its normal
+		 * delivery), but an identical value cannot change the rendered tree.
+		 * Framework timer loops commonly re-apply aria/data/class values; do
+		 * not turn those no-op renderer writes into an O(document) reconvert. */
+		value_changed = (old_ds == NULL ||
+			strcmp(dom_string_data(old_ds), val_cstr) != 0);
 		macsurf_dom_element_set_attribute(el, name_ds, val_ds);
 		qjs_queue_attribute_mutation(ctx, this_val, name_cstr,
 				old_ds ? dom_string_data(old_ds) : NULL);
-		qjs_mark_dom_dirty(ctx, (void *) el, attr_kind);
+		if (value_changed)
+			qjs_mark_dom_dirty(ctx, (void *) el, attr_kind);
 	}
 	JS_FreeCString(ctx, name_cstr);
 	JS_FreeCString(ctx, val_cstr);
