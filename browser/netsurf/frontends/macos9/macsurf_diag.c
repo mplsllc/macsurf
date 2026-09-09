@@ -1,3 +1,4 @@
+#include "macos9_reconvert.h"
 /*
  * MacSurf  -  macsurf_diag.c   (MacSurf Trace diagnostic state boundary)
  * See macsurf_diag.h.
@@ -172,6 +173,7 @@ static long diag_cat(char *buf, long cap, long n, const char *s)
 
 long macsurf_diag_serialize_summary(char *buf, long cap)
 {
+	struct macos9_render_stats render;
 	char line[128];
 	long n = 0;
 
@@ -181,6 +183,19 @@ long macsurf_diag_serialize_summary(char *buf, long cap)
 	buf[0] = '\0';
 
 	n = diag_cat(buf, cap, n, "MSDIAG 1 summary\n");
+    macos9_reconvert_render_stats(&render);
+    n = diag_cat(buf, cap, n, "RENDER SUMMARY (session)\n");
+    snprintf(line, sizeof line, "mut=%ld batch=%ld queued=%ld dedupe=%ld\n",
+        render.mutations_received, render.batches_processed,
+        render.batches_queued, render.invalidations_deduped);
+    n = diag_cat(buf, cap, n, line);
+    snprintf(line, sizeof line, "paint=%ld inherited=%ld full=%ld overflow=%ld\n",
+        render.targeted_paint, render.targeted_inherited,
+        render.full_fallback, render.batch_overflow);
+    n = diag_cat(buf, cap, n, line);
+    snprintf(line, sizeof line, "rerun=%ld during=%ld\n",
+        render.rerun_batches, render.mutations_during_processing);
+    n = diag_cat(buf, cap, n, line);
 	snprintf(line, sizeof line, "nav=%lu\n",
 		(unsigned long) (g_diag_last_nav ?
 			g_diag_last_nav : macsurf_gap_last_nav()));

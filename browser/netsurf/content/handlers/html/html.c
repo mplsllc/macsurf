@@ -3669,6 +3669,20 @@ static void html_reconvert_relink_objects(html_content *c)
 	}
 }
 
+/* A paint transaction cannot add, remove or restyle generated boxes. */
+static int html_render_pseudos_unchanged(css_select_results *a,
+        css_select_results *b)
+{
+    int i;
+    for (i = 1; i < CSS_PSEUDO_ELEMENT_COUNT; i++) {
+        if (a->styles[i] == NULL && b->styles[i] == NULL) continue;
+        if (a->styles[i] == NULL || b->styles[i] == NULL) return 0;
+        if (css_computed_style_diff(a->styles[i], b->styles[i]) !=
+                CSS_COMPUTED_STYLE_NO_DIFF) return 0;
+    }
+    return 1;
+}
+
 int html_reconvert_fast_style(struct content *base_c, void *vnode)
 {
 	html_content *c = (html_content *)base_c;
@@ -3691,7 +3705,8 @@ int html_reconvert_fast_style(struct content *base_c, void *vnode)
 	box = box_for_node(node);
 	if (box == NULL || box->styles == NULL || box->style == NULL) return -1;
 
-	if (box->type == BOX_CONTENTS) return -1;
+	if (box->type == BOX_CONTENTS || (box->flags & CLONE) ||
+        box == c->layout) return -1;
 
 	nscss_reset_node_data(node);
 
@@ -3704,7 +3719,10 @@ int html_reconvert_fast_style(struct content *base_c, void *vnode)
 	new_styles = box_get_style((html_content *)c, use_parent, use_root, node, use_parent_env, &new_env);
 	if (new_styles == NULL) return -1;
 
-	if (css_computed_style_is_paint_only_diff(box->style, new_styles->styles[CSS_PSEUDO_ELEMENT_NONE])) {
+	if (html_render_pseudos_unchanged(box->styles, new_styles) &&
+        box->custom_env == new_env &&
+        css_computed_style_is_paint_only_diff(box->style,
+            new_styles->styles[CSS_PSEUDO_ELEMENT_NONE])) {
 		/* 2B-2 opacity: A->B transition check before style replacement */
 		{
 			uint32_t now = 0;
@@ -3800,7 +3818,7 @@ html_reconvert_fast_inherited_color(struct content *base_c, void *vnode)
 	decline_tag[0] = '\0';
 
 	if (c == NULL || node == NULL || c->select_ctx == NULL ||
-		c->layout == NULL || macos9_paint_gw != NULL ||
+		c->layout == NULL || c->stylesheets == NULL || macos9_paint_gw != NULL ||
 		macsurf_reconvert_in_progress != 0 || base_c->active != 0)
 		return -1;
 
@@ -3927,7 +3945,8 @@ html_reconvert_fast_inherited_color(struct content *base_c, void *vnode)
 
 			diff = css_computed_style_diff(own_old,
 					styles->styles[CSS_PSEUDO_ELEMENT_NONE]);
-			if (diff == CSS_COMPUTED_STYLE_OTHER_DIFF) {
+			if (!html_render_pseudos_unchanged(box->styles, styles) ||
+                    diff == CSS_COMPUTED_STYLE_OTHER_DIFF) {
 				dom_string *dnm = NULL;
 				const css_computed_style *ns =
 					styles->styles[CSS_PSEUDO_ELEMENT_NONE];
@@ -4107,6 +4126,78 @@ done:
 	free(stack);
 	return ok ? 0 : -1;
 }
+
+/* Class selectors can reach siblings and descendants. Before reusing the
+ * existing colour transaction at the document element, prove that nodes
+ * without boxes remain display:none. Custom-property environments cannot
+ * be proved from the old ancestor cascade here, so conservatively decline.
+ * The depth limit bounds the native stack independently of page shape. */
+static int html_render_class_coverage(html_content *c, dom_node *node,
+        css_select_ctx *ctx, const css_computed_style *parent, int depth)
+{
+    dom_node_type type;
+    dom_node *child = NULL, *next = NULL;
+    struct box *box;
+    css_select_results *styles = NULL;
+    css_custom_env *env = NULL;
+    int ok = 1;
+    if (depth > 64 || dom_node_get_node_type(node, &type) != DOM_NO_ERR)
+        return 0;
+    if (type == DOM_ELEMENT_NODE) {
+        box = box_for_node(node);
+        if (box != NULL) {
+            if (box->custom_env != NULL) return 0;
+            parent = box->style;
+        } else {
+            styles = box_get_style_with_select_ctx(c, ctx, parent,
+                c->layout->style, node, NULL, &env);
+            ok = styles != NULL && env == NULL &&
+                css_computed_display(styles->styles[CSS_PSEUDO_ELEMENT_NONE],
+                    false) == CSS_DISPLAY_NONE;
+            if (styles != NULL) css_select_results_destroy(styles);
+            if (env != NULL) css_custom_env_unref(env);
+            /* A display:none ancestor suppresses the whole subtree. */
+            return ok;
+        }
+    }
+    if (dom_node_get_first_child(node, &child) != DOM_NO_ERR) return 0;
+    while (child != NULL) {
+        ok = html_render_class_coverage(c, child, ctx, parent, depth + 1);
+        if (ok && dom_node_get_next_sibling(child, &next) != DOM_NO_ERR)
+            ok = 0;
+        dom_node_unref(child);
+        if (!ok) return 0;
+        child = next;
+        next = NULL;
+    }
+    return 1;
+}
+
+int html_reconvert_fast_class(struct content *base_c, void *vnode)
+{
+    html_content *c = (html_content *)base_c;
+    dom_node *root = NULL;
+    css_select_ctx *ctx = NULL;
+    int ok;
+    if (c == NULL || vnode == NULL || c->layout == NULL ||
+            c->stylesheets == NULL || c->select_ctx == NULL)
+        return -1;
+    if (dom_document_get_document_element(c->document, &root) != DOM_NO_ERR ||
+            root == NULL) return -1;
+    /* Root/global mutations remain full fallbacks in this slice. */
+    if (root == vnode || box_for_node(vnode) == NULL ||
+            html_css_new_selection_context(c, &ctx) != NSERROR_OK) {
+        dom_node_unref(root);
+        return -1;
+    }
+    ok = html_render_class_coverage(c, root, ctx, NULL, 0);
+    css_select_ctx_destroy(ctx);
+    if (ok) ok = html_reconvert_fast_inherited_color(base_c, root) == 0;
+    dom_node_unref(root);
+    return ok ? 0 : -1;
+}
+
+
 
 static void html_reconvert_free_old(void)
 {
@@ -4419,18 +4510,6 @@ static void html_reconvert_done(html_content *c, bool success)
 		}
 	}
 #endif
-	/* fixes1235 (#167) - deliver a MutationObserver batch to any
-	 * registered observer. Unlike the resize/load hooks above, this is
-	 * NOT height-gated: a real DOM mutation just completed (that is why
-	 * reconvert ran at all), so every registered observer should hear
-	 * about it, not only ones whose consequence changed the page's
-	 * height. Fires once per completed reconvert -- see js_fire_mutation_
-	 * batch's own comment (macsurf_qjs.c) for why this cannot introduce a
-	 * new feedback-loop frequency beyond what reconvert's debounce/floor
-	 * already bounds. */
-	if (c->js_thread != NULL) {
-		js_fire_mutation_batch(c->js_thread);
-	}
 	macsurf_reconv_pos_set("reconvert-idle", (long) macsurf_reconvert_seq,
 			0, "");
 	macsurf_reconv_pos_flush();
