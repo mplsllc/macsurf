@@ -23,6 +23,10 @@
  * This is part of MacSurf, built on the NetSurf engine. Licensed under GPL v2.
  */
 
+/* DIAGNOSTIC A/B EXPERIMENT - CONTROL_RECONVERT_OFF build.
+ * Comment out this line and rebuild for CONTROL_RECONVERT_ON. */
+#define MACSURF_RECONVERT_DISABLED
+
 #include <string.h>
 
 #include "macos9.h"
