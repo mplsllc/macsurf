@@ -1,0 +1,30 @@
+name: Apply reconvert rework v2
+on:
+  push:
+    branches:
+      - stabilization/reconvert-rework
+    paths:
+      - .github/workflows/apply-reconvert-rework-v2.yml
+permissions:
+  contents: write
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: stabilization/reconvert-rework
+          fetch-depth: 0
+      - run: python3 tools/apply_reconvert_rework.py
+      - run: git diff --check
+      - run: |
+          git config user.name OpenAI
+          git config user.email codex@openai.com
+          git rm .github/workflows/apply-reconvert-rework-v2.yml
+          git rm .github/workflows/apply-targeted-cosmetic.yml || true
+          git rm tools/apply_reconvert_rework.py
+          git add browser/netsurf/content/handlers/html/html.c
+          git add browser/netsurf/frontends/macos9/macos9_reconvert.c
+          git add browser/netsurf/frontends/macos9/macsurf_diag.c
+          git commit -m "render: add live-tree targeted cosmetic updates"
+          git push origin HEAD:stabilization/reconvert-rework
