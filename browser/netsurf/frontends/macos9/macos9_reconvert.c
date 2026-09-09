@@ -23,9 +23,9 @@
  * This is part of MacSurf, built on the NetSurf engine. Licensed under GPL v2.
  */
 
-/* DIAGNOSTIC A/B EXPERIMENT - CONTROL_RECONVERT_OFF build.
- * Comment out this line and rebuild for CONTROL_RECONVERT_ON. */
-#define MACSURF_RECONVERT_DISABLED
+/* Diagnostic CONTROL_RECONVERT_OFF remains available by defining
+ * MACSURF_RECONVERT_DISABLED in the CodeWarrior target.  Do not force it
+ * in-source on the implementation branch. */
 
 #include <string.h>
 
@@ -741,9 +741,13 @@ macos9_reconvert_flush_now(void *cv)
 	 * the safety argument there. This is the window `notdone` was counting
 	 * (565 of 1247 declines on hardware) and the one the featured slider
 	 * measures in. */
-	if (c->status != CONTENT_STATUS_LOADING &&
-	    c->status != CONTENT_STATUS_READY &&
-	    c->status != CONTENT_STATUS_DONE) {
+	/* stabilization/reconvert-rework: never tear down/rebuild the box tree
+	 * while the initial document is still loading or merely READY.  The OFF
+	 * control proved that reconvert is the destabilizing variable, and the
+	 * startup crash family is especially sensitive to rebuilding while object
+	 * callbacks and initial JS are still active.  Geometry therefore declines
+	 * until DONE instead of forcing a synchronous full reconvert. */
+	if (c->status != CONTENT_STATUS_DONE) {
 		g_sync_r_notdone++; g_sync_declined++; return 0;
 	}
 	if (c->active > 0 && macsurf_html_has_droppable_inflight(c)) {
@@ -925,6 +929,15 @@ macos9_reconvert_cb(void *p)
 		if (!macos9_content_is_live(c) ||
 		    !macos9_content_token_valid(c, g_pending[i].token)) {
 			macos9_reconvert_slot_clear(i);
+			continue;
+		}
+
+		/* stabilization/reconvert-rework: structural reconvert is only
+		 * allowed after the document reaches DONE.  Marks that arrive during
+		 * load remain coalesced in this slot and are retried later; we never
+		 * destroy the live box tree underneath initial layout/object/JS work. */
+		if (c->status != CONTENT_STATUS_DONE) {
+			busy = 1;
 			continue;
 		}
 
@@ -1201,6 +1214,19 @@ macos9_js_mark_dom_dirty_node(struct content *c, void *node, int kind)
 	(void) node; (void) kind; (void) c; (void) ms_prov;
 	return;
 #endif /* MACSURF_RECONVERT_DISABLED */
+
+	/* stabilization/reconvert-rework: class/style writes are NOT reasons to
+	 * rebuild the entire document.  The hardware A/B proved that the full
+	 * reconvert transaction is the performance/crash multiplier, while the
+	 * recent targeted fast-style experiment itself crashed in
+	 * html_reconvert_fast_style during startup.  For now keep these mutations
+	 * in the persistent DOM and let the next genuine structural mutation fold
+	 * them into its rebuild.  This deliberately trades class/style-only visual
+	 * freshness for a stable baseline while a safe incremental recascade path
+	 * is built.  Do not queue a node ref, callback, or geometry-forced rebuild. */
+	if (macos9_reconvert_kind_is_cosmetic(kind)) {
+		return;
+	}
 
 	/* fixes874 (#303) - the facebook.com-family allow-list that used to sit
 	 * here is GONE. JS-mutated DOM now repaints on every site.
