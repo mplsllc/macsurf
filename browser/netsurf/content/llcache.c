@@ -513,7 +513,8 @@ static nserror llcache_object_user_destroy(llcache_object_user *user)
 	 * exactly the protection this node needs. */
 	if (!user->dr_queued) {
 		user->dr_queued = 1;
-		macos9_deathrow_add(user, llcache_user_deathrow_teardown, NULL);
+		macos9_deathrow_add(user, llcache_user_deathrow_teardown, NULL,
+				MACOS9_DR_LLCACHE_USER);
 	}
 	return NSERROR_OK;
 #else
@@ -1497,7 +1498,8 @@ llcache_object_destroy(llcache_object *object)
 		return NSERROR_OK;	/* idempotent -> no double free */
 	}
 	object->dr_queued = 1;
-	macos9_deathrow_add(object, llcache_object_deathrow_teardown, NULL);
+	macos9_deathrow_add(object, llcache_object_deathrow_teardown, NULL,
+			MACOS9_DR_LLCACHE_OBJECT);
 	return NSERROR_OK;
 }
 

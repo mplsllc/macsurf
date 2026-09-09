@@ -27,6 +27,7 @@ enum ms_trace_cat {
 	MS_TC_LAYOUT,
 	MS_TC_PAINT,
 	MS_TC_ERROR,
+	MS_TC_LIFETIME,
 	MS_TC__N
 };
 
@@ -50,7 +51,11 @@ enum ms_trace_ev {
 	MS_TE_LAYOUT_FAIL,
 	MS_TE_PAINT_INVALIDATE,
 	MS_TE_PAINT_BEGIN,
-	MS_TE_PAINT_DONE
+	MS_TE_PAINT_DONE,
+	/* Death-row lifecycle: a=the frozen pin-key generation, b=pin passes. */
+	MS_TE_DEATHROW_QUEUE,
+	MS_TE_DEATHROW_PIN,
+	MS_TE_DEATHROW_FREE
 };
 
 /* Arm/disarm. cat_mask is a bitmask of (1u << enum ms_trace_cat); pass 0 to

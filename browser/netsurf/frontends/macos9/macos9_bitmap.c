@@ -383,7 +383,7 @@ macos9_bitmap_destroy(void *bitmap)
 		if (bm->dr_queued) return;
 		bm->dr_queued = 1;
 		macos9_deathrow_add(bm, macos9_bitmap_deathrow_teardown,
-				(struct content *)NULL);
+				(struct content *)NULL, MACOS9_DR_BITMAP);
 		return;
 	}
 	macos9_bitmap_destroy_now(bm);

@@ -529,7 +529,8 @@ void content_destroy(struct content *c)
 		return;
 	}
 	c->dr_queued = 1;
-	macos9_deathrow_add(c, content_deathrow_teardown, c);
+	macos9_deathrow_add(c, content_deathrow_teardown, c,
+			MACOS9_DR_CONTENT);
 }
 
 static void
@@ -991,6 +992,10 @@ content_add_user(struct content *c,
 	user = malloc(sizeof(struct content_user));
 	if (!user)
 		return false;
+	/* The OS 9 deferred-free path reads this after unlinking.  This record
+	 * predates that field and is allocated with malloc, so initialise it
+	 * explicitly instead of inheriting a prior allocator tenant's state. */
+	user->dr_queued = 0;
 	user->callback = callback;
 	user->pw = pw;
 	user->next = c->user_list->next;
@@ -1060,7 +1065,8 @@ content_remove_user(struct content *c,
 	 * the stack. dr_queued gates against a double-enqueue. */
 	if (!next->dr_queued) {
 		next->dr_queued = 1;
-		macos9_deathrow_add(next, content_user_deathrow_teardown, c);
+		macos9_deathrow_add(next, content_user_deathrow_teardown, c,
+				MACOS9_DR_CONTENT_USER);
 	}
 #else
 	free(next);

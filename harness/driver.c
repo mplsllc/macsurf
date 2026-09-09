@@ -965,6 +965,16 @@ static int e3_coercion_test(void)
 	return 0;
 }
 
+static void
+content_user_regression_cb(struct content *c, content_msg msg,
+		const union content_msg_data *data, void *pw)
+{
+	(void)c;
+	(void)msg;
+	(void)data;
+	(void)pw;
+}
+
 int main(int argc, char **argv)
 {
 	char *html_src_big = build_large_doc(300);
@@ -14271,6 +14281,39 @@ box_coords(bx, &cx, &cy);
 			return 1;
 		}
 		fprintf(stderr, "=== Test 111 PASS: overwritten context history is explicit ===\n");
+	}
+
+	/* Test 112: content_user was extended with dr_queued for the OS 9
+	 * deferred-free path, but the ordinary allocation remains malloc().
+	 * The lifecycle flag must begin false on every registration; otherwise a
+	 * recycled nonzero byte makes removal skip retirement and leak the record. */
+	{
+		struct content c;
+		struct content_handler handler;
+		struct content_user *sentinel;
+
+		fprintf(stderr, "\n=== Test 112: content-user death-row flag initialization ===\n");
+		memset(&c, 0, sizeof(c));
+		memset(&handler, 0, sizeof(handler));
+		sentinel = calloc(1, sizeof(*sentinel));
+		if (sentinel == NULL) {
+			fprintf(stderr, "FAIL: Test 112 -- sentinel allocation\n");
+			return 1;
+		}
+		c.handler = &handler;
+		c.user_list = sentinel;
+		if (!content_add_user(&c, content_user_regression_cb, &c) ||
+			c.user_list->next == NULL || c.user_list->next->dr_queued != 0) {
+			fprintf(stderr, "FAIL: Test 112 -- new user retained stale death-row flag\n");
+			return 1;
+		}
+		content_remove_user(&c, content_user_regression_cb, &c);
+		if (c.user_list->next != NULL) {
+			fprintf(stderr, "FAIL: Test 112 -- user was not unlinked\n");
+			return 1;
+		}
+		free(sentinel);
+		fprintf(stderr, "=== Test 112 PASS: fresh user retires deterministically ===\n");
 	}
 
 	return 0;

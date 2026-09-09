@@ -113,6 +113,7 @@ static const char *ms_trace_cat_s(int c)
 	case MS_TC_LAYOUT:   return "LAYOUT";
 	case MS_TC_PAINT:    return "PAINT";
 	case MS_TC_ERROR:    return "ERROR";
+	case MS_TC_LIFETIME: return "LIFETIME";
 	default:             return "?";
 	}
 }

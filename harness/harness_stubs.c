@@ -37,8 +37,8 @@ int macos9_op_depth = 0;
 struct dr_ent { void *ptr; void (*teardown)(void*); struct dr_ent *next; };
 static struct dr_ent *g_dr = NULL;
 struct content;
-void macos9_deathrow_add(void *ptr, void (*teardown)(void *ptr), struct content *pin_key){
-  struct dr_ent *e; (void)pin_key; if(!teardown){return;}
+void macos9_deathrow_add(void *ptr, void (*teardown)(void *ptr), struct content *pin_key, unsigned int kind){
+  struct dr_ent *e; (void)pin_key; (void)kind; if(!teardown){return;}
   e=(struct dr_ent*)malloc(sizeof *e); if(!e){teardown(ptr);return;}
   e->ptr=ptr; e->teardown=teardown; e->next=g_dr; g_dr=e;
 }

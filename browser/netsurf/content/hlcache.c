@@ -187,7 +187,7 @@ hlcache_entry_deferred_free(hlcache_entry *entry)
 	}
 	entry->dr_queued = 1;
 	macos9_deathrow_add(entry, hlcache_node_deathrow_teardown,
-			entry->content);
+			entry->content, MACOS9_DR_HLCACHE_ENTRY);
 }
 
 static void
@@ -198,7 +198,8 @@ hlcache_handle_deferred_free(hlcache_handle *handle)
 	}
 	handle->dr_queued = 1;
 	macos9_deathrow_add(handle, hlcache_node_deathrow_teardown,
-			(handle->entry != NULL) ? handle->entry->content : NULL);
+			(handle->entry != NULL) ? handle->entry->content : NULL,
+			MACOS9_DR_HLCACHE_HANDLE);
 }
 
 /* fixes600 - a nascent retrieval context is freed synchronously from the
@@ -222,7 +223,8 @@ hlcache_rctx_deferred_free(hlcache_retrieval_ctx *ctx)
 		return;
 	}
 	ctx->dr_queued = 1;
-	macos9_deathrow_add(ctx, hlcache_rctx_deathrow_teardown, NULL);
+	macos9_deathrow_add(ctx, hlcache_rctx_deathrow_teardown, NULL,
+			MACOS9_DR_HLCACHE_RCTX);
 }
 
 

@@ -19,7 +19,9 @@
 #include "utils/ns_errors.h"
 
 #include "macos9_deathrow.h"
+#include "macos9_content_registry.h"
 #include "macsurf_debug.h"
+#include "macsurf_trace.h"
 
 /* Operation-depth counter (see header). 0 == quiescent. */
 int macos9_op_depth = 0;
@@ -91,6 +93,8 @@ struct deathrow_rec {
 	void *ptr;
 	void (*teardown)(void *ptr);
 	struct content *pin_key;	/* content to gate on, or NULL */
+	unsigned long pin_token;	/* frozen generation: never read through ptr */
+	unsigned int kind;		/* MACOS9_DR_* owner, frozen at enqueue */
 	unsigned int pin_passes;
 	int active;
 	int stale_logged;
@@ -102,7 +106,7 @@ static int dr_in_drain = 0;	/* re-entrancy guard for the drain */
 
 void
 macos9_deathrow_add(void *ptr, void (*teardown)(void *ptr),
-		struct content *pin_key)
+		struct content *pin_key, unsigned int kind)
 {
 	int i;
 
@@ -158,9 +162,13 @@ macos9_deathrow_add(void *ptr, void (*teardown)(void *ptr),
 	dr_table[i].ptr = ptr;
 	dr_table[i].teardown = teardown;
 	dr_table[i].pin_key = pin_key;
+	dr_table[i].pin_token = macos9_content_token(pin_key);
+	dr_table[i].kind = kind;
 	dr_table[i].pin_passes = 0;
 	dr_table[i].stale_logged = 0;
 	dr_table[i].active = 1;
+	macsurf_trace_emit(MS_TC_LIFETIME, MS_TE_DEATHROW_QUEUE,
+		0, (int)dr_table[i].kind, dr_table[i].pin_token, 0);
 }
 
 /*
@@ -248,6 +256,9 @@ macos9_deathrow_drain(void)
 		 * references this object's content. */
 		if (r->pin_key != NULL && macos9_deathrow_pinned(r->pin_key)) {
 			r->pin_passes++;
+			macsurf_trace_emit(MS_TC_LIFETIME, MS_TE_DEATHROW_PIN,
+				0, (int)r->kind, r->pin_token,
+				(unsigned long)r->pin_passes);
 			if (r->stale_logged == 0 &&
 			    r->pin_passes >= MACOS9_DEATHROW_STALE_PASSES) {
 				macsurf_debug_log_writef(
@@ -307,6 +318,9 @@ macos9_deathrow_drain(void)
 		 * names the entry, with no I/O on the hot path. */
 		macos9_deathrow_cur_ptr = r->ptr;
 		macos9_deathrow_cur_fn = (void *) r->teardown;
+		macsurf_trace_emit(MS_TC_LIFETIME, MS_TE_DEATHROW_FREE,
+			0, (int)r->kind, r->pin_token,
+			(unsigned long)r->pin_passes);
 
 		/* Free for real. Mark the slot free FIRST so a teardown
 		 * that re-enqueues (sub-resource frees) can reuse it. */
