@@ -3683,6 +3683,54 @@ static int html_render_pseudos_unchanged(css_select_results *a,
     return 1;
 }
 
+/* The computed-style arena also carries parser side tables. For an inline
+ * declaration whose source names only paint properties, those side tables can
+ * differ even though no geometry can change. Keep this small lexical proof as
+ * a second, conservative proof for the common JS style writes. */
+static int html_render_inline_paint_only(dom_node *node)
+{
+	dom_string *value = NULL;
+	const char *s;
+	const char *p;
+	const char *colon;
+	const char *end;
+	char name[40];
+	int n;
+	if (node == NULL || dom_element_get_attribute((dom_element *)node,
+			corestring_dom_style, &value) != DOM_NO_ERR || value == NULL)
+		return 0;
+	s = dom_string_data(value);
+	p = s;
+	while (p != NULL && *p != '\0') {
+		while (*p == ' ' || *p == '\t' || *p == ';') p++;
+		if (*p == '\0') break;
+		colon = strchr(p, ':');
+		if (colon == NULL) { dom_string_unref(value); return 0; }
+		end = colon;
+		while (end > p && (end[-1] == ' ' || end[-1] == '\t')) end--;
+		n = (int)(end - p);
+		if (n <= 0 || n >= (int)sizeof(name)) {
+			dom_string_unref(value); return 0;
+		}
+		memcpy(name, p, (size_t)n); name[n] = '\0';
+		if (strcmp(name, "color") != 0 &&
+			strcmp(name, "background-color") != 0 &&
+			strcmp(name, "border-color") != 0 &&
+			strcmp(name, "border-top-color") != 0 &&
+			strcmp(name, "border-right-color") != 0 &&
+			strcmp(name, "border-bottom-color") != 0 &&
+			strcmp(name, "border-left-color") != 0 &&
+			strcmp(name, "outline-color") != 0 &&
+			strcmp(name, "opacity") != 0) {
+			dom_string_unref(value); return 0;
+		}
+		p = strchr(colon, ';');
+		if (p != NULL) p++;
+	}
+	dom_string_unref(value);
+	return 1;
+}
+
 int html_reconvert_fast_style(struct content *base_c, void *vnode)
 {
 	html_content *c = (html_content *)base_c;
@@ -3693,6 +3741,7 @@ int html_reconvert_fast_style(struct content *base_c, void *vnode)
 	css_custom_env *use_parent_env = NULL;
 	const css_computed_style *use_parent = NULL;
 	const css_computed_style *use_root = NULL;
+	const css_computed_style *old_style;
 	extern struct gui_window *macos9_paint_gw;
 	extern int macsurf_reconvert_in_progress;
 	css_color border_color;
@@ -3700,10 +3749,13 @@ int html_reconvert_fast_style(struct content *base_c, void *vnode)
 	if (node == NULL || c == NULL) return -1;
 	if (c->select_ctx == NULL) return -1;
 	
-	if (macos9_paint_gw != NULL || macsurf_reconvert_in_progress != 0 || base_c->active != 0) return -1;
+	if (macos9_paint_gw != NULL || macsurf_reconvert_in_progress != 0 ||
+		c->render_transaction_depth != 0 || base_c->active != 0) return -1;
 
 	box = box_for_node(node);
 	if (box == NULL || box->styles == NULL || box->style == NULL) return -1;
+	old_style = box->styles->styles[CSS_PSEUDO_ELEMENT_NONE];
+	if (old_style == NULL) return -1;
 
 	if (box->type == BOX_CONTENTS || (box->flags & CLONE) ||
         box == c->layout) return -1;
@@ -3718,11 +3770,10 @@ int html_reconvert_fast_style(struct content *base_c, void *vnode)
 
 	new_styles = box_get_style((html_content *)c, use_parent, use_root, node, use_parent_env, &new_env);
 	if (new_styles == NULL) return -1;
-
 	if (html_render_pseudos_unchanged(box->styles, new_styles) &&
-        box->custom_env == new_env &&
-        css_computed_style_is_paint_only_diff(box->style,
-            new_styles->styles[CSS_PSEUDO_ELEMENT_NONE])) {
+		(html_render_inline_paint_only(node) ||
+		 css_computed_style_is_paint_only_diff(old_style,
+			new_styles->styles[CSS_PSEUDO_ELEMENT_NONE]))) {
 		/* 2B-2 opacity: A->B transition check before style replacement */
 		{
 			uint32_t now = 0;
@@ -3757,6 +3808,73 @@ int html_reconvert_fast_style(struct content *base_c, void *vnode)
 
 	css_select_results_destroy(new_styles);
 	if (new_env != NULL) css_custom_env_unref(new_env);
+	return -1;
+}
+
+/* Re-cascade one existing box and re-run layout against that published box
+ * tree. This deliberately declines generated-content, display, table/flex/
+ * grid, float, and continuation changes; those cases remain document or
+ * subtree fallbacks until their attachment rules are explicit. */
+int html_reconvert_fast_layout(struct content *base_c, void *vnode)
+{
+	html_content *c = (html_content *)base_c;
+	dom_node *node = vnode;
+	struct box *box;
+	css_select_results *styles;
+	css_custom_env *env = NULL;
+	const css_computed_style *parent = NULL;
+	const css_computed_style *root = NULL;
+	uint8_t old_display, new_display;
+	int width, height;
+
+	if (c == NULL || node == NULL || c->select_ctx == NULL ||
+		c->layout == NULL || !c->had_initial_layout ||
+		c->render_transaction_depth != 0 || base_c->active != 0)
+		return -1;
+	box = box_for_node(node);
+	if (box == NULL || box->styles == NULL || box->style == NULL ||
+		(box->flags & CLONE) || box == c->layout ||
+		box->type == BOX_CONTENTS || box->type == BOX_TABLE ||
+		box->type == BOX_TABLE_ROW || box->type == BOX_TABLE_CELL ||
+		box->type == BOX_FLEX || box->type == BOX_INLINE_FLEX ||
+		box->type == BOX_GRID || box->type == BOX_INLINE_GRID ||
+		box->type == BOX_FLOAT_LEFT || box->type == BOX_FLOAT_RIGHT)
+		return -1;
+	if (box->parent != NULL && box->parent != c->layout)
+		parent = box->parent->style;
+	root = (c->layout == box) ? NULL : c->layout->style;
+	nscss_reset_node_data(node);
+	styles = box_get_style(c, parent, root, node,
+			box->parent != NULL ? box->parent->custom_env : NULL, &env);
+	if (styles == NULL || !html_render_pseudos_unchanged(box->styles, styles))
+		goto fail;
+	old_display = css_computed_display(box->style, false);
+	new_display = css_computed_display(styles->styles[CSS_PSEUDO_ELEMENT_NONE],
+			false);
+	if (old_display != new_display)
+		goto fail;
+	if (box->styles->styles[CSS_PSEUDO_ELEMENT_NONE] == NULL ||
+		styles->styles[CSS_PSEUDO_ELEMENT_NONE] == NULL)
+		goto fail;
+	if (css_computed_style_diff(box->styles->styles[CSS_PSEUDO_ELEMENT_NONE],
+			styles->styles[CSS_PSEUDO_ELEMENT_NONE]) ==
+			CSS_COMPUTED_STYLE_NO_DIFF)
+		goto fail;
+	if (box->custom_env != NULL) css_custom_env_unref(box->custom_env);
+	box->custom_env = env;
+	env = NULL;
+	css_select_results_destroy(box->styles);
+	box->styles = styles;
+	box->style = styles->styles[CSS_PSEUDO_ELEMENT_NONE];
+	width = c->base.width > 0 ? c->base.width : 1;
+	height = c->base.height > 0 ? c->base.height : 1;
+	if (!layout_document(c, width, height))
+		return -1;
+	html__redraw_a_box(c, box);
+	return 0;
+fail:
+	if (styles != NULL) css_select_results_destroy(styles);
+	if (env != NULL) css_custom_env_unref(env);
 	return -1;
 }
 
@@ -4127,74 +4245,13 @@ done:
 	return ok ? 0 : -1;
 }
 
-/* Class selectors can reach siblings and descendants. Before reusing the
- * existing colour transaction at the document element, prove that nodes
- * without boxes remain display:none. Custom-property environments cannot
- * be proved from the old ancestor cascade here, so conservatively decline.
- * The depth limit bounds the native stack independently of page shape. */
-static int html_render_class_coverage(html_content *c, dom_node *node,
-        css_select_ctx *ctx, const css_computed_style *parent, int depth)
-{
-    dom_node_type type;
-    dom_node *child = NULL, *next = NULL;
-    struct box *box;
-    css_select_results *styles = NULL;
-    css_custom_env *env = NULL;
-    int ok = 1;
-    if (depth > 64 || dom_node_get_node_type(node, &type) != DOM_NO_ERR)
-        return 0;
-    if (type == DOM_ELEMENT_NODE) {
-        box = box_for_node(node);
-        if (box != NULL) {
-            if (box->custom_env != NULL) return 0;
-            parent = box->style;
-        } else {
-            styles = box_get_style_with_select_ctx(c, ctx, parent,
-                c->layout->style, node, NULL, &env);
-            ok = styles != NULL && env == NULL &&
-                css_computed_display(styles->styles[CSS_PSEUDO_ELEMENT_NONE],
-                    false) == CSS_DISPLAY_NONE;
-            if (styles != NULL) css_select_results_destroy(styles);
-            if (env != NULL) css_custom_env_unref(env);
-            /* A display:none ancestor suppresses the whole subtree. */
-            return ok;
-        }
-    }
-    if (dom_node_get_first_child(node, &child) != DOM_NO_ERR) return 0;
-    while (child != NULL) {
-        ok = html_render_class_coverage(c, child, ctx, parent, depth + 1);
-        if (ok && dom_node_get_next_sibling(child, &next) != DOM_NO_ERR)
-            ok = 0;
-        dom_node_unref(child);
-        if (!ok) return 0;
-        child = next;
-        next = NULL;
-    }
-    return 1;
-}
-
 int html_reconvert_fast_class(struct content *base_c, void *vnode)
 {
-    html_content *c = (html_content *)base_c;
-    dom_node *root = NULL;
-    css_select_ctx *ctx = NULL;
-    int ok;
-    if (c == NULL || vnode == NULL || c->layout == NULL ||
-            c->stylesheets == NULL || c->select_ctx == NULL)
-        return -1;
-    if (dom_document_get_document_element(c->document, &root) != DOM_NO_ERR ||
-            root == NULL) return -1;
-    /* Root/global mutations remain full fallbacks in this slice. */
-    if (root == vnode || box_for_node(vnode) == NULL ||
-            html_css_new_selection_context(c, &ctx) != NSERROR_OK) {
-        dom_node_unref(root);
-        return -1;
-    }
-    ok = html_render_class_coverage(c, root, ctx, NULL, 0);
-    css_select_ctx_destroy(ctx);
-    if (ok) ok = html_reconvert_fast_inherited_color(base_c, root) == 0;
-    dom_node_unref(root);
-    return ok ? 0 : -1;
+	/* A class recascade is safe only when the existing inherited-style
+	 * transaction can prove every affected descendant remains paint-only. The
+	 * transaction walks the node's existing box subtree and declines if a
+	 * selector changes topology or geometry. */
+	return html_reconvert_fast_inherited_color(base_c, vnode);
 }
 
 
@@ -5136,6 +5193,7 @@ static void html_reformat(struct content *c, int width, int height)
 			"html_reformat: layout NULL (re-convert in flight), skip");
 		return;
 	}
+	htmlc->render_transaction_depth++;
 
 	/* fixes930 - did the fixes929 URL->size memo actually do anything?
 	 * stored= grew means images are completing and recording their size;
@@ -6006,8 +6064,8 @@ static void html_reformat(struct content *c, int width, int height)
 	htmlc->had_initial_layout = true;
 
 	/* The completed layout now owns the same css_media state author CSS used.
-	 * Let MediaQueryLists compare their prior value only at this safe boundary;
-	 * a listener-induced DOM mutation will follow the ordinary reconvert path. */
+	 * Mark MediaQueryLists pending; the JS host checkpoint delivers them after
+	 * this render transaction returns to the event loop. */
 #ifdef WITH_QUICKJS
 	if (htmlc->js_thread != NULL)
 		js_media_state_changed(htmlc->js_thread);
@@ -6033,6 +6091,7 @@ static void html_reformat(struct content *c, int width, int height)
 	c->reformat_time = ms_after + ms_interval;
 
 	MS_LOG("html_reformat: exit");
+	htmlc->render_transaction_depth--;
 }
 
 

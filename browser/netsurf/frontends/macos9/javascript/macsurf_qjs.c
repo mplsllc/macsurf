@@ -121,6 +121,7 @@ struct jsheap *g_heap = NULL;  /* exported for audit */
  * js_destroyheap() unlinks.  Exists so macsurf_qjs_pump_all() can pump all of
  * them; see the note there for why pumping only g_heap froze iframes. */
 static struct jsheap *g_heap_list = NULL;
+static void js_media_state_discard_ctx(JSContext *ctx);
 #define QJS_IO_TIMER_TARGET_CAP 64
 #define QJS_IO_TIMER_EXPECT_CAP 64
 static unsigned long qjs_ctx_gen(JSContext *ctx);
@@ -15965,6 +15966,8 @@ nserror js_newheap(int timeout, struct jsheap **out_heap)
 void js_destroyheap(struct jsheap *heap)
 {
 	if (heap == NULL) return;
+	if (heap->ctx != NULL)
+		js_media_state_discard_ctx(heap->ctx);
 	/* fixes854 (#283) - drop this heap's timer + XHR slots BEFORE the context
 	 * dies.  Both arenas are global while heaps are per-window/per-iframe, so
 	 * a closed iframe used to leave `live` slots behind holding JSValues into
@@ -16036,6 +16039,7 @@ nserror js_newthread(struct jsheap *heap, void *win_priv, void *doc_priv,
 	if (doc_priv != NULL) htmlc = (html_content *)doc_priv;
 	if (doc_priv != NULL && heap->ctx != NULL) {
 		JSContext *fresh;
+		js_media_state_discard_ctx(heap->ctx);
 		/* fixes1312 (#167, A3) - one real navigation, one nav_seq. Read
 		 * by the "LIFE js src" line and the FBCR __d wrapper so both
 		 * can be diffed nav-by-nav. */
@@ -17189,17 +17193,45 @@ void js_fire_mutation_batch(struct jsthread *thread)
 	macsurf_qjs__safe_eval(thread->ctx, s_deliver_src);
 }
 
-/* The document owns its MediaQueryList registry. html_reformat calls this
- * only after it has published the new css_media values and completed layout;
- * the JS-side check emits change events solely for lists whose truth changed. */
+/* The document owns its MediaQueryList registry. html_reformat only queues
+ * this work after publishing the new css_media values; the host checkpoint
+ * performs the JS-side check after layout and box-tree work have returned. */
+static struct jsthread *g_media_pending[16];
+static int g_media_pending_count;
+
 void js_media_state_changed(struct jsthread *thread)
+{
+	int i;
+	if (thread == NULL || thread->ctx == NULL) return;
+	for (i = 0; i < g_media_pending_count; i++)
+		if (g_media_pending[i] == thread) return;
+	if (g_media_pending_count < 16)
+		g_media_pending[g_media_pending_count++] = thread;
+}
+
+void js_media_state_checkpoint(void)
 {
 	static const char s_media_check_src[] =
 		"(function(){try{"
 		"if(typeof __msMediaCheck==='function')__msMediaCheck();"
 		"}catch(e){}})();";
-	if (thread == NULL || thread->ctx == NULL) return;
-	macsurf_qjs__safe_eval(thread->ctx, s_media_check_src);
+	int i;
+	for (i = 0; i < g_media_pending_count; i++) {
+		if (g_media_pending[i] != NULL && g_media_pending[i]->ctx != NULL)
+			macsurf_qjs__safe_eval(g_media_pending[i]->ctx,
+					s_media_check_src);
+	}
+	g_media_pending_count = 0;
+}
+
+static void js_media_state_discard_ctx(JSContext *ctx)
+{
+	int i, out = 0;
+	for (i = 0; i < g_media_pending_count; i++) {
+		if (g_media_pending[i] == NULL || g_media_pending[i]->ctx != ctx)
+			g_media_pending[out++] = g_media_pending[i];
+	}
+	g_media_pending_count = out;
 }
 
 /* fixes652: real-build definition of interaction.c's click bridge (Gate 5).
@@ -17597,6 +17629,10 @@ void macsurf_qjs_pump_all(void)
 			s_reconv_was_active = 0;
 		}
 	}
+	/* Rendering only marks media work pending. Deliver it once we are back at
+	 * the host checkpoint, outside html_reformat/layout and outside any box
+	 * replacement transaction. */
+	js_media_state_checkpoint();
 	/* fixes862 (#289 probe) - fixes861 shipped with NO observable marker, so
 	 * there was no way to tell from a log whether it was even in the build,
 	 * let alone whether a second (iframe) heap exists to pump. Log the heap

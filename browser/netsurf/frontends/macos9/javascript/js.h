@@ -51,6 +51,9 @@ void js_fire_mutation_batch(jsthread *thread);
 /* Re-evaluate per-document MediaQueryLists after layout has published a new
  * css_media viewport state. Implemented by the QuickJS frontend. */
 void js_media_state_changed(jsthread *thread);
+/* Deliver media-query changes at the host checkpoint, after rendering has
+ * returned to the event loop. */
+void js_media_state_checkpoint(void);
 #else
 
 #ifndef NETSURF_JAVASCRIPT_JS_H_

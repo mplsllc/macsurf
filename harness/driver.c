@@ -9289,6 +9289,12 @@ box_coords(bx, &cx, &cy);
 			t69c.unit_len_ctx.viewport_width = INTTOFIX(700);
 			js_media_state_changed(t69thread);
 			mql_ok = js_exec(t69thread,
+					(const unsigned char *)"if(__mqlEvents.length!==0)throw Error('media delivered inline');",
+					strlen("if(__mqlEvents.length!==0)throw Error('media delivered inline');"),
+					"driver-mql-deferred-check.js");
+			if (!mql_ok) return 1;
+			macsurf_qjs_pump_all();
+			mql_ok = js_exec(t69thread,
 					(const unsigned char *)mql_check_false_js,
 					strlen(mql_check_false_js), "driver-mql-false-check.js");
 			if (!mql_ok) {
@@ -9298,6 +9304,7 @@ box_coords(bx, &cx, &cy);
 			t69c.media.width = INTTOFIX(993);
 			t69c.unit_len_ctx.viewport_width = INTTOFIX(993);
 			js_media_state_changed(t69thread);
+			macsurf_qjs_pump_all();
 			mql_ok = js_exec(t69thread,
 					(const unsigned char *)mql_check_true_js,
 					strlen(mql_check_true_js), "driver-mql-true-check.js");

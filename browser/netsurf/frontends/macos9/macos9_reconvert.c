@@ -22,6 +22,7 @@ extern int html_reconvert_content(struct content *c);
 extern int html_reconvert_fast_class(struct content *c, void *node);
 extern int html_reconvert_fast_style(struct content *c, void *node);
 extern int html_reconvert_fast_inherited_color(struct content *c, void *node);
+extern int html_reconvert_fast_layout(struct content *c, void *node);
 extern int macsurf_html_has_droppable_inflight(struct content *c);
 extern void *macsurf_reconvert_node_ref(void *node);
 extern void macsurf_reconvert_node_unref(void *node);
@@ -201,10 +202,11 @@ static int macos9_reconvert_process(int i)
     struct macos9_reconvert_pending *pending = &g_pending[i];
     struct ms_diag_render_scope scope;
     unsigned j;
-    int full, rc, class_result;
-    if (!macos9_reconvert_valid(pending)) {
-        macos9_reconvert_release(pending);
-        return 0;
+	int full, rc, class_result, full_reason;
+	if (!macos9_reconvert_valid(pending)) {
+		g_render_stats.full_generation++;
+		macos9_reconvert_release(pending);
+		return 0;
     }
 #ifdef __MACOS9__
     /* Use the existing quiescent lifetime fence for synchronous callers too. */
@@ -220,37 +222,90 @@ static int macos9_reconvert_process(int i)
     g_render_stats.batches_processed++;
     ms_diag_batch_freeze(active.prov.batch);
     (void)ms_diag_render_enter(&scope, MS_RENDER_RECONVERT, &active.prov);
-    full = active.overflow;
-    class_result = -2;
-    for (j = 0; j < active.count; j++) {
-        rc = -1;
-        if (active.invalidation[j].kind == MACOS9_DOMMUT_SETATTR_STYLE) {
-            rc = html_reconvert_fast_style(active.c, active.invalidation[j].node);
-            if (rc == 0) g_render_stats.targeted_paint++;
-            else {
-                g_inherited_color_attempt++;
-                rc = html_reconvert_fast_inherited_color(active.c,
-                    active.invalidation[j].node);
-                if (rc == 0) {
-                    g_render_stats.targeted_inherited++;
-                    g_inherited_color_commit++;
-                } else g_inherited_color_fallback++;
-            }
-        }
-        if (active.invalidation[j].kind == MACOS9_DOMMUT_SETATTR_CLASS) {
-            if (class_result == -2)
-                class_result = html_reconvert_fast_class(active.c,
-                    active.invalidation[j].node);
-            rc = class_result;
-            if (rc == 0) g_render_stats.targeted_inherited++;
-        }
-        if (rc != 0) full = 1;
-    }
-    rc = 0;
-    if (full) {
-        g_render_stats.full_fallback++;
-        rc = html_reconvert_content(active.c);
-    }
+	full = active.overflow;
+	full_reason = active.overflow ? 7 : 0;
+	class_result = -2;
+	for (j = 0; j < active.count; j++) {
+		rc = -1;
+		if (active.invalidation[j].kind == MACOS9_DOMMUT_SETATTR_STYLE) {
+			rc = html_reconvert_fast_style(active.c, active.invalidation[j].node);
+			if (rc == 0) {
+				g_render_stats.targeted_paint++;
+				g_render_stats.render_paint++;
+			}
+			else {
+				g_inherited_color_attempt++;
+				rc = html_reconvert_fast_inherited_color(active.c,
+					active.invalidation[j].node);
+				if (rc == 0) {
+					g_render_stats.targeted_inherited++;
+					g_render_stats.render_style++;
+					g_inherited_color_commit++;
+				} else {
+					g_inherited_color_fallback++;
+					rc = html_reconvert_fast_layout(active.c,
+						active.invalidation[j].node);
+					if (rc == 0)
+						g_render_stats.render_layout++;
+				}
+			}
+		}
+		if (active.invalidation[j].kind == MACOS9_DOMMUT_SETATTR_CLASS) {
+			if (class_result == -2)
+				class_result = html_reconvert_fast_style(active.c,
+					active.invalidation[j].node);
+			if (class_result != 0)
+				class_result = html_reconvert_fast_class(active.c,
+					active.invalidation[j].node);
+			rc = class_result;
+			if (rc == 0) {
+				g_render_stats.targeted_inherited++;
+				g_render_stats.render_style++;
+			}
+		}
+		if (rc != 0) {
+			full = 1;
+			if (full_reason == 0) {
+				switch (active.invalidation[j].kind) {
+				case MACOS9_DOMMUT_APPENDCHILD:
+				case MACOS9_DOMMUT_REMOVECHILD:
+				case MACOS9_DOMMUT_INSERTBEFORE:
+				case MACOS9_DOMMUT_INNERHTML:
+					full_reason = 1;
+					break;
+				case MACOS9_DOMMUT_TEXTCONTENT:
+				case MACOS9_DOMMUT_CHARDATA:
+					full_reason = 2;
+					break;
+				case MACOS9_DOMMUT_SETATTRIBUTE:
+				case MACOS9_DOMMUT_REMOVEATTRIBUTE:
+					full_reason = 4;
+					break;
+				case MACOS9_DOMMUT_SETATTR_CLASS:
+				case MACOS9_DOMMUT_SETATTR_STYLE:
+					full_reason = 3;
+					break;
+				default:
+					full_reason = 9;
+					break;
+				}
+			}
+		}
+	}
+	rc = 0;
+	if (full) {
+		g_render_stats.full_fallback++;
+		g_render_stats.render_document++;
+		switch (full_reason) {
+		case 1: g_render_stats.full_structural++; break;
+		case 2: g_render_stats.full_text++; break;
+		case 3: g_render_stats.full_layout_style++; break;
+		case 4: g_render_stats.full_unknown_attr++; break;
+		case 7: g_render_stats.full_overflow++; break;
+		default: g_render_stats.full_other++; break;
+		}
+		rc = html_reconvert_content(active.c);
+	}
     ms_diag_render_leave(&scope, rc == 0 ? MS_RRES_DONE : MS_RRES_QUEUED,
         MS_SREASON_NONE);
     pending->processing = 0;

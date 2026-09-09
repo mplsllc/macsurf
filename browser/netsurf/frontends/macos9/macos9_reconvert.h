@@ -93,6 +93,21 @@ struct macos9_render_stats {
     long batch_overflow;
     long rerun_batches;
     long mutations_during_processing;
+    long render_none;
+    long render_paint;
+    long render_style;
+    long render_layout;
+    long render_subtree;
+    long render_document;
+    long full_structural;
+    long full_text;
+    long full_layout_style;
+    long full_unknown_attr;
+    long full_global_style;
+    long full_imprecise;
+    long full_overflow;
+    long full_generation;
+    long full_other;
 };
 void macos9_reconvert_render_stats(struct macos9_render_stats *stats);
 

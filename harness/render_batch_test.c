@@ -59,6 +59,8 @@ int html_reconvert_fast_style(struct content *c, void *n)
 }
 int html_reconvert_fast_inherited_color(struct content *c, void *n)
 { (void)c; inherited_calls++; return ((struct fake_node *)n)->inherited ? 0 : -1; }
+int html_reconvert_fast_layout(struct content *c, void *n)
+{ (void)c; (void)n; return -1; }
 int html_reconvert_fast_class(struct content *c, void *n)
 { return html_reconvert_fast_inherited_color(c, n); }
 int html_reconvert_content(struct content *c)

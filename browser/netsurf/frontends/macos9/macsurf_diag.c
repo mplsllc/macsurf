@@ -196,6 +196,16 @@ long macsurf_diag_serialize_summary(char *buf, long cap)
     snprintf(line, sizeof line, "rerun=%ld during=%ld\n",
         render.rerun_batches, render.mutations_during_processing);
     n = diag_cat(buf, cap, n, line);
+    snprintf(line, sizeof line, "levels=none/%ld paint/%ld style/%ld layout/%ld subtree/%ld document/%ld\n",
+        render.render_none, render.render_paint, render.render_style,
+        render.render_layout, render.render_subtree, render.render_document);
+    n = diag_cat(buf, cap, n, line);
+    snprintf(line, sizeof line, "full_reason=structural/%ld text/%ld layout_style/%ld unknown_attr/%ld global_style/%ld imprecise/%ld overflow/%ld generation/%ld other/%ld\n",
+        render.full_structural, render.full_text, render.full_layout_style,
+        render.full_unknown_attr, render.full_global_style,
+        render.full_imprecise, render.full_overflow,
+        render.full_generation, render.full_other);
+    n = diag_cat(buf, cap, n, line);
 	snprintf(line, sizeof line, "nav=%lu\n",
 		(unsigned long) (g_diag_last_nav ?
 			g_diag_last_nav : macsurf_gap_last_nav()));
