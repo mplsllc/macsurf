@@ -41,7 +41,7 @@ struct hubbub_parser {
 hubbub_error hubbub_parser_create(const char *enc, bool fix_enc,
 		hubbub_parser **parser)
 {
-	parserutils_error perror;
+	parserutils_error pu_error;
 	hubbub_error error;
 	hubbub_parser *p;
 
@@ -65,12 +65,12 @@ hubbub_error hubbub_parser_create(const char *enc, bool fix_enc,
 		}
 	}
 
-	perror = parserutils_inputstream_create(enc,
+	pu_error = parserutils_inputstream_create(enc,
 		enc != NULL ? HUBBUB_CHARSET_CONFIDENT : HUBBUB_CHARSET_UNKNOWN,
 		hubbub_charset_extract, &p->stream);
-	if (perror != PARSERUTILS_OK) {
+	if (pu_error != PARSERUTILS_OK) {
 		free(p);
-		return hubbub_error_from_parserutils_error(perror);
+		return hubbub_error_from_parserutils_error(pu_error);
 	}
 
 	error = hubbub_tokeniser_create(p->stream, &p->tok);
@@ -235,15 +235,15 @@ hubbub_error hubbub_parser_insert_chunk(hubbub_parser *parser,
 hubbub_error hubbub_parser_parse_chunk(hubbub_parser *parser,
 		const uint8_t *data, size_t len)
 {
-	parserutils_error perror;
+	parserutils_error pu_error;
 	hubbub_error error;
 
 	if (parser == NULL || data == NULL)
 		return HUBBUB_BADPARM;
 
-	perror = parserutils_inputstream_append(parser->stream, data, len);
-	if (perror != PARSERUTILS_OK)
-		return hubbub_error_from_parserutils_error(perror);
+	pu_error = parserutils_inputstream_append(parser->stream, data, len);
+	if (pu_error != PARSERUTILS_OK)
+		return hubbub_error_from_parserutils_error(pu_error);
 
 	error = hubbub_tokeniser_run(parser->tok);
 	if (error == HUBBUB_BADENCODING) {
@@ -251,14 +251,14 @@ hubbub_error hubbub_parser_parse_chunk(hubbub_parser *parser,
 		 * support. We've not actually processed any data at this
 		 * point so fall back to Windows-1252 and hope for the best
 		 */
-		perror = parserutils_inputstream_change_charset(parser->stream,
+		pu_error = parserutils_inputstream_change_charset(parser->stream,
 				"Windows-1252", HUBBUB_CHARSET_TENTATIVE);
 		/* Under no circumstances should we get here if we've managed
 		 * to process data. If there is a way, I want to know about it
 		 */
-		assert(perror != PARSERUTILS_INVALID);
-		if (perror != PARSERUTILS_OK)
-			return hubbub_error_from_parserutils_error(perror);
+		assert(pu_error != PARSERUTILS_INVALID);
+		if (pu_error != PARSERUTILS_OK)
+			return hubbub_error_from_parserutils_error(pu_error);
 
 		/* Retry the tokenisation */
 		error = hubbub_tokeniser_run(parser->tok);
@@ -278,15 +278,15 @@ hubbub_error hubbub_parser_parse_chunk(hubbub_parser *parser,
  */
 hubbub_error hubbub_parser_completed(hubbub_parser *parser)
 {
-	parserutils_error perror;
+	parserutils_error pu_error;
 	hubbub_error error;
 
 	if (parser == NULL)
 		return HUBBUB_BADPARM;
 
-	perror = parserutils_inputstream_append(parser->stream, NULL, 0);
-	if (perror != PARSERUTILS_OK)
-		return hubbub_error_from_parserutils_error(perror);
+	pu_error = parserutils_inputstream_append(parser->stream, NULL, 0);
+	if (pu_error != PARSERUTILS_OK)
+		return hubbub_error_from_parserutils_error(pu_error);
 
 	error = hubbub_tokeniser_run(parser->tok);
 	if (error != HUBBUB_OK)
@@ -317,4 +317,3 @@ const char *hubbub_parser_read_charset(hubbub_parser *parser,
 
 	return name;
 }
-

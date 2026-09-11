@@ -285,7 +285,7 @@ static hubbub_error hubbub_tokeniser_emit_token(hubbub_tokeniser *tokeniser,
 hubbub_error hubbub_tokeniser_create(parserutils_inputstream *input,
 		hubbub_tokeniser **tokeniser)
 {
-	parserutils_error perror;
+	parserutils_error pu_error;
 	hubbub_tokeniser *tok;
 
 	if (input == NULL || tokeniser == NULL)
@@ -295,17 +295,17 @@ hubbub_error hubbub_tokeniser_create(parserutils_inputstream *input,
 	if (tok == NULL)
 		return HUBBUB_NOMEM;
 
-	perror = parserutils_buffer_create(&tok->buffer);
-	if (perror != PARSERUTILS_OK) {
+	pu_error = parserutils_buffer_create(&tok->buffer);
+	if (pu_error != PARSERUTILS_OK) {
 		free(tok);
-		return hubbub_error_from_parserutils_error(perror);
+		return hubbub_error_from_parserutils_error(pu_error);
 	}
 
-	perror = parserutils_buffer_create(&tok->insert_buf);
-	if (perror != PARSERUTILS_OK) {
+	pu_error = parserutils_buffer_create(&tok->insert_buf);
+	if (pu_error != PARSERUTILS_OK) {
 		parserutils_buffer_destroy(tok->buffer);
 		free(tok);
-		return hubbub_error_from_parserutils_error(perror);
+		return hubbub_error_from_parserutils_error(pu_error);
 	}
 
 	tok->state = STATE_DATA;
@@ -433,14 +433,14 @@ hubbub_error hubbub_tokeniser_setopt(hubbub_tokeniser *tokeniser,
 hubbub_error hubbub_tokeniser_insert_chunk(hubbub_tokeniser *tokeniser,
 		const uint8_t *data, size_t len)
 {
-	parserutils_error perror;
+	parserutils_error pu_error;
 
 	if (tokeniser == NULL || data == NULL)
 		return HUBBUB_BADPARM;
 
-	perror = parserutils_buffer_append(tokeniser->insert_buf, data, len);
-	if (perror != PARSERUTILS_OK)
-		return hubbub_error_from_parserutils_error(perror);
+	pu_error = parserutils_buffer_append(tokeniser->insert_buf, data, len);
+	if (pu_error != PARSERUTILS_OK)
+		return hubbub_error_from_parserutils_error(pu_error);
 
 	return HUBBUB_OK;
 }
@@ -644,32 +644,32 @@ hubbub_error hubbub_tokeniser_run(hubbub_tokeniser *tokeniser)
 
 #define START_BUF(str, cptr, length) \
 	do { \
-		parserutils_error perror; \
-		perror = parserutils_buffer_append(tokeniser->buffer, \
+		parserutils_error pu_error; \
+		pu_error = parserutils_buffer_append(tokeniser->buffer, \
 				(uint8_t *) (cptr), (length)); \
-		if (perror != PARSERUTILS_OK) \
-			return hubbub_error_from_parserutils_error(perror); \
+		if (pu_error != PARSERUTILS_OK) \
+			return hubbub_error_from_parserutils_error(pu_error); \
 		(str).len = (length); \
 	} while (0)
 
 #define COLLECT(str, cptr, length) \
 	do { \
-		parserutils_error perror; \
+		parserutils_error pu_error; \
 		assert(str.len != 0); \
-		perror = parserutils_buffer_append(tokeniser->buffer, \
+		pu_error = parserutils_buffer_append(tokeniser->buffer, \
 				(uint8_t *) (cptr), (length)); \
-		if (perror != PARSERUTILS_OK) \
-			return hubbub_error_from_parserutils_error(perror); \
+		if (pu_error != PARSERUTILS_OK) \
+			return hubbub_error_from_parserutils_error(pu_error); \
 		(str).len += (length); \
 	} while (0)
 
 #define COLLECT_MS(str, cptr, length) \
 	do { \
-		parserutils_error perror; \
-		perror = parserutils_buffer_append(tokeniser->buffer, \
+		parserutils_error pu_error; \
+		pu_error = parserutils_buffer_append(tokeniser->buffer, \
 				(uint8_t *) (cptr), (length)); \
-		if (perror != PARSERUTILS_OK) \
-			return hubbub_error_from_parserutils_error(perror); \
+		if (pu_error != PARSERUTILS_OK) \
+			return hubbub_error_from_parserutils_error(pu_error); \
 		(str).len += (length); \
 	} while (0)
 
