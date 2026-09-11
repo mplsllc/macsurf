@@ -11,22 +11,7 @@
 #include <parserutils/charset/mibenum.h>
 #include <parserutils/input/inputstream.h>
 
-/* CW8 rejects these definitions after parsing their public prototypes. */
-#define hubbub_parser_create hubbub_parser_create_prototype
-#define hubbub_parser_destroy hubbub_parser_destroy_prototype
-#define hubbub_parser_setopt hubbub_parser_setopt_prototype
-#define hubbub_parser_parse_chunk hubbub_parser_parse_chunk_prototype
-#define hubbub_parser_insert_chunk hubbub_parser_insert_chunk_prototype
-#define hubbub_parser_completed hubbub_parser_completed_prototype
-#define hubbub_parser_read_charset hubbub_parser_read_charset_prototype
 #include <hubbub/parser.h>
-#undef hubbub_parser_create
-#undef hubbub_parser_destroy
-#undef hubbub_parser_setopt
-#undef hubbub_parser_parse_chunk
-#undef hubbub_parser_insert_chunk
-#undef hubbub_parser_completed
-#undef hubbub_parser_read_charset
 
 #include "hub_charset_detect.h"
 #include "tokeniser/tokeniser.h"
