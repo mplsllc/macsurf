@@ -77,6 +77,60 @@ typedef struct css_computed_content_item {
 	} data;
 } css_computed_content_item;
 
+#define CSS_TRANSITION_MAX_LIST 8
+
+enum css_transition_prop_kind {
+	CSS_TRANS_PROP_ALL = 0,
+	CSS_TRANS_PROP_NONE,
+	CSS_TRANS_PROP_KNOWN,       /* Known CSS_PROP_* numeric opcode */
+	CSS_TRANS_PROP_CUSTOM_IDENT /* Preserved lwc_string* for custom/unsupported property */
+};
+
+typedef struct css_transition_prop_entry {
+	enum css_transition_prop_kind kind;
+	uint32_t prop_id;           /* CSS_PROP_* when kind == CSS_TRANS_PROP_KNOWN */
+	lwc_string *custom_name;    /* Refcounted when kind == CSS_TRANS_PROP_CUSTOM_IDENT */
+} css_transition_prop_entry;
+
+enum css_transition_timing_type {
+	CSS_TIMING_EASE = 0,
+	CSS_TIMING_LINEAR,
+	CSS_TIMING_EASE_IN,
+	CSS_TIMING_EASE_OUT,
+	CSS_TIMING_EASE_IN_OUT,
+	CSS_TIMING_CUBIC_BEZIER,
+	CSS_TIMING_STEPS
+};
+
+typedef struct css_transition_timing_entry {
+	enum css_transition_timing_type type;
+	int32_t x1, y1, x2, y2;     /* Q16.16 for cubic-bezier */
+	uint32_t step_count;        /* for steps(n, pos) */
+	uint8_t step_pos;           /* JUMP_START, JUMP_END, etc. */
+} css_transition_timing_entry;
+
+typedef struct css_computed_transition_data {
+	uint8_t inherit_flags;
+	uint8_t prop_count;
+	css_transition_prop_entry props[CSS_TRANSITION_MAX_LIST];
+
+	uint8_t duration_count;
+	css_fixed durations[CSS_TRANSITION_MAX_LIST]; /* css_fixed (seconds) */
+
+	uint8_t timing_count;
+	css_transition_timing_entry timings[CSS_TRANSITION_MAX_LIST];
+
+	uint8_t delay_count;
+	css_fixed delays[CSS_TRANSITION_MAX_LIST];    /* css_fixed (seconds), can be negative */
+} css_computed_transition_data;
+
+typedef struct css_effective_transition_descriptor {
+	css_transition_prop_entry prop;
+	css_fixed duration;
+	css_transition_timing_entry timing;
+	css_fixed delay;
+} css_effective_transition_descriptor;
+
 css_error css_computed_style_destroy(css_computed_style *style);
 
 /* Semantic difference classification for conservative incremental styling. */
@@ -812,6 +866,22 @@ uint8_t css_computed_justify_content(
 uint8_t css_computed_order(
 		const css_computed_style *style,
 		int32_t *order);
+
+/* CSS Transition Accessors */
+const css_computed_transition_data *css_computed_transition_data_get(
+		const css_computed_style *style);
+
+uint32_t css_computed_transition_descriptor_count(
+		const css_computed_style *style);
+
+bool css_computed_transition_descriptor(
+		const css_computed_style *style,
+		uint32_t index,
+		css_effective_transition_descriptor *out);
+
+bool css_computed_transition_data_equal(
+		const css_computed_style *a,
+		const css_computed_style *b);
 
 #ifdef __cplusplus
 }
