@@ -201,7 +201,12 @@ const css_prop_handler property_handlers[LAST_PROP + 1 - FIRST_PROP] =
 	css__parse_justify_self,   /* #279 follow-up */
 	css__parse_background_origin,
 	css__parse_background_blend_mode,
-	css__parse_fill
+	css__parse_fill,
+	css__parse_transition,
+	css__parse_transition_property,
+	css__parse_transition_duration,
+	css__parse_transition_timing_function,
+	css__parse_transition_delay
 };
 
 /** Mapping from property bytecode index to bytecode unit class mask. */
@@ -364,4 +369,8 @@ const uint32_t property_unit_mask[CSS_N_PROPERTIES] = {
 	[CSS_PROP_JUSTIFY_CONTENT]       = UNIT_MASK_JUSTIFY_CONTENT,
 	[CSS_PROP_ORDER]                 = UNIT_MASK_ORDER,
 	[CSS_PROP_FILL]                  = 0,
+	[CSS_PROP_TRANSITION_PROPERTY]   = 0,
+	[CSS_PROP_TRANSITION_DURATION]   = 0,
+	[CSS_PROP_TRANSITION_TIMING_FUNCTION] = 0,
+	[CSS_PROP_TRANSITION_DELAY]      = 0,
 };

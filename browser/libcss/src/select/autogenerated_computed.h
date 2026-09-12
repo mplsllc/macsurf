@@ -594,6 +594,13 @@ struct css_computed_style {
 	 * Appended at struct end per
 	 * project_libcss_struct_mid_insert_crash. */
 	lwc_string *macsurf_calc_expr[MACSURF_CALC_SLOT_COUNT];
+	/* Group 2: optional heap-allocated transition sidecar.
+	 * NULL when all 4 transition longhands have default initial values
+	 * (transition-property: all, duration: 0s, timing: ease, delay: 0s).
+	 * Compared semantically in arena.c, deep-copied in clone, destroyed
+	 * in computed.c css_computed_style_destroy. Appended at struct end
+	 * per project_libcss_struct_mid_insert_crash. */
+	css_computed_transition_data *transition_data;
 };
 
 #endif

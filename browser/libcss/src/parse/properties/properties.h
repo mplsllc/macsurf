@@ -716,5 +716,20 @@ css_error css__parse_fill(css_language *c,
 css_error css__parse_background_blend_mode(css_language *c,
 		const parserutils_vector *vector, int32_t *ctx,
 		css_style *result);
+css_error css__parse_transition(css_language *c,
+		const parserutils_vector *vector, int32_t *ctx,
+		css_style *result);
+css_error css__parse_transition_property(css_language *c,
+		const parserutils_vector *vector, int32_t *ctx,
+		css_style *result);
+css_error css__parse_transition_duration(css_language *c,
+		const parserutils_vector *vector, int32_t *ctx,
+		css_style *result);
+css_error css__parse_transition_timing_function(css_language *c,
+		const parserutils_vector *vector, int32_t *ctx,
+		css_style *result);
+css_error css__parse_transition_delay(css_language *c,
+		const parserutils_vector *vector, int32_t *ctx,
+		css_style *result);
 
 #endif
