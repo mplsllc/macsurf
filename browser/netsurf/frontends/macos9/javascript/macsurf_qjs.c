@@ -132,6 +132,7 @@ struct qjs_realm_owner {
 };
 
 static struct qjs_realm_owner *g_qjs_realm_owners = NULL;
+static unsigned long qjs_ctx_gen(JSContext *ctx);
 
 static struct qjs_realm_owner *qjs_owner_for_ctx(JSContext *ctx)
 {
@@ -187,6 +188,25 @@ struct content *qjs_get_content_for_ctx(JSContext *ctx)
 {
 	struct qjs_realm_owner *owner = qjs_owner_for_ctx(ctx);
 	return (owner != NULL) ? owner->content : NULL;
+}
+
+unsigned long js_realm_generation(struct jsthread *thread)
+{
+	if (thread == NULL || thread->ctx == NULL) return 0;
+	return qjs_ctx_gen(thread->ctx);
+}
+
+int js_realm_valid_for_content(struct jsthread *thread,
+		struct content *content, unsigned long generation)
+{
+	struct qjs_realm_owner *owner;
+	if (thread == NULL || thread->ctx == NULL || content == NULL ||
+		generation == 0)
+		return 0;
+	if (qjs_ctx_gen(thread->ctx) != generation)
+		return 0;
+	owner = qjs_owner_for_ctx(thread->ctx);
+	return (owner != NULL && owner->content == content) ? 1 : 0;
 }
 
 /* ------------------------------------------------------------------ */

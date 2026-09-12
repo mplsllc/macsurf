@@ -10,6 +10,7 @@
 
 #ifdef WITH_QUICKJS
 #  include "content/handlers/javascript/js.h"
+struct content;
 /* MacSurf GATE 3 extension: fire DOMContentLoaded+load into the JS document's
  * registered listeners once the initial box tree exists (drains XF.ready and
  * runs XF.activate(document)).  Implemented in javascript/macsurf_qjs.c. */
@@ -49,6 +50,12 @@ void js_set_current_script(jsthread *thread, struct dom_node *node);
  * (no precise target/subtree filtering yet -- see macsurf_qjs.c). Implemented
  * in macsurf_qjs.c. */
 void js_fire_mutation_batch(jsthread *thread);
+/* Post-render work holds a realm identity across a scheduler turn.  These
+ * helpers validate both the realm generation and its owning content before
+ * anything page-capable is dispatched. */
+unsigned long js_realm_generation(jsthread *thread);
+int js_realm_valid_for_content(jsthread *thread, struct content *content,
+		unsigned long generation);
 #else
 
 #ifndef NETSURF_JAVASCRIPT_JS_H_

@@ -69,8 +69,15 @@
  * styles, ...) before any parser/content state is torn down. */
 #ifdef __MACOS9__
 extern void macos9_schedule_cancel_owner(void *p);
+extern int macos9_content_is_live(struct content *c);
+extern unsigned long macos9_content_token(struct content *c);
+extern int macos9_content_token_valid(struct content *c, unsigned long token);
+extern nserror macos9_schedule(int t, void (*callback)(void *p), void *p);
 #else
 #define macos9_schedule_cancel_owner(p) ((void)0)
+#define macos9_content_is_live(c) (1)
+#define macos9_content_token(c) (1UL)
+#define macos9_content_token_valid(c, t) (1)
 #endif
 
 long macos9_html_bytes_processed = 0;
@@ -4135,6 +4142,88 @@ static void html_reconvert_rollback(html_content *c)
 		(void *) c->layout, (void *) c->bctx, (long) rebound);
 }
 
+/* Rendering publishes stable C-side state only. Page-capable notifications
+ * cross this scheduler boundary with both content and realm generations, so a
+ * replaced document/realm can never receive stale work. */
+#define HTML_POST_RENDER_MAX 8
+enum html_post_render_kind {
+	HTML_POST_RENDER_RESIZE = 1,
+	HTML_POST_RENDER_LOAD,
+	HTML_POST_RENDER_MUTATIONS
+};
+struct html_post_render_note {
+	html_content *html;
+	unsigned long content_gen;
+	jsthread *thread;
+	unsigned long realm_gen;
+	int kind;
+};
+static struct html_post_render_note html_post_render[HTML_POST_RENDER_MAX];
+
+static void html_post_render_dispatch(void *p)
+{
+	int i;
+	html_content *html;
+	(void)p;
+	if (macsurf_reconvert_in_progress) {
+		(void)macos9_schedule(1, html_post_render_dispatch, NULL);
+		return;
+	}
+	for (i = 0; i < HTML_POST_RENDER_MAX; i++) {
+		html = html_post_render[i].html;
+		if (html == NULL) continue;
+		if (!macos9_content_is_live(&html->base) ||
+			!macos9_content_token_valid(&html->base,
+				html_post_render[i].content_gen) ||
+			html->js_thread != html_post_render[i].thread ||
+			!js_realm_valid_for_content(html_post_render[i].thread,
+				&html->base, html_post_render[i].realm_gen)) {
+			html_post_render[i].html = NULL;
+			continue;
+		}
+		switch (html_post_render[i].kind) {
+		case HTML_POST_RENDER_RESIZE:
+			(void)js_fire_event(html_post_render[i].thread, "resize",
+				html->document, NULL);
+			break;
+		case HTML_POST_RENDER_LOAD:
+			(void)js_fire_event(html_post_render[i].thread, "load",
+				html->document, NULL);
+			break;
+		case HTML_POST_RENDER_MUTATIONS:
+			js_fire_mutation_batch(html_post_render[i].thread);
+			break;
+		}
+		html_post_render[i].html = NULL;
+	}
+}
+
+static void html_post_render_queue(html_content *html, int kind)
+{
+	int i;
+	int free_slot = -1;
+	unsigned long realm_gen;
+	if (html == NULL || html->js_thread == NULL) return;
+	realm_gen = js_realm_generation(html->js_thread);
+	if (realm_gen == 0) return;
+	for (i = 0; i < HTML_POST_RENDER_MAX; i++) {
+		if (html_post_render[i].html == html &&
+			html_post_render[i].thread == html->js_thread &&
+			html_post_render[i].kind == kind)
+			return;
+		if (html_post_render[i].html == NULL && free_slot < 0)
+			free_slot = i;
+	}
+	if (free_slot < 0) return;
+	html_post_render[free_slot].html = html;
+	html_post_render[free_slot].content_gen =
+		macos9_content_token(&html->base);
+	html_post_render[free_slot].thread = html->js_thread;
+	html_post_render[free_slot].realm_gen = realm_gen;
+	html_post_render[free_slot].kind = kind;
+	(void)macos9_schedule(0, html_post_render_dispatch, NULL);
+}
+
 static void html_reconvert_done(html_content *c, bool success)
 {
 	nserror err;
@@ -4261,7 +4350,7 @@ static void html_reconvert_done(html_content *c, bool success)
  * of ping-ponging with the reconvert debounce, and a page that never
  * reconverts never sees it at all. */
 #ifndef MACSURF_JS_RECONVERT_RESIZE
-#define MACSURF_JS_RECONVERT_RESIZE 1
+#define MACSURF_JS_RECONVERT_RESIZE 0
 #endif
 #if MACSURF_JS_RECONVERT_RESIZE
 	{
@@ -4280,8 +4369,7 @@ static void html_reconvert_done(html_content *c, bool success)
 			macsurf_debug_log_writef(
 				"LIFE reconvert height %d -> resize fired",
 				(int)c->base.height);
-			(void) js_fire_event(c->js_thread, "resize",
-					c->document, NULL);
+			html_post_render_queue(c, HTML_POST_RENDER_RESIZE);
 			/* fixes1090b - `resize` alone was still a no-op for the
 			 * hackaday slider: the REAL slick.js (harness/
 			 * hackaday-bundle.js:933-942) gates its resize handler on
@@ -4305,8 +4393,7 @@ static void html_reconvert_done(html_content *c, bool success)
 			 * fire above, so it carries the same safety argument
 			 * fixes1090 already made and does not reopen the
 			 * MACSURF_JS_FIRE_LOAD switch or its history. */
-			(void) js_fire_event(c->js_thread, "load",
-					c->document, NULL);
+			html_post_render_queue(c, HTML_POST_RENDER_LOAD);
 		}
 	}
 #endif
@@ -4319,9 +4406,12 @@ static void html_reconvert_done(html_content *c, bool success)
 	 * batch's own comment (macsurf_qjs.c) for why this cannot introduce a
 	 * new feedback-loop frequency beyond what reconvert's debounce/floor
 	 * already bounds. */
-	if (c->js_thread != NULL) {
-		js_fire_mutation_batch(c->js_thread);
-	}
+#ifndef MACSURF_JS_MUTATION_OBSERVER_DELIVERY
+#define MACSURF_JS_MUTATION_OBSERVER_DELIVERY 0
+#endif
+#if MACSURF_JS_MUTATION_OBSERVER_DELIVERY
+	html_post_render_queue(c, HTML_POST_RENDER_MUTATIONS);
+#endif
 	macsurf_reconv_pos_set("reconvert-idle", (long) macsurf_reconvert_seq,
 			0, "");
 	macsurf_reconv_pos_flush();
