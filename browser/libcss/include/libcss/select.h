@@ -44,6 +44,9 @@ typedef struct css_select_results {
 	css_computed_style *styles[CSS_PSEUDO_ELEMENT_COUNT];
 } css_select_results;
 
+/** Opaque standalone media-query list. */
+struct css_media_query;
+
 typedef enum css_select_handler_version {
 	CSS_SELECT_HANDLER_VERSION_1 = 1
 } css_select_handler_version;
@@ -232,6 +235,24 @@ css_error css_select_font_faces(css_select_ctx *ctx,
 		css_select_font_faces_results **result);
 css_error css_select_font_faces_results_destroy(
 		css_select_font_faces_results *results);
+
+/**
+ * Create a standalone media-query list for non-stylesheet consumers.
+ * The query uses the same parser and matcher as @media rules.
+ */
+css_error css_media_query_create(const char *query,
+		struct css_media_query **result);
+
+/** Test a standalone media-query list against the supplied document media. */
+css_error css_media_query_matches(const struct css_media_query *query,
+		const css_unit_ctx *unit_ctx, const css_media *media,
+		bool *matches);
+
+/** Return the query's CSSOM-facing media text. */
+const char *css_media_query_text(const struct css_media_query *query);
+
+/** Destroy a standalone media-query list. */
+void css_media_query_destroy(struct css_media_query *query);
 
 /* fixes267 - register a stylesheet's custom_properties list into the
  * doc-global inline-extras table. Used by NetSurf's
