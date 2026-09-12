@@ -49,4 +49,18 @@ typedef union hubbub_parser_optparams {
 	bool pause_parse;
 } hubbub_parser_optparams;
 
+hubbub_error hubbub_parser_create(const char *enc, bool fix_enc,
+		hubbub_parser **parser);
+hubbub_error hubbub_parser_destroy(hubbub_parser *parser);
+hubbub_error hubbub_parser_setopt(hubbub_parser *parser,
+		hubbub_parser_opttype type,
+		hubbub_parser_optparams *params);
+hubbub_error hubbub_parser_parse_chunk(hubbub_parser *parser,
+		const uint8_t *data, size_t len);
+hubbub_error hubbub_parser_insert_chunk(hubbub_parser *parser,
+		const uint8_t *data, size_t len);
+hubbub_error hubbub_parser_completed(hubbub_parser *parser);
+const char *hubbub_parser_read_charset(hubbub_parser *parser,
+		hubbub_charset_source *source);
+
 #endif
