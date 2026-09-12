@@ -30,7 +30,6 @@
 #include "macos9_reconvert.h"
 
 #include "netsurf/content.h"		/* content_get_type, CONTENT_HTML */
-#include "content/hlcache.h"		/* hlcache_handle_get_content     */
 #include "content/content_protected.h"	/* content_get_url                */
 #include "utils/nsurl.h"		/* nsurl_get_component, NSURL_HOST */
 
@@ -38,12 +37,6 @@
 extern int html_reconvert_content(struct content *c);
 /* fixes1094 (#265 Round B) - see html.c. */
 extern int macsurf_html_has_droppable_inflight(struct content *c);
-/* browser_window -> current content handle. */
-extern struct hlcache_handle *browser_window_get_content(
-		struct browser_window *bw);
-/* macos9 frontend window accessors (window.c). */
-extern struct gui_window *macos9_window_list_head(void);
-extern struct browser_window *macos9_gw_bw(struct gui_window *g);
 
 /* Debounce: fire this long after the last DOM mutation. ~24 ticks at 60Hz. */
 #define RECONVERT_DEBOUNCE_MS	400
@@ -156,6 +149,40 @@ static int macos9_reconvert_kind_is_cosmetic(int kind)
 		kind == MACOS9_DOMMUT_SETATTR_STYLE);
 }
 
+enum macsurf_render_action {
+	MACSURF_RENDER_NONE = 0,
+	MACSURF_RENDER_PAINT,
+	MACSURF_RENDER_RECASCADE,
+	MACSURF_RENDER_LOCAL_REFLOW,
+	MACSURF_RENDER_SUBTREE,
+	MACSURF_RENDER_FULL
+};
+
+/* This is the sole policy permission for a JS mutation to rebuild a document.
+ * Unknown and imprecise work deliberately declines rather than guessing that a
+ * whole-page rebuild is safe or useful. */
+static enum macsurf_render_action
+macsurf_render_action_for(int kind, int multi)
+{
+	if (multi) return MACSURF_RENDER_NONE;
+	switch (kind) {
+	case MACOS9_DOMMUT_INNERHTML:
+	case MACOS9_DOMMUT_APPENDCHILD:
+	case MACOS9_DOMMUT_REMOVECHILD:
+	case MACOS9_DOMMUT_INSERTBEFORE:
+		return MACSURF_RENDER_FULL;
+	case MACOS9_DOMMUT_SETATTR_STYLE:
+		return MACSURF_RENDER_RECASCADE;
+	case MACOS9_DOMMUT_SETATTR_CLASS:
+		return MACSURF_RENDER_RECASCADE;
+	case MACOS9_DOMMUT_TEXTCONTENT:
+	case MACOS9_DOMMUT_CHARDATA:
+		return MACSURF_RENDER_LOCAL_REFLOW;
+	default:
+		return MACSURF_RENDER_NONE;
+	}
+}
+
 #ifdef __MACOS9__
 extern int macos9_content_is_live(struct content *c);
 extern unsigned long macos9_content_token(struct content *c);
@@ -195,9 +222,11 @@ macos9_reconvert_batch_has_structural_mutation(void)
 {
 	int kind;
 	for (kind = 0; kind <= MACOS9_DOMMUT_SETATTR_STYLE; kind++) {
-		if (kind != MACOS9_DOMMUT_SETATTR_CLASS &&
-			kind != MACOS9_DOMMUT_SETATTR_STYLE &&
-			g_mut_counts[kind] != 0)
+		if (kind == MACOS9_DOMMUT_INNERHTML ||
+			kind == MACOS9_DOMMUT_APPENDCHILD ||
+			kind == MACOS9_DOMMUT_REMOVECHILD ||
+			kind == MACOS9_DOMMUT_INSERTBEFORE)
+			if (g_mut_counts[kind] != 0)
 			return 1;
 	}
 	return 0;
@@ -726,28 +755,6 @@ macos9_reconvert_flush_now(void *cv)
 }
 
 
-/* The live front-window HTML content, or NULL. Never derefs a stale pointer. */
-static struct content *
-macos9_reconvert_front_content(void)
-{
-	struct gui_window *gw;
-	struct browser_window *bw;
-	struct hlcache_handle *h;
-
-	gw = macos9_window_list_head();
-	if (gw == NULL)
-		return NULL;
-	bw = macos9_gw_bw(gw);
-	if (bw == NULL)
-		return NULL;
-	h = browser_window_get_content(bw);
-	if (h == NULL)
-		return NULL;
-	if (content_get_type(h) != CONTENT_HTML)
-		return NULL;
-	return hlcache_handle_get_content(h);
-}
-
 static void
 macos9_reconvert_cb(void *p)
 {
@@ -757,6 +764,7 @@ macos9_reconvert_cb(void *p)
 	int i;
 	int busy = 0;
 	int did_one = 0;
+	enum macsurf_render_action action;
 	extern int html_reconvert_fast_style(struct content *c, void *node);
 	extern int html_reconvert_fast_inherited_color(struct content *c,
 			void *node);
@@ -890,6 +898,23 @@ macos9_reconvert_cb(void *p)
 			}
 		}
 
+		action = g_pending[i].multi ?
+			(macos9_reconvert_batch_has_structural_mutation() ?
+			 MACSURF_RENDER_FULL : MACSURF_RENDER_NONE) :
+			macsurf_render_action_for(g_pending[i].kind, 0);
+		if (action != MACSURF_RENDER_FULL) {
+			macsurf_debug_log_writef("LIFE render decline kind=%d action=%d",
+				g_pending[i].kind, (int)action);
+			macos9_reconvert_slot_clear(i);
+			did_one = 1;
+			continue;
+		}
+		/* Full rebuild is reserved for structural edits after loading has
+		 * settled. Keep a valid request coalesced until that quiescent state. */
+		if (c->status != CONTENT_STATUS_DONE) {
+			busy = 1;
+			continue;
+		}
 		rc = html_reconvert_content(c);	/* 0 = queued, !=0 = busy */
 		macsurf_debug_log_writef(
 			"WORK reconvert: html_reconvert_content rc=%d c=%p", rc,
@@ -932,20 +957,11 @@ macos9_reconvert_cb(void *p)
 		macos9_reconvert_census_dump();
 	}
 
-	/* Overflow fallback: more distinct frames mutated than the table holds,
-	 * so rebuild the front content too rather than lose the work. This is the
-	 * pre-fixes874 behaviour, used only as a backstop. */
+	/* Lost precision never grants permission to rebuild an unrelated front
+	 * document. Drop the coarse overflow marker and retain only explicit slots. */
 	if (g_pending_overflow) {
 		g_pending_overflow = 0;
-		c = macos9_reconvert_front_content();
-		if (c != NULL) {
-			rc = html_reconvert_content(c);
-			macsurf_debug_log_writef(
-				"WORK reconvert: OVERFLOW front rc=%d c=%p", rc,
-				(void *) c);
-			if (rc == 0) did_one = 1;
-			else busy = 1;
-		}
+		macsurf_debug_log_writef("LIFE render decline overflow=1");
 	}
 
 	if (did_one)
