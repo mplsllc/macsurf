@@ -16091,50 +16091,6 @@ unsigned char js_fire_dom_ready(struct jsthread *thread, struct dom_document *do
 	return 1;
 }
 
-/* fixes1096 - THE SLIDER PROBE, JS HALF.
- *
- * html.c's C-side probe (html_slider_probe) reads the DOM through libdom and
- * can name what exists around .featured-slides; it cannot see what the
- * PAGE'S OWN scripts see. This half runs in the page realm at the same probe
- * points ("ready" / "done" / "reconvert" -- html.c splices the label in) and
- * asks the questions only JS can: does jQuery exist, does jQuery.fn.slick,
- * and what does document.querySelector answer for the theme's featured
- * classes. A libdom walk and the engine's querySelector can disagree when
- * script rebuilt the tree, which is itself a finding.
- *
- * Emitted through __msLife so the lines carry the LIFE prefix and survive the
- * failures-only release filter; __msLife's per-navigation budget (60) covers
- * this (2 lines per probe point, <=6 probe points per navigation).
- * All reads, no mutations: safe to run at any probe point. */
-void js_fire_slider_probe(struct jsthread *thread, const char *when)
-{
-	static const char s_fmt[] =
-		"(function(){try{"
-		"if(typeof document==='undefined'||!document.querySelector)return;"
-		"var L='%s';"
-		"var fs=document.querySelector('.featured-slides');"
-		"var fg=document.querySelector('.featured-grid');"
-		"var si=document.querySelector('.slick-initialized');"
-		"var se=document.querySelector('section.featured');"
-		"__msLife('SLIDER DOM['+L+'] fs='+(fs?'PRESENT':'MISSING')"
-		" +' fg='+(fg?'PRESENT':'MISSING')"
-		" +' si='+(si?'PRESENT':'MISSING')"
-		" +' sec='+(se?'PRESENT kids='+se.children.length:'MISSING'));"
-		"if(typeof jQuery!=='undefined'&&jQuery.fn){"
-		"__msLife('SLIDER LIB['+L+'] jq='+typeof jQuery"
-		" +' slick='+typeof jQuery.fn.slick);"
-		"}else{"
-		"__msLife('SLIDER LIB['+L+'] jq='+typeof jQuery+' (no fn)');"
-		"}"
-		"}catch(e){}})();";
-	char src[1024];
-
-	if (thread == NULL || thread->ctx == NULL) return;
-	if (when == NULL) when = "?";
-	sprintf(src, s_fmt, when);
-	macsurf_qjs__safe_eval(thread->ctx, src);
-}
-
 /* fixes881 (Phase 0.7) - readyState='complete' + `load` at document AND window.
  *
  * Called from html_proceed_to_done's READY->DONE transition, i.e. once the box

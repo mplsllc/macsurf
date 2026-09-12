@@ -1051,12 +1051,6 @@ void html_slider_probe(html_content *c, const char *when)
 		if (si != NULL) dom_node_unref(si);
 		dom_node_unref((dom_node *)root2);
 
-		/* JS half of the probe: what do the page's OWN scripts see --
-		 * jQuery and jQuery.fn.slick existence, plus the same featured
-		 * classes answered through the engine's querySelector (which can
-		 * differ from a libdom walk if script rebuilt the tree). */
-		if (c->js_thread != NULL)
-			js_fire_slider_probe(c->js_thread, when);
 		return;
 	}
 
@@ -1068,10 +1062,6 @@ void html_slider_probe(html_content *c, const char *when)
 	macsurf_debug_log_writef("LIFE SLIDER[%s] ---- end", when);
 	dom_node_unref(slider);
 
-	/* JS half of the probe, also when the subtree IS present: the widget
-	 * can be in the DOM and still dead if jQuery.fn.slick never landed. */
-	if (c->js_thread != NULL)
-		js_fire_slider_probe(c->js_thread, when);
 }
 /* ====================================================================== */
 

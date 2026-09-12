@@ -39,11 +39,6 @@ unsigned char js_fire_script_load(jsthread *thread, struct dom_node *node,
  * getElementsByTagName("script") fallback both come up empty - which kills the
  * bundle on its own prologue, before any application code. */
 void js_set_current_script(jsthread *thread, struct dom_node *node);
-/* fixes1096  -  slider DOM probe: eval a JS-side probe in the page realm,
- * emitting LIFE lines through __msLife. Called from html.c's
- * html_slider_probe at the ready/done/reconvert points. Implemented in
- * macsurf_qjs.c. */
-void js_fire_slider_probe(jsthread *thread, const char *when);
 /* fixes1235 (#167)  -  deliver a batch of MutationObserver records after a
  * reconvert completes successfully. Rides the EXISTING debounce/floor
  * reconvert already self-limits (called once from html_reconvert_done, the
@@ -88,12 +83,6 @@ unsigned char js_exec(jsthread *thread,
 unsigned char js_fire_event(jsthread *thread, const char *type,
 		struct dom_document *doc, struct dom_node *target);
 unsigned char js_fire_dom_ready(jsthread *thread, struct dom_document *doc);
-
-/* fixes1096  -  slider DOM probe: eval a JS-side probe in the page realm,
- * emitting LIFE lines through __msLife. Called from html.c's
- * html_slider_probe at the ready/done/reconvert points. Implemented in
- * macsurf_qjs.c. */
-void js_fire_slider_probe(jsthread *thread, const char *when);
 
 /* fixes869 (#295)  -  fire `load` (ok!=0) or `error` (ok==0) at a <script>
  * element once its fetch+execute completes.  The dynamic-loader idiom
