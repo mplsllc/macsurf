@@ -39,11 +39,11 @@ struct hubbub_parser {
  *         HUBBUB_BADENCODING if \p enc is unsupported
  */
 hubbub_error hubbub_parser_create(const char *enc, bool fix_enc,
-		hubbub_parser **parser)
+		struct hubbub_parser **parser)
 {
 	parserutils_error pu_error;
 	hubbub_error error;
-	hubbub_parser *p;
+	struct hubbub_parser *p;
 
 	if (parser == NULL)
 		return HUBBUB_BADPARM;
@@ -99,7 +99,7 @@ hubbub_error hubbub_parser_create(const char *enc, bool fix_enc,
  * \param parser  Parser instance to destroy
  * \return HUBBUB_OK on success, appropriate error otherwise
  */
-hubbub_error hubbub_parser_destroy(hubbub_parser *parser)
+hubbub_error hubbub_parser_destroy(struct hubbub_parser *parser)
 {
 	if (parser == NULL)
 		return HUBBUB_BADPARM;
@@ -123,7 +123,7 @@ hubbub_error hubbub_parser_destroy(hubbub_parser *parser)
  * \param params  Option-specific parameters
  * \return HUBBUB_OK on success, appropriate error otherwise
  */
-hubbub_error hubbub_parser_setopt(hubbub_parser *parser,
+hubbub_error hubbub_parser_setopt(struct hubbub_parser *parser,
 		hubbub_parser_opttype type,
 		hubbub_parser_optparams *params)
 {
@@ -215,7 +215,7 @@ hubbub_error hubbub_parser_setopt(hubbub_parser *parser,
  * \param len     Length, in bytes, of data
  * \return HUBBUB_OK on success, appropriate error otherwise
  */
-hubbub_error hubbub_parser_insert_chunk(hubbub_parser *parser,
+hubbub_error hubbub_parser_insert_chunk(struct hubbub_parser *parser,
 		const uint8_t *data, size_t len)
 {
 	if (parser == NULL || data == NULL)
@@ -232,7 +232,7 @@ hubbub_error hubbub_parser_insert_chunk(hubbub_parser *parser,
  * \param len     Length, in bytes, of data
  * \return HUBBUB_OK on success, appropriate error otherwise
  */
-hubbub_error hubbub_parser_parse_chunk(hubbub_parser *parser,
+hubbub_error hubbub_parser_parse_chunk(struct hubbub_parser *parser,
 		const uint8_t *data, size_t len)
 {
 	parserutils_error pu_error;
@@ -276,7 +276,7 @@ hubbub_error hubbub_parser_parse_chunk(hubbub_parser *parser,
  * \param parser  Parser to inform
  * \return HUBBUB_OK on success, appropriate error otherwise
  */
-hubbub_error hubbub_parser_completed(hubbub_parser *parser)
+hubbub_error hubbub_parser_completed(struct hubbub_parser *parser)
 {
 	parserutils_error pu_error;
 	hubbub_error error;
@@ -302,7 +302,7 @@ hubbub_error hubbub_parser_completed(hubbub_parser *parser)
  * \param source  Pointer to location to receive charset source
  * \return Pointer to charset name (constant; do not free), or NULL if unknown
  */
-const char *hubbub_parser_read_charset(hubbub_parser *parser,
+const char *hubbub_parser_read_charset(struct hubbub_parser *parser,
 		hubbub_charset_source *source)
 {
 	const char *name;
