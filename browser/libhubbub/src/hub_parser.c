@@ -11,7 +11,7 @@
 #include <parserutils/charset/mibenum.h>
 #include <parserutils/input/inputstream.h>
 
-#include <hubbub/parser.h>
+#include "hub_parser_api.h"
 
 #include "hub_charset_detect.h"
 #include "tokeniser/tokeniser.h"

@@ -5,8 +5,8 @@
  * Copyright 2007-8 John-Mark Bell <jmb@netsurf-browser.org>
  */
 
-#ifndef macsurf_hubbub_parser_h_
-#define macsurf_hubbub_parser_h_
+#ifndef hubbub_parser_h_
+#define hubbub_parser_h_
 
 #ifdef __cplusplus
 extern "C"
