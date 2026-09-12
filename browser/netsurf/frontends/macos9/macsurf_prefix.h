@@ -404,7 +404,11 @@ extern int   memcmp(const void *, const void *, size_t);
  * with this ON unconditionally since fixes1023 (harness/Makefile:32,145);
  * this only changes the Mac's default. */
 #ifndef MACSURF_JS_FIRE_LOAD
-#define MACSURF_JS_FIRE_LOAD 1
+#define MACSURF_JS_FIRE_LOAD 0
+#endif
+
+#ifndef MACSURF_JS_MUTATION_OBSERVER_DELIVERY
+#define MACSURF_JS_MUTATION_OBSERVER_DELIVERY 0
 #endif
 
 /* fixes305a: enable the file-backed diagnostic log channel by default.

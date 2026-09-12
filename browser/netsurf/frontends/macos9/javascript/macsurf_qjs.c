@@ -300,14 +300,14 @@ double macsurf_qjs_get_now(void);
  * lazy-load `rect.top < innerHeight` check now answers truly and needs a
  * real scroll event to re-fire). */
 #ifndef MACSURF_JS_VIEW_EVENTS
-#define MACSURF_JS_VIEW_EVENTS 1
+#define MACSURF_JS_VIEW_EVENTS 0
 #endif
 
 #ifndef MACSURF_JS_TIMEOUT_MS
 /* fixes1136 (Option B): 30s execution deadline.  On a 400 MHz G3, 176 KB
  * framework bundles (XenForo core-compiled.js) need ~19s; 30s gives headroom
  * while still preventing truly runaway scripts.  Set to 0 to disarm. */
-#define MACSURF_JS_TIMEOUT_MS 30000
+#define MACSURF_JS_TIMEOUT_MS 8000
 #endif
 #define QJS_SCRIPT_TIMEOUT_MS MACSURF_JS_TIMEOUT_MS
 
@@ -15538,43 +15538,9 @@ unsigned char js_exec(struct jsthread *thread,
  * (~176 KB) and similar framework bundles through while still rejecting the
  * heaviest application bundles (>256 KB).  The 8s execution deadline provides
  * the primary safety net.  Set to 0 to disarm. */
-#define MACSURF_JS_MAX_BYTES 262144UL
+#define MACSURF_JS_MAX_BYTES 131072UL
 #endif
-	/* fixes1143 - per-script size-cap bypass for essential bundles.
-	 * Editor bundles that exceed the cap are let through; the 30s
-	 * execution deadline bounds them instead.
-	 *
-	 * fixes1233 (#167) - hardware evidence (2026-08-20): the logged-in
-	 * feed now renders (h=3448, 180 real sections, friend names visible)
-	 * with 11 of 51 scripts skipped for size -- Facebook's real bundles
-	 * hash their filenames per build (no stable name like
-	 * "editor-compiled.js" to match), so they never qualify for the
-	 * existing bypass and get silently dropped even though the 30s
-	 * execution deadline is perfectly able to bound them, same as the
-	 * editor bundle. Bypass by HOST instead of filename for Facebook's
-	 * asset origins -- same fbcdn.net/facebook.net set already used for
-	 * the UA table (macos9_fetch.c) -- to see what the skipped bundles
-	 * actually add (deliberately broad per the maintainer's direction:
-	 * "bypass limits just for facebook to see what happens"). */
-	{
-		static const char *const bypass[] = {
-			"editor-compiled.js",
-			"fbcdn.net",
-			"facebook.net",
-			NULL
-		};
-		int cap_bypass = 0;
-		if (name != NULL) {
-			const char *const *bp;
-			for (bp = bypass; *bp != NULL; bp++) {
-				if (strstr(name, *bp) != NULL) {
-					cap_bypass = 1;
-					break;
-				}
-			}
-		}
-		if (!cap_bypass &&
-		    MACSURF_JS_MAX_BYTES != 0UL &&
+	if (MACSURF_JS_MAX_BYTES != 0UL &&
 		    txtlen > MACSURF_JS_MAX_BYTES) {
 			g_js_skip_count++;
 			macsurf_debug_log_writef(
@@ -15582,14 +15548,6 @@ unsigned char js_exec(struct jsthread *thread,
 				name ? name : "(anon)", (long)txtlen,
 				(long)MACSURF_JS_MAX_BYTES);
 			return 0;
-		}
-		if (cap_bypass &&
-		    MACSURF_JS_MAX_BYTES != 0UL &&
-		    txtlen > MACSURF_JS_MAX_BYTES) {
-			macsurf_debug_log_writef(
-				"LIFE js bypass [%s len=%ld]",
-				name ? name : "(anon)", (long)txtlen);
-		}
 	}
 
 	/* fixes523 DIAGNOSTIC: fingerprint the exact bytes handed to QuickJS so
