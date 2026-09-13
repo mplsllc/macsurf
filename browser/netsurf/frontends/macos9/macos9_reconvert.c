@@ -290,7 +290,6 @@ macos9_reconvert_slot_drop_node(int i)
 		g_pending[i].node = NULL;
 	}
 	g_pending[i].kind = MACOS9_DOMMUT_UNKNOWN;
-	g_pending[i].kind_mask = 0;
 }
 
 /* fixes910 Phase 0 - clear a slot completely (content + node ref). */
@@ -301,6 +300,7 @@ macos9_reconvert_slot_clear(int i)
 	g_pending[i].c = NULL;
 	g_pending[i].token = 0;
 	g_pending[i].multi = 0;
+	g_pending[i].kind_mask = 0;
 }
 
 /* Record c as dirty. Idempotent per content, so a burst of mutations on one
@@ -638,6 +638,7 @@ macos9_reconvert_sync_reset(void)
 #define RECONVERT_SYNC_RETRY_MS 80
 
 static void macos9_reconvert_cb(void *p);	/* defined below */
+static void macos9_reconvert_schedule_pending(void);
 
 static void
 macos9_reconvert_sync_retry(void)
@@ -1105,12 +1106,20 @@ macos9_js_mark_dom_dirty_node(struct content *c, void *node, int kind)
 	 * The debounce still escalates for cosmetic-only bursts, but
 	 * structural mutations reset it and the callback handles all
 	 * accumulated work at once. */
-	{
-		extern int macos9_sched_is_queued(
-			void (*callback)(void *p), void *p);
-		if (!macos9_sched_is_queued(macos9_reconvert_cb, NULL)) {
-			(void) macos9_schedule(g_reconvert_debounce_ms,
-					macos9_reconvert_cb, NULL);
-		}
-	}
+	if (!macsurf_js_page_execution_active())
+		macos9_reconvert_schedule_pending();
+}
+
+static void macos9_reconvert_schedule_pending(void)
+{
+	extern int macos9_sched_is_queued(void (*callback)(void *p), void *p);
+	if (!macos9_sched_is_queued(macos9_reconvert_cb, NULL))
+		(void)macos9_schedule(g_reconvert_debounce_ms, macos9_reconvert_cb, NULL);
+}
+
+void macos9_reconvert_js_task_complete(unsigned long task_id)
+{
+	(void)task_id;
+	if (!macsurf_js_page_execution_active())
+		macos9_reconvert_schedule_pending();
 }

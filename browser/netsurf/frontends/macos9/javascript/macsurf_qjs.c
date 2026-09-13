@@ -125,7 +125,7 @@ int macsurf_js_current_task_kind(void) { return g_qjs_task_kind; }
 static void qjs_task_push(int kind)
 { if (g_qjs_task_depth++ == 0) { g_qjs_task_id=g_qjs_task_next++; if (g_qjs_task_next==0) g_qjs_task_next=1; g_qjs_task_kind=kind; } }
 static void qjs_task_pop(void)
-{ if (g_qjs_task_depth > 0 && --g_qjs_task_depth == 0) { g_qjs_task_id=0; g_qjs_task_kind=MACSURF_JS_TASK_NONE; } }
+{ if (g_qjs_task_depth > 0 && --g_qjs_task_depth == 0) { unsigned long id=g_qjs_task_id; extern void macos9_reconvert_js_task_complete(unsigned long); g_qjs_task_id=0; g_qjs_task_kind=MACSURF_JS_TASK_NONE; macos9_reconvert_js_task_complete(id); } }
 
 /* The authoritative ownership record for one JavaScript realm.  A heap can
  * briefly have both an old and replacement JSContext during navigation, while
