@@ -120,6 +120,7 @@ struct macos9_reconvert_pending {
 	void           *node;
 	int             kind;
 	int             multi;
+	unsigned long   kind_mask;
 };
 
 /* fixes910 Phase 0 - implemented in content/handlers/html/html.c, where the real
@@ -181,6 +182,14 @@ macsurf_render_action_for(int kind, int multi)
 	default:
 		return MACSURF_RENDER_NONE;
 	}
+}
+
+static int macsurf_render_mask_is_structural(unsigned long mask)
+{
+	return (mask & ((1UL << MACOS9_DOMMUT_INNERHTML) |
+		(1UL << MACOS9_DOMMUT_APPENDCHILD) |
+		(1UL << MACOS9_DOMMUT_REMOVECHILD) |
+		(1UL << MACOS9_DOMMUT_INSERTBEFORE))) != 0;
 }
 
 #ifdef __MACOS9__
@@ -280,6 +289,7 @@ macos9_reconvert_slot_drop_node(int i)
 		g_pending[i].node = NULL;
 	}
 	g_pending[i].kind = MACOS9_DOMMUT_UNKNOWN;
+	g_pending[i].kind_mask = 0;
 }
 
 /* fixes910 Phase 0 - clear a slot completely (content + node ref). */
@@ -313,6 +323,8 @@ macos9_reconvert_pending_add(struct content *c, void *node, int kind)
 			 * generation, and the newer one is what we want to
 			 * validate against at fire time. */
 			g_pending[i].token = macos9_content_token(c);
+			if (kind >= 0 && kind < (int)(sizeof(unsigned long) * 8))
+				g_pending[i].kind_mask |= (1UL << kind);
 
 			/* Merge this mutation into what the slot already holds.
 			 * Same node AND same kind = the same logical edit
@@ -342,6 +354,9 @@ macos9_reconvert_pending_add(struct content *c, void *node, int kind)
 	 * that decides the pointer is worth keeping past the debounce. */
 	g_pending[freeslot].node = macsurf_reconvert_node_ref(node);
 	g_pending[freeslot].kind = (node != NULL) ? kind : MACOS9_DOMMUT_UNKNOWN;
+	g_pending[freeslot].kind_mask = (kind >= 0 &&
+		kind < (int)(sizeof(unsigned long) * 8)) ? (1UL << kind) :
+		(1UL << MACOS9_DOMMUT_UNKNOWN);
 	g_pending[freeslot].multi = (node == NULL) ? 1 : 0;
 }
 
@@ -861,7 +876,6 @@ macos9_reconvert_cb(void *p)
 				memset(g_mut_counts, 0,
 					sizeof(g_mut_counts));
 				g_mut_total = 0;
-				did_one = 1;
 				continue;
 			}
 		}
@@ -872,7 +886,6 @@ macos9_reconvert_cb(void *p)
 				if (html_reconvert_fast_style(c, g_pending[i].node) == 0) {
 					g_style_fast_commit++;
 					macos9_reconvert_slot_clear(i);
-					did_one = 1;
 					g_mut_counts[MACOS9_DOMMUT_SETATTR_STYLE]--;
 					g_mut_total--;
 					continue;
@@ -888,7 +901,6 @@ macos9_reconvert_cb(void *p)
 							g_pending[i].node) == 0) {
 						g_inherited_color_commit++;
 						macos9_reconvert_slot_clear(i);
-						did_one = 1;
 						g_mut_counts[MACOS9_DOMMUT_SETATTR_STYLE]--;
 						g_mut_total--;
 						continue;
@@ -899,14 +911,11 @@ macos9_reconvert_cb(void *p)
 		}
 
 		action = g_pending[i].multi ?
-			(macos9_reconvert_batch_has_structural_mutation() ?
+			(macsurf_render_mask_is_structural(g_pending[i].kind_mask) ?
 			 MACSURF_RENDER_FULL : MACSURF_RENDER_NONE) :
 			macsurf_render_action_for(g_pending[i].kind, 0);
 		if (action != MACSURF_RENDER_FULL) {
-			macsurf_debug_log_writef("LIFE render decline kind=%d action=%d",
-				g_pending[i].kind, (int)action);
 			macos9_reconvert_slot_clear(i);
-			did_one = 1;
 			continue;
 		}
 		/* Full rebuild is reserved for structural edits after loading has

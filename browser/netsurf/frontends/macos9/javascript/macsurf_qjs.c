@@ -133,6 +133,17 @@ struct qjs_realm_owner {
 
 static struct qjs_realm_owner *g_qjs_realm_owners = NULL;
 static unsigned long qjs_ctx_gen(JSContext *ctx);
+int js_realm_valid_for_content(struct jsthread *thread,
+		struct content *content, unsigned long generation);
+struct qjs_thread_owner { struct jsthread *thread; unsigned long token; struct qjs_thread_owner *next; };
+static struct qjs_thread_owner *g_qjs_threads = NULL;
+static unsigned long g_qjs_thread_token = 1;
+static struct qjs_thread_owner *qjs_thread_owner(struct jsthread *t)
+{ struct qjs_thread_owner *o; for (o = g_qjs_threads; o != NULL; o = o->next) if (o->thread == t) return o; return NULL; }
+static void qjs_thread_register(struct jsthread *t)
+{ struct qjs_thread_owner *o = calloc(1, sizeof(*o)); if (o == NULL) return; o->thread=t; o->token=g_qjs_thread_token++; if (g_qjs_thread_token==0) g_qjs_thread_token=1; o->next=g_qjs_threads; g_qjs_threads=o; }
+static void qjs_thread_unregister(struct jsthread *t)
+{ struct qjs_thread_owner **p=&g_qjs_threads; while (*p != NULL) { if ((*p)->thread == t) { struct qjs_thread_owner *o=*p; *p=o->next; free(o); return; } p=&(*p)->next; } }
 
 static struct qjs_realm_owner *qjs_owner_for_ctx(JSContext *ctx)
 {
@@ -195,6 +206,11 @@ unsigned long js_realm_generation(struct jsthread *thread)
 	if (thread == NULL || thread->ctx == NULL) return 0;
 	return qjs_ctx_gen(thread->ctx);
 }
+unsigned long js_thread_generation(struct jsthread *thread)
+{ struct qjs_thread_owner *o=qjs_thread_owner(thread); return o ? o->token : 0; }
+int js_thread_valid_for_content(struct jsthread *thread, unsigned long token,
+		struct content *content, unsigned long realm_generation)
+{ struct qjs_thread_owner *o=qjs_thread_owner(thread); if (o == NULL || o->token != token) return 0; return js_realm_valid_for_content(thread, content, realm_generation); }
 
 int js_realm_valid_for_content(struct jsthread *thread,
 		struct content *content, unsigned long generation)
@@ -15071,6 +15087,7 @@ nserror js_newthread(struct jsheap *heap, void *win_priv, void *doc_priv,
 	thread->win_priv = win_priv;
 	thread->doc_priv = doc_priv;
 	*out_thread = thread;
+	qjs_thread_register(thread);
 	if (doc_priv != NULL) {
 		/* doc_priv is html_content* - extract dom_document*.
 		 * html_content is defined in content/handlers/html/private.h;
@@ -15093,6 +15110,7 @@ nserror js_closethread(struct jsthread *thread)
 
 void js_destroythread(struct jsthread *thread)
 {
+	qjs_thread_unregister(thread);
 	free(thread);
 }
 

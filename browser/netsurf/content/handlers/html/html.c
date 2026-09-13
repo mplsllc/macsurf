@@ -1371,7 +1371,7 @@ html_proceed_to_done(html_content *html)
 			 * degrade the page (truncated articles, collapsed
 			 * slider, a 1s re-truncation ticker). Re-enable in the
 			 * round that ships forced layout. */
-#ifdef MACSURF_JS_FIRE_LOAD
+#if MACSURF_JS_FIRE_LOAD
 			if (html->js_thread != NULL) {
 				js_fire_window_load(html->js_thread,
 						html->document);
@@ -4156,6 +4156,7 @@ struct html_post_render_note {
 	unsigned long content_gen;
 	jsthread *thread;
 	unsigned long realm_gen;
+	unsigned long thread_gen;
 	int kind;
 };
 static struct html_post_render_note html_post_render[HTML_POST_RENDER_MAX];
@@ -4176,7 +4177,8 @@ static void html_post_render_dispatch(void *p)
 			!macos9_content_token_valid(&html->base,
 				html_post_render[i].content_gen) ||
 			html->js_thread != html_post_render[i].thread ||
-			!js_realm_valid_for_content(html_post_render[i].thread,
+			!js_thread_valid_for_content(html_post_render[i].thread,
+				html_post_render[i].thread_gen,
 				&html->base, html_post_render[i].realm_gen)) {
 			html_post_render[i].html = NULL;
 			continue;
@@ -4220,6 +4222,12 @@ static void html_post_render_queue(html_content *html, int kind)
 		macos9_content_token(&html->base);
 	html_post_render[free_slot].thread = html->js_thread;
 	html_post_render[free_slot].realm_gen = realm_gen;
+	html_post_render[free_slot].thread_gen =
+		js_thread_generation(html->js_thread);
+	if (html_post_render[free_slot].thread_gen == 0) {
+		html_post_render[free_slot].html = NULL;
+		return;
+	}
 	html_post_render[free_slot].kind = kind;
 	(void)macos9_schedule(0, html_post_render_dispatch, NULL);
 }

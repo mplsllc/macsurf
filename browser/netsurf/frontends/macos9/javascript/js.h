@@ -54,8 +54,11 @@ void js_fire_mutation_batch(jsthread *thread);
  * helpers validate both the realm generation and its owning content before
  * anything page-capable is dispatched. */
 unsigned long js_realm_generation(jsthread *thread);
+unsigned long js_thread_generation(jsthread *thread);
 int js_realm_valid_for_content(jsthread *thread, struct content *content,
 		unsigned long generation);
+int js_thread_valid_for_content(jsthread *thread, unsigned long thread_token,
+		struct content *content, unsigned long realm_generation);
 #else
 
 #ifndef NETSURF_JAVASCRIPT_JS_H_
