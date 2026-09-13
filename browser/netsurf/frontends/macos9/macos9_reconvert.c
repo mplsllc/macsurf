@@ -35,6 +35,7 @@
 
 /* core re-convert trigger: 0 = NSERROR_OK (queued), non-zero = busy/skip. */
 extern int html_reconvert_content(struct content *c);
+extern int macsurf_js_page_execution_active(void);
 /* fixes1094 (#265 Round B) - see html.c. */
 extern int macsurf_html_has_droppable_inflight(struct content *c);
 
@@ -921,6 +922,10 @@ macos9_reconvert_cb(void *p)
 		/* Full rebuild is reserved for structural edits after loading has
 		 * settled. Keep a valid request coalesced until that quiescent state. */
 		if (c->status != CONTENT_STATUS_DONE) {
+			busy = 1;
+			continue;
+		}
+		if (macsurf_js_page_execution_active()) {
 			busy = 1;
 			continue;
 		}

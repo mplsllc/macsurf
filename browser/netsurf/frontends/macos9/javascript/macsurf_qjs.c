@@ -115,6 +115,17 @@ struct jsheap *g_heap = NULL;  /* exported for audit */
  * js_destroyheap() unlinks.  Exists so macsurf_qjs_pump_all() can pump all of
  * them; see the note there for why pumping only g_heap froze iframes. */
 static struct jsheap *g_heap_list = NULL;
+static unsigned long g_qjs_task_next = 1;
+static unsigned long g_qjs_task_id = 0;
+static int g_qjs_task_kind = MACSURF_JS_TASK_NONE;
+static int g_qjs_task_depth = 0;
+int macsurf_js_page_execution_active(void) { return g_qjs_task_depth != 0; }
+unsigned long macsurf_js_current_task_id(void) { return g_qjs_task_id; }
+int macsurf_js_current_task_kind(void) { return g_qjs_task_kind; }
+static void qjs_task_push(int kind)
+{ if (g_qjs_task_depth++ == 0) { g_qjs_task_id=g_qjs_task_next++; if (g_qjs_task_next==0) g_qjs_task_next=1; g_qjs_task_kind=kind; } }
+static void qjs_task_pop(void)
+{ if (g_qjs_task_depth > 0 && --g_qjs_task_depth == 0) { g_qjs_task_id=0; g_qjs_task_kind=MACSURF_JS_TASK_NONE; } }
 
 /* The authoritative ownership record for one JavaScript realm.  A heap can
  * briefly have both an old and replacement JSContext during navigation, while
@@ -624,6 +635,15 @@ void macsurf_qjs__safe_eval(JSContext *qctx, const char *src)
 		JS_FreeValue(qctx, exc);
 	}
 	JS_FreeValue(qctx, val);
+}
+
+static void qjs_page_dispatch_eval(struct jsthread *thread, const char *src,
+		int kind)
+{
+	if (thread == NULL || thread->ctx == NULL) return;
+	qjs_task_push(kind);
+	macsurf_qjs__safe_eval(thread->ctx, src);
+	qjs_task_pop();
 }
 
 /* ------------------------------------------------------------------ */
@@ -15778,6 +15798,7 @@ unsigned char js_exec(struct jsthread *thread,
 		long r_us = 0;
 		JSValue fn;
 
+		qjs_task_push(MACSURF_JS_TASK_SCRIPT);
 		fn = JS_Eval(thread->ctx, src, txtlen,
 				name ? name : "<script>",
 				JS_EVAL_TYPE_GLOBAL |
@@ -15870,6 +15891,7 @@ unsigned char js_exec(struct jsthread *thread,
 		JS_FreeValue(thread->ctx, exc);
 		JS_FreeValue(thread->ctx, val);
 		macsurf_debug_log_writef("qjs: exec-return0 [%s]", name ? name : "?");
+		qjs_task_pop();
 		return 0;
 	}
 	JS_FreeValue(thread->ctx, val);
@@ -15886,6 +15908,7 @@ unsigned char js_exec(struct jsthread *thread,
 				sname, (long)txtlen);
 	}
 #endif
+	qjs_task_pop();
 	return 1;
 }
 
@@ -15996,7 +16019,7 @@ unsigned char js_fire_event(struct jsthread *thread, const char *type,
 			memcpy(script + 48, type, tlen);
 			memcpy(script + 48 + tlen, "'));}catch(e){}})();", 20);
 			script[48 + tlen + 20] = '\0';
-			macsurf_qjs__safe_eval(thread->ctx, script);
+			qjs_page_dispatch_eval(thread, script, MACSURF_JS_TASK_EVENT);
 		}
 	}
 	return 1;
@@ -16019,7 +16042,8 @@ void js_fire_mutation_batch(struct jsthread *thread)
 		"__msDeliverMutations();"
 		"}catch(e){}})();";
 	if (thread == NULL || thread->ctx == NULL) return;
-	macsurf_qjs__safe_eval(thread->ctx, s_deliver_src);
+	qjs_page_dispatch_eval(thread, s_deliver_src,
+		MACSURF_JS_TASK_INTERNAL_NOTIFICATION);
 }
 
 /* fixes652: real-build definition of interaction.c's click bridge (Gate 5).
@@ -16069,7 +16093,8 @@ unsigned char js_fire_dom_ready(struct jsthread *thread, struct dom_document *do
 	if (thread == NULL || thread->ctx == NULL) {
 		return 0;
 	}
-	macsurf_qjs__safe_eval(thread->ctx, s_dom_ready_src);
+	qjs_page_dispatch_eval(thread, s_dom_ready_src,
+		MACSURF_JS_TASK_INTERNAL_NOTIFICATION);
 	/* fixes862 (#289 probe) - was "qjs: DOMContentLoaded+load fired to
 	 * document", which the failures-only gate DROPS (macsurf_debug_log.c:
 	 * only "WORK " and genuine failures survive), so this has been invisible
@@ -16119,7 +16144,8 @@ unsigned char js_fire_window_load(struct jsthread *thread, struct dom_document *
 	if (thread == NULL || thread->ctx == NULL) {
 		return 0;
 	}
-	macsurf_qjs__safe_eval(thread->ctx, s_window_load_src);
+	qjs_page_dispatch_eval(thread, s_window_load_src,
+		MACSURF_JS_TASK_INTERNAL_NOTIFICATION);
 	macsurf_debug_log_writef("LIFE window load fired ctx=%p doc=%p",
 			(void *)thread->ctx, (void *)doc);
 	/* fixes1013 - one line per page saying whether the JS actually ran and

@@ -21,6 +21,12 @@ struct jscontext {
 	void *win_priv;
 	void *doc_priv;
 };
+enum macsurf_js_task_kind { MACSURF_JS_TASK_NONE=0, MACSURF_JS_TASK_SCRIPT,
+	MACSURF_JS_TASK_EVENT, MACSURF_JS_TASK_TIMER, MACSURF_JS_TASK_MICROTASK,
+	MACSURF_JS_TASK_INTERNAL_SETUP, MACSURF_JS_TASK_INTERNAL_NOTIFICATION };
+int macsurf_js_page_execution_active(void);
+unsigned long macsurf_js_current_task_id(void);
+int macsurf_js_current_task_kind(void);
 
 /* Lifecycle */
 struct jscontext *macsurf_qjs_newcontext(void);
