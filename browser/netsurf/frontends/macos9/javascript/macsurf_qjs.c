@@ -119,13 +119,15 @@ static unsigned long g_qjs_task_next = 1;
 static unsigned long g_qjs_task_id = 0;
 static int g_qjs_task_kind = MACSURF_JS_TASK_NONE;
 static int g_qjs_task_depth = 0;
+static unsigned long g_qjs_task_mutations = 0;
 int macsurf_js_page_execution_active(void) { return g_qjs_task_depth != 0; }
 unsigned long macsurf_js_current_task_id(void) { return g_qjs_task_id; }
 int macsurf_js_current_task_kind(void) { return g_qjs_task_kind; }
+void macsurf_js_note_dom_mutation(void) { if (g_qjs_task_depth != 0) g_qjs_task_mutations++; }
 static void qjs_task_push(int kind)
 { if (g_qjs_task_depth++ == 0) { g_qjs_task_id=g_qjs_task_next++; if (g_qjs_task_next==0) g_qjs_task_next=1; g_qjs_task_kind=kind; } }
 static void qjs_task_pop(void)
-{ if (g_qjs_task_depth > 0 && --g_qjs_task_depth == 0) { unsigned long id=g_qjs_task_id; extern void macos9_reconvert_js_task_complete(unsigned long); g_qjs_task_id=0; g_qjs_task_kind=MACSURF_JS_TASK_NONE; macos9_reconvert_js_task_complete(id); } }
+{ if (g_qjs_task_depth > 0 && --g_qjs_task_depth == 0) { unsigned long id=g_qjs_task_id; unsigned long n=g_qjs_task_mutations; extern void macos9_reconvert_js_task_complete(unsigned long); g_qjs_task_id=0; g_qjs_task_kind=MACSURF_JS_TASK_NONE; g_qjs_task_mutations=0; if (n != 0) macos9_reconvert_js_task_complete(id); } }
 
 /* The authoritative ownership record for one JavaScript realm.  A heap can
  * briefly have both an old and replacement JSContext during navigation, while
@@ -311,7 +313,7 @@ double macsurf_qjs_get_now(void);
  * The counters (g_js_skip_count, g_js_timeout_count) always increment
  * regardless of this switch; this gates only the log emissions. */
 #ifndef MACSURF_JS_AUDIT
-#define MACSURF_JS_AUDIT 1
+#define MACSURF_JS_AUDIT 0
 #endif
 /* fixes1108 (#265) - ON. Only macsurf_qjs_fire_scroll has a live call site
  * (window.c:509-510, the single scroll choke point: arrow keys, scrollbar
@@ -2466,8 +2468,9 @@ static dom_string *qjs_make_domstr(const char *s)
 static void qjs_mark_dom_dirty(JSContext *ctx, void *node, int kind)
 {
 	struct content *content = qjs_get_content_for_ctx(ctx);
-	if (content != NULL)
+	if (content != NULL) {
 		macos9_js_mark_dom_dirty_node(content, node, kind);
+	}
 }
 
 /* ---- QuickJS class for element wrappers ---- */

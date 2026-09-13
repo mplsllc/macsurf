@@ -27,6 +27,7 @@ enum macsurf_js_task_kind { MACSURF_JS_TASK_NONE=0, MACSURF_JS_TASK_SCRIPT,
 int macsurf_js_page_execution_active(void);
 unsigned long macsurf_js_current_task_id(void);
 int macsurf_js_current_task_kind(void);
+void macsurf_js_note_dom_mutation(void);
 
 /* Lifecycle */
 struct jscontext *macsurf_qjs_newcontext(void);

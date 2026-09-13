@@ -36,6 +36,7 @@
 /* core re-convert trigger: 0 = NSERROR_OK (queued), non-zero = busy/skip. */
 extern int html_reconvert_content(struct content *c);
 extern int macsurf_js_page_execution_active(void);
+extern void macsurf_js_note_dom_mutation(void);
 /* fixes1094 (#265 Round B) - see html.c. */
 extern int macsurf_html_has_droppable_inflight(struct content *c);
 
@@ -1090,6 +1091,8 @@ macos9_js_mark_dom_dirty_node(struct content *c, void *node, int kind)
 		g_first_mark_tick = (unsigned long) TickCount();
 
 	macos9_reconvert_pending_add(c, node, kind);
+	if (macsurf_js_page_execution_active())
+		macsurf_js_note_dom_mutation();
 	/* fixes1148 - DON'T reschedule if already queued.
 	 *
 	 * The old code called macos9_schedule() on EVERY mutation, which
@@ -1113,6 +1116,8 @@ macos9_js_mark_dom_dirty_node(struct content *c, void *node, int kind)
 static void macos9_reconvert_schedule_pending(void)
 {
 	extern int macos9_sched_is_queued(void (*callback)(void *p), void *p);
+	if (macos9_reconvert_pending_count() == 0)
+		return;
 	if (!macos9_sched_is_queued(macos9_reconvert_cb, NULL))
 		(void)macos9_schedule(g_reconvert_debounce_ms, macos9_reconvert_cb, NULL);
 }
