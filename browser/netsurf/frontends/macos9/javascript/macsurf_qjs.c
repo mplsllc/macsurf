@@ -1776,6 +1776,7 @@ void macsurf_qjs_run_timers(struct jscontext *ctx)
 		/* fixes876 - HTML spec calls timer callbacks with `this` = the window.
 		 * JS_UNDEFINED left strict-mode callbacks with `this === undefined`. */
 		this_obj = JS_GetGlobalObject(qctx);
+		qjs_task_push(MACSURF_JS_TASK_TIMER);
 		ret = JS_Call(qctx, fn, this_obj, call_nargs, call_args);
 		{	/* fixes1037 */
 			extern double macos9_micros(void);
@@ -1802,6 +1803,7 @@ void macsurf_qjs_run_timers(struct jscontext *ctx)
 			}
 		}
 		JS_FreeValue(qctx, ret);
+		qjs_task_pop();
 		g_qjs_script_deadline = prevdl;
 		JS_FreeValue(qctx, fn);
 		for (a = 0; a < call_nargs; a++)
@@ -6793,7 +6795,9 @@ static void qjs_fire_dispatch(JSContext *ctx, JSValueConst obj,
 	}
 	if (JS_IsFunction(ctx, fn)) {
 		argv[0] = evobj;
+		qjs_task_push(MACSURF_JS_TASK_EVENT);
 		ret = JS_Call(ctx, fn, obj, 1, (JSValueConst *)argv);
+		qjs_task_pop();
 		if (JS_IsException(ret)) {
 			JSValue ex = JS_GetException(ctx);
 			qjs_log_exc(ctx, ex, "event handler threw", what);
@@ -16459,7 +16463,10 @@ void macsurf_qjs_pump_all(void)
 			int jobs = 0;
 			while (JS_IsJobPending(h->rt) && jobs < QJS_MAX_JOBS_PER_PUMP) {
 				JSContext *jctx = NULL;
-				int r = JS_ExecutePendingJob(h->rt, &jctx);
+				int r;
+				qjs_task_push(MACSURF_JS_TASK_MICROTASK);
+				r = JS_ExecutePendingJob(h->rt, &jctx);
+				qjs_task_pop();
 				if (r < 0) {
 					/* Uncaught rejection / job threw: surface it, keep
 					 * draining -- one bad job must not stall the queue. */
