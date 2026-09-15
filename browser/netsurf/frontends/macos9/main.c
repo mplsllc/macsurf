@@ -10,6 +10,8 @@
 #include "utils/nsoption.h"
 #include "macsurf_config.h"
 #include "macsurf_debug.h"
+#include "macsurf_diag.h"
+#include "macsurf_trace.h"
 #include "macsurf_memory.h"    /* macsurf_recon_mem() */
 #include "macsurf_timebase.h"
 #include "macsurf_osver.h"     /* fixes936 -- macsurf_os_is_osx() */
@@ -20,6 +22,16 @@
 #include <Movies.h>
 #include <Processes.h>   /* fixes983 -- our own FSSpec, for the icon claim */
 #include <Files.h>       /* fixes983 -- FSpGetFInfo / FSpSetFInfo */
+/* AppleEvent Manager arrives through Carbon.h.  Universal Interfaces 3.4.1
+ * lacks these URL-suite constants, although both are the four-char GURL. */
+#ifndef kInternetEventClass
+#define kInternetEventClass 'GURL'
+#endif
+#ifndef kAEGetURL
+#define kAEGetURL 'GURL'
+#endif
+#define kMacSurfDiagEventClass 'MSdg'
+#define kMacSurfDiagGet 'GET '
 OTClientContextPtr macos9_ot_context = NULL;
 /* macTLS expects this symbol; aliased to our OT context after init. */
 OTClientContextPtr g_ostls_ot_context = NULL;
@@ -79,7 +91,7 @@ extern void   macos9_deathrow_drain(void);
  * (00010DE0, low-memory) during event delivery. We never consumed these
  * events; not requesting them keeps the Toolbox off that code path. */
 #define MACOS9_EVENT_MASK (mDownMask | mUpMask | keyDownMask | autoKeyMask | \
-	updateMask | activMask)
+	updateMask | activMask | highLevelEventMask)
 #else
 #define MACOS9_EVENT_MASK everyEvent
 #endif
@@ -1470,6 +1482,7 @@ void macos9_poll(void) {
 			case mouseDown:   macos9_handle_mouse_down(&ev); break;
 			case keyDown: case autoKey: macos9_handle_key_down(&ev); break;
 			case activateEvt: macos9_handle_activate(&ev); break;
+			case kHighLevelEvent: AEProcessAppleEvent(&ev); break;
 			default: break;
 		}
 	}
@@ -1603,6 +1616,8 @@ void macos9_poll_mouse_hover(void) {
  * causes (clock-baseline-not-ready and pump-not-cycling) at once by
  * removing the precondition that makes either bite.
  */
+static int macos9_startup_home_pending = 0;
+
 static void macos9_deferred_home_load(void *pw)
 {
 	struct browser_window *bw = (struct browser_window *)pw;
@@ -1632,6 +1647,11 @@ static void macos9_deferred_home_load(void *pw)
 		MS_LOG("deferred home: bw NULL, skip");
 		return;
 	}
+	if (!macos9_startup_home_pending) {
+		MS_LOG("deferred home: superseded by GURL, skip");
+		return;
+	}
+	macos9_startup_home_pending = 0;
 	if (nsurl_create(macos9_home_url(), &home) != NSERROR_OK) {
 		MS_LOG("deferred home: nsurl_create failed");
 		return;
@@ -1645,6 +1665,129 @@ static void macos9_deferred_home_load(void *pw)
 		NULL, NULL, NULL);
 	nsurl_unref(home);
 }
+
+#ifdef __MACOS9__
+/* Read-only, on-demand diagnostic endpoint.  Serialisation happens only in
+ * this AppleEvent handler; browser hot paths continue to record integers. */
+static pascal OSErr macos9_ae_diag(const AppleEvent *ae, AppleEvent *reply,
+		long refcon)
+{
+	DescType rt;
+	Size actual = 0;
+	OSErr err;
+	char verb[32];
+	static char out[16384];
+	long n;
+
+	(void)refcon;
+	err = AEGetParamPtr(ae, keyDirectObject, typeChar, &rt,
+			(Ptr)verb, (Size)(sizeof(verb) - 1), &actual);
+	if (err != noErr) return err;
+	if (actual < 0 || (unsigned long)actual >
+			(unsigned long)(sizeof(verb) - 1)) return errAEEventNotHandled;
+	verb[actual] = '\0';
+
+	if (strcmp(verb, "summary") == 0) n = macsurf_diag_serialize_summary(out, (long)sizeof(out));
+	else if (strcmp(verb, "prefs") == 0) n = macsurf_diag_serialize_prefs(out, (long)sizeof(out));
+	else if (strcmp(verb, "gaps") == 0) n = macsurf_diag_serialize_gaps(out, (long)sizeof(out));
+	else if (strcmp(verb, "network") == 0) n = macsurf_diag_serialize_network(out, (long)sizeof(out));
+	else if (strcmp(verb, "scripts") == 0) n = macsurf_diag_serialize_scripts(out, (long)sizeof(out));
+	else if (strcmp(verb, "tasks") == 0) n = macsurf_diag_serialize_tasks(out, (long)sizeof(out));
+	else if (strcmp(verb, "documents") == 0) n = macsurf_diag_serialize_documents(out, (long)sizeof(out));
+	else if (strcmp(verb, "mutations") == 0) n = macsurf_diag_serialize_mutations(out, (long)sizeof(out));
+	else if (strcmp(verb, "layout") == 0) n = macsurf_diag_serialize_layout(out, (long)sizeof(out));
+	else if (strcmp(verb, "modules") == 0) n = macsurf_diag_serialize_modules(out, (long)sizeof(out));
+	else if (strcmp(verb, "io") == 0) n = macsurf_diag_serialize_io(out, (long)sizeof(out));
+	else if (strcmp(verb, "operations") == 0) n = macsurf_diag_serialize_operations(out, (long)sizeof(out));
+	else if (strcmp(verb, "errors") == 0) n = macsurf_diag_serialize_errors(out, (long)sizeof(out));
+	else if (strcmp(verb, "pending") == 0) n = macsurf_diag_serialize_pending(out, (long)sizeof(out));
+	else if (strcmp(verb, "settlement") == 0) n = macsurf_diag_serialize_settlement(out, (long)sizeof(out));
+	else if (strcmp(verb, "timers") == 0) n = macsurf_diag_serialize_timers(out, (long)sizeof(out));
+	else if (strcmp(verb, "readiness") == 0) n = macsurf_diag_serialize_readiness(out, (long)sizeof(out));
+	else if (strcmp(verb, "trace") == 0) n = macsurf_trace_serialize(out, (long)sizeof(out));
+	else if (strcmp(verb, "tracestart") == 0) {
+		macsurf_trace_arm(0UL, 2);
+		n = macsurf_trace_serialize(out, (long)sizeof(out));
+	} else if (strcmp(verb, "tracestop") == 0) {
+		macsurf_trace_disarm();
+		n = macsurf_trace_serialize(out, (long)sizeof(out));
+	} else {
+		return errAEEventNotHandled;
+	}
+	if (n <= 0) return errAECorruptData;
+	macsurf_debug_log_writef("LIFE AE MSdg GET %s -> %ld bytes", verb, n);
+	if (reply != NULL) {
+		err = AEPutParamPtr(reply, keyDirectObject, typeChar, (Ptr)out,
+			(Size)n);
+		if (err != noErr) return err;
+	}
+	return noErr;
+}
+
+static pascal OSErr macos9_ae_get_url(const AppleEvent *ae,
+		AppleEvent *reply, long refcon)
+{
+	DescType rt;
+	Size actual = 0;
+	OSErr err;
+	char url[2048];
+	WindowRef fw;
+	struct gui_window *g;
+
+	(void)reply;
+	(void)refcon;
+	err = AEGetParamPtr(ae, keyDirectObject, typeChar, &rt, (Ptr)url,
+			(Size)(sizeof(url) - 1), &actual);
+	if (err != noErr) return err;
+	if (actual < 0 || (unsigned long)actual >
+			(unsigned long)(sizeof(url) - 1)) return errAEEventNotHandled;
+	url[actual] = '\0';
+	macos9_startup_home_pending = 0;
+	fw = FrontWindow();
+	g = (fw != NULL) ? macos9_find_window(fw) : macos9_window_list_head();
+	if (g == NULL) g = macos9_create_initial_window();
+	if (g == NULL) return errAEEventNotHandled;
+	macsurf_debug_log_writef("LIFE AE GURL navigate url=%s", url);
+	macos9_window_navigate(g, url);
+	return noErr;
+}
+
+static pascal OSErr macos9_ae_quit(const AppleEvent *ae, AppleEvent *reply,
+		long refcon)
+{
+	(void)ae;
+	(void)reply;
+	(void)refcon;
+	macsurf_debug_log_writef("LIFE AE quit received");
+	macos9_done = (bool)1;
+	macos9_quitting = (bool)1;
+	return noErr;
+}
+
+static pascal OSErr macos9_ae_noop(const AppleEvent *ae, AppleEvent *reply,
+		long refcon)
+{
+	(void)ae;
+	(void)reply;
+	(void)refcon;
+	return noErr;
+}
+
+static void macos9_install_ae_handlers(void)
+{
+	OSErr e1, e2, e3;
+	e1 = AEInstallEventHandler(kCoreEventClass, kAEQuitApplication,
+			NewAEEventHandlerUPP(macos9_ae_quit), 0, false);
+	e2 = AEInstallEventHandler(kInternetEventClass, kAEGetURL,
+			NewAEEventHandlerUPP(macos9_ae_get_url), 0, false);
+	e3 = AEInstallEventHandler(kMacSurfDiagEventClass, kMacSurfDiagGet,
+			NewAEEventHandlerUPP(macos9_ae_diag), 0, false);
+	(void)AEInstallEventHandler(kCoreEventClass, kAEOpenApplication,
+			NewAEEventHandlerUPP(macos9_ae_noop), 0, false);
+	macsurf_debug_log_writef("LIFE AE install quit=%d GURL=%d MSdg=%d",
+		(int)e1, (int)e2, (int)e3);
+}
+#endif
 
 
 /* fixes983 -- claim the custom-icon bit on our own application file.
@@ -1867,6 +2010,8 @@ int main(void) {
 
 	macos9_init_menus();
 	MS_LOG("BOOT menus installed");
+	macos9_install_ae_handlers();
+	MS_LOG("BOOT AppleEvent handlers installed");
 	/* fixes294 - decode the baked-in default favicon PNG into a GWorld
 	 * that lives for the life of the process.  Must happen AFTER
 	 * EnterMovies (which initialises QT but we use lodepng for this) and
@@ -1980,6 +2125,7 @@ int main(void) {
 				"launch home: clock_ms=%ld (startup, pre-loop)",
 				(long)macsurf_monotonic_ms());
 			if (bw != NULL) {
+				macos9_startup_home_pending = 1;
 				macos9_schedule(0, macos9_deferred_home_load, bw);
 				MS_LOG("BOOT launch: home nav scheduled (deferred)");
 			}
