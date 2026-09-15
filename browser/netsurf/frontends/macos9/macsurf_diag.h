@@ -86,8 +86,9 @@ long macsurf_diag_serialize_network(char *buf, long cap);
 enum ms_script_kind  { MS_SCRIPT_CLASSIC = 0, MS_SCRIPT_MODULE };
 enum ms_script_state { MS_SCR_RUNNING = 0, MS_SCR_DONE, MS_SCR_COMPILE_FAIL,
 		       MS_SCR_RUN_FAIL, MS_SCR_SKIPPED };
-enum ms_task_kind    { MS_TASK_NONE = 0, MS_TASK_TIMER, MS_TASK_EVENT,
-		       MS_TASK_XHR, MS_TASK_MICROTASK };
+enum ms_task_kind    { MS_TASK_NONE = 0, MS_TASK_SCRIPT, MS_TASK_EVENT,
+		       MS_TASK_TIMER, MS_TASK_MICROTASK, MS_TASK_INTERNAL_SETUP,
+		       MS_TASK_INTERNAL_NOTIFICATION, MS_TASK_XHR };
 
 /* Saved outer scope; scoped push/pop, NOT bare assignment. */
 struct ms_diag_scope {
@@ -109,6 +110,13 @@ void ms_diag_script_leave(struct ms_diag_scope *s, int state);
 unsigned long ms_diag_task_enter(struct ms_diag_scope *s, int kind,
 	unsigned long nav_id, unsigned long origin_script,
 	unsigned long extra, const char *name);
+/* Observe a task whose ID is owned by an existing execution spine.  This is
+ * deliberately separate from ms_diag_task_enter(): the diagnostic layer must
+ * never manufacture a competing identity for a QuickJS task. */
+void ms_diag_task_enter_external(struct ms_diag_scope *s,
+	unsigned long task_id, int kind, unsigned long nav_id,
+	unsigned long origin_script, unsigned long extra, const char *name);
+void ms_diag_task_set_script(unsigned long task_id, unsigned long script_id);
 void ms_diag_task_leave(struct ms_diag_scope *s);
 
 /* microtask only: after the drain, record how many jobs ran and whether the
@@ -362,4 +370,3 @@ long macsurf_diag_serialize_css_gaps(char *buf, long cap);
 long macsurf_diag_serialize_gapreport(char *buf, long cap);
 
 #endif /* MACSURF_DIAG_H */
-

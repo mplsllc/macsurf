@@ -27,6 +27,7 @@
 #include "macsurf_qjs_audit.h"
 #include "macsurf_timebase.h"
 #include "macos9_js_fetch.h"
+#include "macsurf_diag.h"
 /* fixes1245 (#167) - plot_font_style_t/gui_layout_table for canvas
  * measureText's real (not fabricated) width query. Neither was pulled in
  * transitively by anything already included here -- checked by trying
@@ -117,17 +118,51 @@ struct jsheap *g_heap = NULL;  /* exported for audit */
 static struct jsheap *g_heap_list = NULL;
 static unsigned long g_qjs_task_next = 1;
 static unsigned long g_qjs_task_id = 0;
+static int g_qjs_nav_seq = 0;
 static int g_qjs_task_kind = MACSURF_JS_TASK_NONE;
 static int g_qjs_task_depth = 0;
 static unsigned long g_qjs_task_mutations = 0;
+static struct ms_diag_scope g_qjs_task_diag_scope;
 int macsurf_js_page_execution_active(void) { return g_qjs_task_depth != 0; }
 unsigned long macsurf_js_current_task_id(void) { return g_qjs_task_id; }
 int macsurf_js_current_task_kind(void) { return g_qjs_task_kind; }
 void macsurf_js_note_dom_mutation(void) { if (g_qjs_task_depth != 0) g_qjs_task_mutations++; }
+static int qjs_diag_task_kind(int kind)
+{
+	switch (kind) {
+	case MACSURF_JS_TASK_SCRIPT: return MS_TASK_SCRIPT;
+	case MACSURF_JS_TASK_EVENT: return MS_TASK_EVENT;
+	case MACSURF_JS_TASK_TIMER: return MS_TASK_TIMER;
+	case MACSURF_JS_TASK_MICROTASK: return MS_TASK_MICROTASK;
+	case MACSURF_JS_TASK_INTERNAL_SETUP: return MS_TASK_INTERNAL_SETUP;
+	case MACSURF_JS_TASK_INTERNAL_NOTIFICATION: return MS_TASK_INTERNAL_NOTIFICATION;
+	default: return MS_TASK_NONE;
+	}
+}
 static void qjs_task_push(int kind)
-{ if (g_qjs_task_depth++ == 0) { g_qjs_task_id=g_qjs_task_next++; if (g_qjs_task_next==0) g_qjs_task_next=1; g_qjs_task_kind=kind; } }
+{
+	if (g_qjs_task_depth++ == 0) {
+		g_qjs_task_id=g_qjs_task_next++;
+		if (g_qjs_task_next==0) g_qjs_task_next=1;
+		g_qjs_task_kind=kind;
+		ms_diag_task_enter_external(&g_qjs_task_diag_scope, g_qjs_task_id,
+			qjs_diag_task_kind(kind), (unsigned long)g_qjs_nav_seq,
+			ms_diag_cur_script(), 0, NULL);
+	}
+}
 static void qjs_task_pop(void)
-{ if (g_qjs_task_depth > 0 && --g_qjs_task_depth == 0) { unsigned long id=g_qjs_task_id; unsigned long n=g_qjs_task_mutations; extern void macos9_reconvert_js_task_complete(unsigned long); g_qjs_task_id=0; g_qjs_task_kind=MACSURF_JS_TASK_NONE; g_qjs_task_mutations=0; if (n != 0) macos9_reconvert_js_task_complete(id); } }
+{
+	if (g_qjs_task_depth > 0 && --g_qjs_task_depth == 0) {
+		unsigned long id=g_qjs_task_id;
+		unsigned long n=g_qjs_task_mutations;
+		extern void macos9_reconvert_js_task_complete(unsigned long);
+		g_qjs_task_id=0;
+		g_qjs_task_kind=MACSURF_JS_TASK_NONE;
+		g_qjs_task_mutations=0;
+		if (n != 0) macos9_reconvert_js_task_complete(id);
+		ms_diag_task_leave(&g_qjs_task_diag_scope);
+	}
+}
 
 /* The authoritative ownership record for one JavaScript realm.  A heap can
  * briefly have both an old and replacement JSContext during navigation, while
@@ -2020,7 +2055,6 @@ long g_js_skip_count = 0;  /* fixes1141 - scripts skipped (size cap) */
  * js_exec at the top of every script run, so the FBCR __d wrapper below
  * can report exactly which script was executing when a given module got
  * registered, without threading the name through JS. */
-static int g_qjs_nav_seq = 0;
 static char g_qjs_current_script[192] = "";
 long g_js_timeout_count = 0;  /* fixes1141 - scripts aborted (deadline) */
 
@@ -15534,6 +15568,8 @@ unsigned char js_exec(struct jsthread *thread,
 	JSValue val;
 	int ok;
 	char *src;
+	struct ms_diag_scope diag_script_scope;
+	int diag_script_state = MS_SCR_DONE;
 
 	/* fixes847 (#167 S1 census gap) - the other half of the js_exec
 	 * visibility fix below: if thread/ctx is NULL, js_exec bails before
@@ -15806,6 +15842,9 @@ unsigned char js_exec(struct jsthread *thread,
 		JSValue fn;
 
 		qjs_task_push(MACSURF_JS_TASK_SCRIPT);
+		ms_diag_script_enter(&diag_script_scope,
+			(unsigned long)g_qjs_nav_seq, MS_SCRIPT_CLASSIC, name);
+		ms_diag_task_set_script(g_qjs_task_id, diag_script_scope.my_id);
 		fn = JS_Eval(thread->ctx, src, txtlen,
 				name ? name : "<script>",
 				JS_EVAL_TYPE_GLOBAL |
@@ -15813,6 +15852,7 @@ unsigned char js_exec(struct jsthread *thread,
 		t_mid = macos9_micros();
 		c_us = (long)(t_mid - t_js);
 		if (JS_IsException(fn)) {
+			diag_script_state = MS_SCR_COMPILE_FAIL;
 			/* Syntax error: fn IS the exception value, which is
 			 * what plain JS_Eval would have returned. Propagate it
 			 * unchanged so the error reporting below is identical
@@ -15824,6 +15864,7 @@ unsigned char js_exec(struct jsthread *thread,
 					0, 0, c_us, 0);
 		} else {
 			val = JS_EvalFunction(thread->ctx, fn);
+			if (JS_IsException(val)) diag_script_state = MS_SCR_RUN_FAIL;
 			r_us = (long)(macos9_micros() - t_mid);
 			/* R1.3 - compiled ok; ran to completion or threw. */
 			qjs_census_note(name, (long)txtlen, ctype,
@@ -15898,6 +15939,7 @@ unsigned char js_exec(struct jsthread *thread,
 		JS_FreeValue(thread->ctx, exc);
 		JS_FreeValue(thread->ctx, val);
 		macsurf_debug_log_writef("qjs: exec-return0 [%s]", name ? name : "?");
+		ms_diag_script_leave(&diag_script_scope, diag_script_state);
 		qjs_task_pop();
 		return 0;
 	}
@@ -15915,6 +15957,7 @@ unsigned char js_exec(struct jsthread *thread,
 				sname, (long)txtlen);
 	}
 #endif
+	ms_diag_script_leave(&diag_script_scope, diag_script_state);
 	qjs_task_pop();
 	return 1;
 }
@@ -15935,6 +15978,8 @@ unsigned char js_exec_module(struct jsthread *thread,
 	JSContext *ctx;
 	char *src;
 	int ok;
+	struct ms_diag_scope diag_script_scope;
+	int diag_script_state = MS_SCR_DONE;
 
 	if (thread == NULL || thread->ctx == NULL) {
 		macsurf_debug_log_writef(
@@ -15976,12 +16021,17 @@ unsigned char js_exec_module(struct jsthread *thread,
 		extern double macos9_micros(void);
 		double t0 = macos9_micros();
 		long mus;
+		qjs_task_push(MACSURF_JS_TASK_SCRIPT);
+		ms_diag_script_enter(&diag_script_scope,
+			(unsigned long)g_qjs_nav_seq, MS_SCRIPT_MODULE, name);
+		ms_diag_task_set_script(g_qjs_task_id, diag_script_scope.my_id);
 		val = JS_Eval(ctx, src, txtlen,
 			name ? name : "<module>",
 			JS_EVAL_TYPE_MODULE);
 		free(src);
 
 		ok = !JS_IsException(val);
+		if (!ok) diag_script_state = MS_SCR_RUN_FAIL;
 		mus = (long)(macos9_micros() - t0);
 		/* R1.3 - a module is compiled, resolved and executed in the one
 		 * JS_Eval call, so a failure cannot be attributed to a phase
@@ -15998,6 +16048,8 @@ unsigned char js_exec_module(struct jsthread *thread,
 		macsurf_debug_log_writef(
 			"LIFE qjs exec module done ok=%d us=%ld [%s]",
 			(int)ok, mus, name ? name : "<module>");
+		ms_diag_script_leave(&diag_script_scope, diag_script_state);
+		qjs_task_pop();
 	}
 
 	/* Update page stats (same as js_exec) */

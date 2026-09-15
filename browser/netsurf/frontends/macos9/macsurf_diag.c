@@ -477,6 +477,45 @@ unsigned long ms_diag_task_enter(struct ms_diag_scope *s, int kind,
 	return s->my_id;
 }
 
+void ms_diag_task_enter_external(struct ms_diag_scope *s,
+	unsigned long task_id, int kind, unsigned long nav_id,
+	unsigned long origin_script, unsigned long extra, const char *name)
+{
+	struct ms_diag_task *e;
+
+	s->prev_script = g_cur_script;
+	s->prev_task = g_cur_task;
+	s->my_id = task_id;
+	if (task_id == 0) return;
+	/* Keep the legacy allocating API collision-free for any later caller. */
+	if (task_id > g_task_seq) g_task_seq = task_id;
+	e = &g_task_ring[g_task_ring_head];
+	g_task_ring_head = (g_task_ring_head + 1) % MS_TASK_RING_N;
+	e->id = task_id;
+	e->nav_id = nav_id;
+	e->script_id = origin_script;
+	e->extra = extra;
+	e->kind = (short) kind;
+	e->capped = 0;
+	ms_name_copy(e->name, name);
+	g_cur_task = task_id;
+	if (nav_id != 0) g_cur_nav = nav_id;
+	if (origin_script != 0) g_cur_script = origin_script;
+	ms_diag_progress(MS_PROGRESS_TASK);
+}
+
+void ms_diag_task_set_script(unsigned long task_id, unsigned long script_id)
+{
+	int i;
+	if (task_id == 0 || script_id == 0) return;
+	for (i = 0; i < MS_TASK_RING_N; i++) {
+		if (g_task_ring[i].id == task_id) {
+			g_task_ring[i].script_id = script_id;
+			break;
+		}
+	}
+}
+
 void ms_diag_task_leave(struct ms_diag_scope *s)
 {
 	g_cur_script = s->prev_script;
@@ -522,10 +561,13 @@ static const char *ms_script_state_s(int st)
 static const char *ms_task_kind_s(int k)
 {
 	switch (k) {
+	case MS_TASK_SCRIPT:    return "script";
 	case MS_TASK_TIMER:     return "timer";
 	case MS_TASK_EVENT:     return "event";
 	case MS_TASK_XHR:       return "xhr";
 	case MS_TASK_MICROTASK: return "microtask";
+	case MS_TASK_INTERNAL_SETUP: return "internal_setup";
+	case MS_TASK_INTERNAL_NOTIFICATION: return "internal_notification";
 	default:                return "none";
 	}
 }
@@ -2451,4 +2493,3 @@ long macsurf_diag_serialize_errors(char *buf, long cap)
 	}
 	return n;
 }
-
