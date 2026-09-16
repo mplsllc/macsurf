@@ -954,6 +954,18 @@ void ms_diag_batch_freeze(unsigned long batch_id)
 	}
 }
 
+int ms_diag_batch_provenance(unsigned long batch_id,
+	struct ms_diag_provenance *out)
+{
+	struct ms_diag_mut_batch *e = ms_batch_find(batch_id);
+	if (out == (struct ms_diag_provenance *) 0 ||
+	    e == (struct ms_diag_mut_batch *) 0) {
+		return 0;
+	}
+	ms_batch_provenance(e, out);
+	return 1;
+}
+
 /* --- render passes --- */
 
 static struct ms_diag_pass *ms_pass_find(unsigned long id)
@@ -1219,6 +1231,7 @@ static const char *ms_render_kind_s(int k)
 	case MS_RENDER_RECONVERT:      return "reconvert";
 	case MS_RENDER_FAST_STYLE:     return "fast_style";
 	case MS_RENDER_FAST_INHERITED: return "fast_inherited";
+	case MS_RENDER_POLICY:         return "policy";
 	default:                       return "initial";
 	}
 }
@@ -1229,6 +1242,13 @@ static const char *ms_render_result_s(int r)
 	case MS_RRES_FALLBACK: return "fallback";
 	case MS_RRES_FAIL:     return "fail";
 	case MS_RRES_QUEUED:   return "queued";
+	case MS_RRES_DECLINED: return "declined_nonfull";
+	case MS_RRES_COSMETIC_SUPPRESSED: return "cosmetic_suppressed";
+	case MS_RRES_DEFER_NOT_DONE: return "defer_not_done";
+	case MS_RRES_DEFER_JS_ACTIVE: return "defer_js_active";
+	case MS_RRES_BUSY: return "full_busy";
+	case MS_RRES_STALE_DROP: return "stale_content_drop";
+	case MS_RRES_OVERFLOW: return "overflow_decline";
 	default:               return "running";
 	}
 }

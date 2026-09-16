@@ -822,6 +822,9 @@ macos9_reconvert_cb(void *p)
 	int busy = 0;
 	int did_one = 0;
 	enum macsurf_render_action action;
+	struct ms_diag_provenance prov;
+	struct ms_diag_render_scope render_scope;
+	int have_render_scope;
 	extern int html_reconvert_fast_style(struct content *c, void *node);
 	extern int html_reconvert_fast_inherited_color(struct content *c,
 			void *node);
@@ -862,6 +865,13 @@ macos9_reconvert_cb(void *p)
 		c = g_pending[i].c;
 		if (c == NULL)
 			continue;
+		memset(&prov, 0, sizeof(prov));
+		have_render_scope = ms_diag_batch_provenance(g_pending[i].batch_id,
+			&prov);
+		if (have_render_scope) {
+			(void) ms_diag_render_enter(&render_scope, MS_RENDER_POLICY,
+				&prov);
+		}
 
 		/* Two-step liveness, in this order, neither sufficient alone:
 		 *  - is_live: is this pointer in the registry at all (freed?).
@@ -872,6 +882,8 @@ macos9_reconvert_cb(void *p)
 		 * WRONG document. */
 		if (!macos9_content_is_live(c) ||
 		    !macos9_content_token_valid(c, g_pending[i].token)) {
+			if (have_render_scope) ms_diag_render_leave(&render_scope,
+				MS_RRES_STALE_DROP, MS_SREASON_NONE);
 			macos9_reconvert_slot_clear(i);
 			continue;
 		}
@@ -914,6 +926,8 @@ macos9_reconvert_cb(void *p)
 					"consec=%d cap=%d",
 					g_consecutive_cosmetic,
 					RECONVERT_COSMETIC_MAX_CONSECUTIVE);
+				if (have_render_scope) ms_diag_render_leave(&render_scope,
+					MS_RRES_COSMETIC_SUPPRESSED, MS_SREASON_NONE);
 				macos9_reconvert_slot_clear(i);
 				memset(g_mut_counts, 0,
 					sizeof(g_mut_counts));
@@ -927,6 +941,8 @@ macos9_reconvert_cb(void *p)
 				g_style_fast_attempt++;
 				if (html_reconvert_fast_style(c, g_pending[i].node) == 0) {
 					g_style_fast_commit++;
+					if (have_render_scope) ms_diag_render_leave(&render_scope,
+						MS_RRES_DONE, MS_SREASON_NONE);
 					macos9_reconvert_slot_clear(i);
 					g_mut_counts[MACOS9_DOMMUT_SETATTR_STYLE]--;
 					g_mut_total--;
@@ -942,6 +958,8 @@ macos9_reconvert_cb(void *p)
 					if (html_reconvert_fast_inherited_color(c,
 							g_pending[i].node) == 0) {
 						g_inherited_color_commit++;
+						if (have_render_scope) ms_diag_render_leave(&render_scope,
+							MS_RRES_DONE, MS_SREASON_NONE);
 						macos9_reconvert_slot_clear(i);
 						g_mut_counts[MACOS9_DOMMUT_SETATTR_STYLE]--;
 						g_mut_total--;
@@ -957,16 +975,22 @@ macos9_reconvert_cb(void *p)
 			 MACSURF_RENDER_FULL : MACSURF_RENDER_NONE) :
 			macsurf_render_action_for(g_pending[i].kind, 0);
 		if (action != MACSURF_RENDER_FULL) {
+			if (have_render_scope) ms_diag_render_leave(&render_scope,
+				MS_RRES_DECLINED, MS_SREASON_NONE);
 			macos9_reconvert_slot_clear(i);
 			continue;
 		}
 		/* Full rebuild is reserved for structural edits after loading has
 		 * settled. Keep a valid request coalesced until that quiescent state. */
 		if (c->status != CONTENT_STATUS_DONE) {
+			if (have_render_scope) ms_diag_render_leave(&render_scope,
+				MS_RRES_DEFER_NOT_DONE, MS_SREASON_NOT_READY);
 			busy = 1;
 			continue;
 		}
 		if (macsurf_js_page_execution_active()) {
+			if (have_render_scope) ms_diag_render_leave(&render_scope,
+				MS_RRES_DEFER_JS_ACTIVE, MS_SREASON_NOT_READY);
 			busy = 1;
 			continue;
 		}
@@ -978,9 +1002,13 @@ macos9_reconvert_cb(void *p)
 			/* mid-layout or a convert already in flight - KEEP the
 			 * slot and re-arm, so a busy frame is retried rather than
 			 * silently dropped. */
+			if (have_render_scope) ms_diag_render_leave(&render_scope,
+				MS_RRES_BUSY, MS_SREASON_NOT_READY);
 			busy = 1;
 			continue;
 		}
+		if (have_render_scope) ms_diag_render_leave(&render_scope,
+			MS_RRES_DONE, MS_SREASON_NONE);
 		macos9_reconvert_slot_clear(i);
 		did_one = 1;
 
@@ -1015,6 +1043,10 @@ macos9_reconvert_cb(void *p)
 	/* Lost precision never grants permission to rebuild an unrelated front
 	 * document. Drop the coarse overflow marker and retain only explicit slots. */
 	if (g_pending_overflow) {
+		memset(&prov, 0, sizeof(prov));
+		(void) ms_diag_render_enter(&render_scope, MS_RENDER_POLICY, &prov);
+		ms_diag_render_leave(&render_scope, MS_RRES_OVERFLOW,
+			MS_SREASON_NONE);
 		g_pending_overflow = 0;
 		macsurf_debug_log_writef("LIFE render decline overflow=1");
 	}

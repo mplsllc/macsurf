@@ -239,7 +239,8 @@ void ms_diag_io_timer_bind(unsigned long io_id, const char *target_name,
  * stage record copies it via ms_diag_cur_provenance(), never piecemeal cur_*(). */
 
 enum ms_render_kind { MS_RENDER_INITIAL = 0, MS_RENDER_RECONVERT,
-		      MS_RENDER_FAST_STYLE, MS_RENDER_FAST_INHERITED };
+		      MS_RENDER_FAST_STYLE, MS_RENDER_FAST_INHERITED,
+		      MS_RENDER_POLICY };
 enum ms_stage_kind   { MS_STAGE_STYLEFAST = 0, MS_STAGE_INHERITED_COLOR };
 enum ms_stage_result { MS_SRES_COMMIT = 0, MS_SRES_FALLBACK, MS_SRES_DECLINE };
 enum ms_stage_reason { MS_SREASON_NONE = 0,
@@ -249,7 +250,10 @@ enum ms_stage_reason { MS_SREASON_NONE = 0,
 		       MS_SREASON_NOT_READY,
 		       MS_SREASON_NO_CANDIDATE };
 enum ms_render_result { MS_RRES_RUNNING = 0, MS_RRES_DONE, MS_RRES_FALLBACK,
-			MS_RRES_FAIL, MS_RRES_QUEUED };
+			MS_RRES_FAIL, MS_RRES_QUEUED, MS_RRES_DECLINED,
+			MS_RRES_COSMETIC_SUPPRESSED, MS_RRES_DEFER_NOT_DONE,
+			MS_RRES_DEFER_JS_ACTIVE, MS_RRES_BUSY, MS_RRES_STALE_DROP,
+			MS_RRES_OVERFLOW };
 
 /* The frozen causal descriptor. Fill with ms_diag_cur_provenance() or build it
  * from a pending-table slot; pass by const pointer, never re-read cur_*(). */
@@ -279,6 +283,8 @@ void ms_diag_document_close(unsigned long doc_id);
 unsigned long ms_diag_batch_open(const struct ms_diag_provenance *prov);
 void ms_diag_batch_add(unsigned long batch_id, int mut_kind, unsigned long task);
 void ms_diag_batch_freeze(unsigned long batch_id);
+int ms_diag_batch_provenance(unsigned long batch_id,
+	struct ms_diag_provenance *out);
 
 /* --- render transaction: synchronous reconvert path (open+push / close+pop) --- */
 unsigned long ms_diag_render_enter(struct ms_diag_render_scope *s, int kind,
