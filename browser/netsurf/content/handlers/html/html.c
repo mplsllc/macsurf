@@ -6252,6 +6252,7 @@ html_open(struct content *c,
 	if (html->ms_diag_doc_id != 0)
 		ms_diag_document_set_frame(html->ms_diag_doc_id,
 			ms_diag_frame_get(bw));
+	html->ms_diag_frame_id = ms_diag_frame_get(bw);
 #endif
 	html->page = (html_content *) page;
 
@@ -6274,8 +6275,7 @@ void html_content_get_diag_identity(struct content *c, unsigned long *doc,
 {
 	html_content *html = (html_content *)c;
 	if (doc != NULL) *doc = (html == NULL) ? 0 : html->ms_diag_doc_id;
-	if (frame != NULL) *frame = (html == NULL) ? 0 :
-		ms_diag_frame_get(html->bw);
+	if (frame != NULL) *frame = (html == NULL) ? 0 : html->ms_diag_frame_id;
 }
 void html_content_set_diag_context(struct content *c, unsigned long nav,
 	void *bw)
@@ -6285,6 +6285,7 @@ void html_content_set_diag_context(struct content *c, unsigned long nav,
 		ms_diag_document_set_nav(html->ms_diag_doc_id, nav);
 		ms_diag_document_set_frame(html->ms_diag_doc_id,
 			ms_diag_frame_get(bw));
+		html->ms_diag_frame_id = ms_diag_frame_get(bw);
 	}
 }
 #endif

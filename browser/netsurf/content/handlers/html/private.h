@@ -249,6 +249,7 @@ typedef struct html_content {
 	 */
 	int img_eager_budget;
 	unsigned long ms_diag_doc_id;
+	unsigned long ms_diag_frame_id;
 
 } html_content;
 
