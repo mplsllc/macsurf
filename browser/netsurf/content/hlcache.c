@@ -172,12 +172,21 @@ hlcache_entry_deferred_free(hlcache_entry *entry)
 static void
 hlcache_handle_deferred_free(hlcache_handle *handle)
 {
-	if (handle == NULL || handle->dr_queued) {
+	struct content *c = NULL;
+	if (handle == NULL || !macsurf_ptr_is_heap((const void *)handle) ||
+	    (((unsigned long)handle) & 3) != 0 || handle->dr_queued) {
 		return;
 	}
 	handle->dr_queued = 1;
-	macos9_deathrow_add(handle, hlcache_node_deathrow_teardown,
-			(handle->entry != NULL) ? handle->entry->content : NULL);
+	if (handle->entry != NULL &&
+	    macsurf_ptr_is_heap((const void *)handle->entry) &&
+	    (((unsigned long)handle->entry) & 3) == 0) {
+		c = handle->entry->content;
+		if (c != NULL && !macsurf_ptr_is_heap((const void *)c)) {
+			c = NULL;
+		}
+	}
+	macos9_deathrow_add(handle, hlcache_node_deathrow_teardown, c);
 }
 
 /* fixes600 - a nascent retrieval context is freed synchronously from the
@@ -1040,6 +1049,7 @@ nserror hlcache_handle_release(hlcache_handle *handle)
 			macsurf_debug_log_writef(
 				"hlcache_release: STALE entry=%p handle=%p (reaped, skip)",
 				(void *) handle->entry, (void *) handle);
+			handle->entry = NULL;
 		}
 	} else {
 		RING_ITERATE_START(struct hlcache_retrieval_ctx,

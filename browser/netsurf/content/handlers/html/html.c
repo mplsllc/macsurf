@@ -6348,8 +6348,7 @@ static nserror html_close(struct content *c)
 			     s->type == HTML_SCRIPT_ASYNC ||
 			     s->type == HTML_SCRIPT_DEFER) &&
 			    s->data.handle != NULL) {
-				hlcache_handle_release(s->data.handle);
-				s->data.handle = NULL;
+				safe_hlcache_handle_release(&s->data.handle);
 			}
 		}
 	}
