@@ -2159,6 +2159,12 @@ html_process_encoding_change(struct content *c,
 	html->parser = NULL;
 
 	if (html->document != NULL) {
+#ifdef __MACOS9__
+		if (html->ms_diag_doc_id != 0) {
+			ms_diag_document_close(html->ms_diag_doc_id);
+			html->ms_diag_doc_id = 0;
+		}
+#endif
 		dom_node_unref(html->document);
 	}
 
@@ -6271,11 +6277,15 @@ void html_content_get_diag_identity(struct content *c, unsigned long *doc,
 	if (frame != NULL) *frame = (html == NULL) ? 0 :
 		ms_diag_frame_get(html->bw);
 }
-void html_content_set_diag_nav(struct content *c, unsigned long nav)
+void html_content_set_diag_context(struct content *c, unsigned long nav,
+	void *bw)
 {
 	html_content *html = (html_content *)c;
-	if (html != NULL && html->ms_diag_doc_id != 0)
+	if (html != NULL && html->ms_diag_doc_id != 0) {
 		ms_diag_document_set_nav(html->ms_diag_doc_id, nav);
+		ms_diag_document_set_frame(html->ms_diag_doc_id,
+			ms_diag_frame_get(bw));
+	}
 }
 #endif
 

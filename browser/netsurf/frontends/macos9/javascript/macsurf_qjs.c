@@ -55,7 +55,8 @@
 #include "macos9_reconvert.h"
 
 extern int macsurf_ptr_is_heap(const void *);
-extern void html_content_set_diag_nav(struct content *, unsigned long);
+extern void html_content_set_diag_context(struct content *, unsigned long,
+	void *);
 
 #ifdef WITH_QUICKJS
 
@@ -15057,8 +15058,8 @@ nserror js_newthread(struct jsheap *heap, void *win_priv, void *doc_priv,
 		 * by the "LIFE js src" line and the FBCR __d wrapper so both
 		 * can be diffed nav-by-nav. */
 		g_qjs_nav_seq++;
-		html_content_set_diag_nav((struct content *)htmlc,
-			(unsigned long)g_qjs_nav_seq);
+		html_content_set_diag_context((struct content *)htmlc,
+			(unsigned long)g_qjs_nav_seq, win_priv);
 		qjs_flush_timers(heap->ctx);
 		/* fixes846 (#167 S3) - same load-bearing ordering as the timer
 		 * flush above: abort every in-flight XHR and free its dup'd

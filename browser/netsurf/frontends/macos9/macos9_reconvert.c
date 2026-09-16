@@ -331,12 +331,22 @@ macos9_reconvert_pending_add(struct content *c, void *node, int kind)
 			if (g_pending[i].token != macos9_content_token(c)) {
 				struct ms_diag_provenance prov;
 				ms_diag_batch_freeze(g_pending[i].batch_id);
+				macos9_reconvert_slot_drop_node(i);
+				g_pending[i].token = macos9_content_token(c);
+				g_pending[i].kind = (node != NULL) ? kind : MACOS9_DOMMUT_UNKNOWN;
+				g_pending[i].multi = (node == NULL) ? 1 : 0;
+				g_pending[i].kind_mask = (kind >= 0 &&
+					kind < (int)(sizeof(unsigned long) * 8)) ? (1UL << kind) :
+					(1UL << MACOS9_DOMMUT_UNKNOWN);
+				g_pending[i].node = macsurf_reconvert_node_ref(node);
 				memset(&prov, 0, sizeof(prov));
 				prov.nav = ms_diag_cur_nav();
 				html_content_get_diag_identity(c, &prov.doc, &prov.frame);
 				prov.script = ms_diag_cur_script();
 				prov.task = ms_diag_cur_task();
 				g_pending[i].batch_id = ms_diag_batch_open(&prov);
+				ms_diag_batch_add(g_pending[i].batch_id, kind, prov.task);
+				return;
 			}
 			ms_diag_batch_add(g_pending[i].batch_id, kind,
 				macsurf_js_current_task_id());
