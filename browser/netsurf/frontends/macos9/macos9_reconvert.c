@@ -28,6 +28,7 @@
 #include "macos9.h"
 #include "macsurf_debug.h"
 #include "macos9_reconvert.h"
+#include "macsurf_diag.h"
 
 #include "netsurf/content.h"		/* content_get_type, CONTENT_HTML */
 #include "content/content_protected.h"	/* content_get_url                */
@@ -37,6 +38,7 @@
 extern int html_reconvert_content(struct content *c);
 extern int macsurf_js_page_execution_active(void);
 extern void macsurf_js_note_dom_mutation(void);
+extern unsigned long macsurf_js_current_task_id(void);
 /* fixes1094 (#265 Round B) - see html.c. */
 extern int macsurf_html_has_droppable_inflight(struct content *c);
 
@@ -123,6 +125,7 @@ struct macos9_reconvert_pending {
 	int             kind;
 	int             multi;
 	unsigned long   kind_mask;
+	unsigned long   batch_id;
 };
 
 /* fixes910 Phase 0 - implemented in content/handlers/html/html.c, where the real
@@ -302,6 +305,8 @@ macos9_reconvert_slot_clear(int i)
 	g_pending[i].token = 0;
 	g_pending[i].multi = 0;
 	g_pending[i].kind_mask = 0;
+	ms_diag_batch_freeze(g_pending[i].batch_id);
+	g_pending[i].batch_id = 0;
 }
 
 /* Record c as dirty. Idempotent per content, so a burst of mutations on one
@@ -321,6 +326,8 @@ macos9_reconvert_pending_add(struct content *c, void *node, int kind)
 		return;
 	for (i = 0; i < RECONVERT_MAX_PENDING; i++) {
 		if (g_pending[i].c == c) {
+			ms_diag_batch_add(g_pending[i].batch_id, kind,
+				macsurf_js_current_task_id());
 			/* Refresh the token: same address, possibly a newer
 			 * generation, and the newer one is what we want to
 			 * validate against at fire time. */
@@ -360,6 +367,16 @@ macos9_reconvert_pending_add(struct content *c, void *node, int kind)
 		kind < (int)(sizeof(unsigned long) * 8)) ? (1UL << kind) :
 		(1UL << MACOS9_DOMMUT_UNKNOWN);
 	g_pending[freeslot].multi = (node == NULL) ? 1 : 0;
+	{
+		struct ms_diag_provenance prov;
+		memset(&prov, 0, sizeof(prov));
+		prov.nav = ms_diag_cur_nav();
+		prov.frame = ms_diag_frame_get(NULL);
+		prov.script = ms_diag_cur_script();
+		prov.task = ms_diag_cur_task();
+		g_pending[freeslot].batch_id = ms_diag_batch_open(&prov);
+		ms_diag_batch_add(g_pending[freeslot].batch_id, kind, prov.task);
+	}
 }
 
 /* fixes1016 - is a JS DOM mutation awaiting its reconvert for this content?

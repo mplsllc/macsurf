@@ -61,6 +61,9 @@
 
 #include "html/html.h"
 #include "macsurf_debug.h"
+#ifdef __MACOS9__
+#include "macsurf_diag.h"
+#endif
 
 /* fixes518: frontend scheduler cancellation (forward-declared here, Mac-only
  * fork, same approach as macsurf_debug_log_writef in content_protected.h).
@@ -2360,6 +2363,11 @@ html_begin_conversion(html_content *htmlc)
 	dom_hubbub_error error;
 
 	MS_LOG("html begin conversion");
+#ifdef __MACOS9__
+	if (htmlc->ms_diag_doc_id == 0 && htmlc->document != NULL)
+		htmlc->ms_diag_doc_id = ms_diag_document_open(0,
+			ms_diag_frame_get(htmlc->bw));
+#endif
 	/* fixes848 (#167 perf investigation) -- see html_box_convert_done's
 	 * comment; this is the matching "about to start" bracket. */
 	macsurf_debug_log_writef("WORK pipeline: begin_conversion c=%p url=%s",
@@ -6051,6 +6059,13 @@ static void html_destroy(struct content *c)
 	html_content *html = (html_content *) c;
 	struct form *f, *g;
 
+#ifdef __MACOS9__
+	if (html->ms_diag_doc_id != 0) {
+		ms_diag_document_close(html->ms_diag_doc_id);
+		html->ms_diag_doc_id = 0;
+	}
+#endif
+
 	macsurf_debug_log_writef("html_destroy: htmlc=%p content=%p", (void*)html, (void*)c);
 	NSLOG(netsurf, INFO, "content %p", c);
 
@@ -6113,6 +6128,12 @@ static void html_destroy(struct content *c)
 	}
 
 	if (html->document != NULL) {
+#ifdef __MACOS9__
+		if (html->ms_diag_doc_id != 0) {
+			ms_diag_document_close(html->ms_diag_doc_id);
+			html->ms_diag_doc_id = 0;
+		}
+#endif
 		dom_node_unref(html->document);
 		html->document = NULL;
 	}
@@ -6199,6 +6220,11 @@ html_open(struct content *c,
 	html_content *html = (html_content *) c;
 
 	html->bw = bw;
+#ifdef __MACOS9__
+	if (html->ms_diag_doc_id != 0)
+		ms_diag_document_set_frame(html->ms_diag_doc_id,
+			ms_diag_frame_get(bw));
+#endif
 	html->page = (html_content *) page;
 
 	html->drag_type = HTML_DRAG_NONE;

@@ -12,6 +12,9 @@ struct ms_diag_scope {
 	unsigned long prev_task;
 	unsigned long my_id;
 };
+struct ms_diag_provenance {
+	unsigned long nav, frame, doc, script, task, batch, pass;
+};
 void ms_diag_script_enter(struct ms_diag_scope *, unsigned long, int,
 	const char *);
 void ms_diag_script_leave(struct ms_diag_scope *, int);
@@ -20,4 +23,10 @@ void ms_diag_task_enter_external(struct ms_diag_scope *, unsigned long, int,
 void ms_diag_task_set_script(unsigned long, unsigned long);
 void ms_diag_task_leave(struct ms_diag_scope *);
 unsigned long ms_diag_cur_script(void);
+unsigned long ms_diag_cur_task(void);
+unsigned long ms_diag_cur_nav(void);
+unsigned long ms_diag_frame_get(const void *);
+unsigned long ms_diag_batch_open(const struct ms_diag_provenance *);
+void ms_diag_batch_add(unsigned long, int, unsigned long);
+void ms_diag_batch_freeze(unsigned long);
 #endif

@@ -248,6 +248,7 @@ typedef struct html_content {
 	 * so a reconvert (budget already 0) defers everything, as it should.
 	 */
 	int img_eager_budget;
+	unsigned long ms_diag_doc_id;
 
 } html_content;
 

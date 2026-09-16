@@ -1994,6 +1994,10 @@ static void scheduled_reformat(void *vbw)
 nserror browser_window_destroy_internal(struct browser_window *bw)
 {
 	assert(bw);
+	{
+		extern void ms_diag_frame_close(void *);
+		ms_diag_frame_close(bw);
+	}
 
 	browser_window_destroy_children(bw);
 	browser_window_destroy_iframes(bw);
@@ -3412,6 +3416,10 @@ browser_window_initialise_common(enum browser_window_create_flags flags,
 {
 	nserror err;
 	assert(bw);
+	{
+		extern void ms_diag_frame_open(void *);
+		ms_diag_frame_open(bw);
+	}
 
 	/* new javascript context for each window/(i)frame */
 	err = js_newheap(nsoption_int(script_timeout), &bw->jsheap);
