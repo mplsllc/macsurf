@@ -881,9 +881,25 @@ static struct ms_diag_mut_batch *ms_batch_find(unsigned long id)
 	return (struct ms_diag_mut_batch *) 0;
 }
 
+static void ms_batch_provenance(const struct ms_diag_mut_batch *e,
+	struct ms_diag_provenance *prov)
+{
+	memset(prov, 0, sizeof(*prov));
+	if (e == (const struct ms_diag_mut_batch *) 0) {
+		return;
+	}
+	prov->nav = e->nav;
+	prov->frame = e->frame;
+	prov->doc = e->doc;
+	prov->script = e->script;
+	prov->task = e->task;
+	prov->batch = e->id;
+}
+
 unsigned long ms_diag_batch_open(const struct ms_diag_provenance *prov)
 {
 	struct ms_diag_mut_batch *e = &g_batch_ring[g_batch_ring_head];
+	struct ms_diag_provenance trace_prov;
 	g_batch_ring_head = (g_batch_ring_head + 1) % MS_BATCH_RING_N;
 	memset(e, 0, sizeof(*e));
 	e->id = ms_next(&g_batch_seq);
@@ -894,14 +910,16 @@ unsigned long ms_diag_batch_open(const struct ms_diag_provenance *prov)
 		e->script = prov->script;
 		e->task = prov->task;
 	}
-	macsurf_trace_emit(MS_TC_MUTATION, MS_TE_MUTATION_BEGIN, 0, 0,
-		e->id, e->doc);
+	ms_batch_provenance(e, &trace_prov);
+	macsurf_trace_emit_with_provenance(MS_TC_MUTATION, MS_TE_MUTATION_BEGIN,
+		0, 0, &trace_prov, e->id, e->doc);
 	return e->id;
 }
 
 void ms_diag_batch_add(unsigned long batch_id, int mut_kind, unsigned long task)
 {
 	struct ms_diag_mut_batch *e = ms_batch_find(batch_id);
+	struct ms_diag_provenance trace_prov;
 	if (e == (struct ms_diag_mut_batch *) 0) {
 		return;
 	}
@@ -917,18 +935,21 @@ void ms_diag_batch_add(unsigned long batch_id, int mut_kind, unsigned long task)
 	} else if (e->task == 0 && !e->mixed_tasks && task != 0) {
 		e->task = task;
 	}
-	macsurf_trace_emit(MS_TC_MUTATION, MS_TE_MUTATION_MERGE, 0, 0,
-		batch_id, (unsigned long) mut_kind);
+	ms_batch_provenance(e, &trace_prov);
+	macsurf_trace_emit_with_provenance(MS_TC_MUTATION, MS_TE_MUTATION_MERGE,
+		0, 0, &trace_prov, batch_id, (unsigned long) mut_kind);
 	ms_diag_progress(MS_PROGRESS_MUTATION);
 }
 
 void ms_diag_batch_freeze(unsigned long batch_id)
 {
 	struct ms_diag_mut_batch *e = ms_batch_find(batch_id);
+	struct ms_diag_provenance trace_prov;
 	if (e != (struct ms_diag_mut_batch *) 0) {
 		e->frozen = 1;
-		macsurf_trace_emit(MS_TC_MUTATION, MS_TE_MUTATION_FREEZE, 0, 0,
-			batch_id, e->total);
+		ms_batch_provenance(e, &trace_prov);
+		macsurf_trace_emit_with_provenance(MS_TC_MUTATION,
+			MS_TE_MUTATION_FREEZE, 0, 0, &trace_prov, batch_id, e->total);
 		ms_diag_progress(MS_PROGRESS_MUTATION);
 	}
 }

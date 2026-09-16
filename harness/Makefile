@@ -127,7 +127,7 @@ reconvert_harness: $(ALL_OBJ)
 
 -include $(ALL_OBJ:.o=.d)
 
-.PHONY: all run clean check check-c89 check-macdefault webp-test
+.PHONY: all run clean check check-c89 check-macdefault webp-test trace-provenance-test
 all: reconvert_harness
 
 # Standalone libwebp regression.  This deliberately stays out of the large
@@ -231,6 +231,21 @@ run: reconvert_harness
 	ASAN_OPTIONS=detect_leaks=0 ./reconvert_harness
 
 check: check-macdefault run
+
+# Focused diagnostic regression: a debounced mutation batch must retain its
+# frozen provenance in BEGIN/MERGE/FREEZE trace events, independently of the
+# ambient task scope used by ordinary trace callers.
+trace-provenance-test:
+	$(CC) -O1 -std=c89 -pedantic -Werror=declaration-after-statement \
+		-ffunction-sections -fdata-sections -include stdint.h -include stdbool.h \
+		-Dfd_set=ms_trace_fd_set \
+		-include $(ROOT)/tests/diagnostics/trace_provenance_platform.h \
+		-I$(NS)/frontends/macos9 $(INC) \
+		$(NS)/frontends/macos9/macsurf_diag.c \
+		$(NS)/frontends/macos9/macsurf_trace.c \
+		$(ROOT)/tests/diagnostics/trace_provenance_test.c \
+		-Wl,--gc-sections -o /tmp/macsurf-trace-provenance-test
+	/tmp/macsurf-trace-provenance-test
 
 clean:
 	rm -rf $(OBJ) reconvert_harness
