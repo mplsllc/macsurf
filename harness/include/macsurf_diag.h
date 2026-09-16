@@ -56,4 +56,20 @@ void ms_diag_render_leave(struct ms_diag_render_scope *, int, int);
 void ms_diag_render_action(int);
 void ms_diag_render_stage(int, int, int, int, unsigned long, unsigned long,
 	const char *, int);
+
+enum ms_operation_reason {
+	MS_OPR_NONE = 0, MS_OPR_PRE_ABORTED, MS_OPR_BAD_URL, MS_OPR_NO_BASE,
+	MS_OPR_ARENA_FULL, MS_OPR_BODY_ALLOC, MS_OPR_HEADER_LIMIT,
+	MS_OPR_FETCH_START_FAIL, MS_OPR_NETWORK_ERROR, MS_OPR_RESPONSE_POISONED,
+	MS_OPR_REDIRECT_LIMIT, MS_OPR_REDIRECT_DOWNGRADE, MS_OPR_ABORTED,
+	MS_OPR_REALM_GONE, MS_OPR_TIMEOUT, MS_OPR_AUTH, MS_OPR_CERT,
+	MS_OPR_SSL_ERROR, MS_OPR_NOT_MODIFIED
+};
+enum ms_error_kind {
+	MS_ERR_JS_EXCEPTION = 0, MS_ERR_API_DECLINE, MS_ERR_PROMISE_REJECTION,
+	MS_ERR_CALLBACK_FAILURE
+};
+void ms_diag_error_record(unsigned long op_id, unsigned long request_id,
+	int kind, int boundary, int reason, const char *name, const char *message);
+
 #endif

@@ -623,6 +623,9 @@ static void qjs_log_exc(JSContext *ctx, JSValueConst exc,
 	macsurf_debug_log_writef("LIFE qjs %s: %s [%s]",
 			what, msg ? msg : "?",
 			name ? name : "?");
+	qjs_short_name(name, sname, (int)sizeof(sname));
+	ms_diag_error_record(0UL, 0UL, MS_ERR_JS_EXCEPTION, 0, MS_OPR_NONE,
+			sname, msg ? msg : "?");
 	if (msg) JS_FreeCString(ctx, msg);
 
 	stk = JS_GetPropertyStr(ctx, exc, "stack");
@@ -15623,7 +15626,7 @@ unsigned char js_exec(struct jsthread *thread,
  * (~176 KB) and similar framework bundles through while still rejecting the
  * heaviest application bundles (>256 KB).  The 8s execution deadline provides
  * the primary safety net.  Set to 0 to disarm. */
-#define MACSURF_JS_MAX_BYTES 131072UL
+#define MACSURF_JS_MAX_BYTES 262144UL
 #endif
 	if (MACSURF_JS_MAX_BYTES != 0UL &&
 		    txtlen > MACSURF_JS_MAX_BYTES) {
@@ -15632,6 +15635,8 @@ unsigned char js_exec(struct jsthread *thread,
 				"LIFE js skip [%s len=%ld > %ld]",
 				name ? name : "(anon)", (long)txtlen,
 				(long)MACSURF_JS_MAX_BYTES);
+			ms_diag_error_record(0UL, 0UL, MS_ERR_API_DECLINE, 0, MS_OPR_BODY_ALLOC,
+				name ? name : "(anon)", "script size exceeds MACSURF_JS_MAX_BYTES");
 			return 0;
 	}
 
@@ -15907,6 +15912,8 @@ unsigned char js_exec(struct jsthread *thread,
 			g_js_exec_fail++;
 		macsurf_debug_log_writef("LIFE qjs exec err: %s [%s len=%ld]",
 				estr ? estr : "?", sname, (long)txtlen);
+			ms_diag_error_record(0UL, 0UL, MS_ERR_JS_EXCEPTION, 0, MS_OPR_NONE,
+				sname, estr ? estr : "?");
 		}
 		if (estr) JS_FreeCString(thread->ctx, estr);
 

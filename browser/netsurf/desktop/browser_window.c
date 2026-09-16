@@ -1655,6 +1655,16 @@ browser_window_callback(hlcache_handle *c, const hlcache_event *event, void *pw)
 				 * with no way to see which script or which half of
 				 * the engine was responsible. */
 				macsurf_qjs_emit_js_profile();
+
+				/* DIAG-GAP-002: freeze gap census and nav summary at NAV: DONE */
+				{
+					extern void macsurf_gap_emit_summary(unsigned long nav_id);
+					extern void macsurf_diag_nav_done(unsigned long nav_id);
+					extern unsigned long ms_diag_cur_nav(void);
+					unsigned long cur_nav = ms_diag_cur_nav();
+					macsurf_gap_emit_summary(cur_nav);
+					macsurf_diag_nav_done(cur_nav);
+				}
 			}
 		}
 		res = browser_window_content_done(bw);
