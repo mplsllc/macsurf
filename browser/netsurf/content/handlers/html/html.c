@@ -107,6 +107,16 @@ unsigned int macos9_html_head_len = 0;
 #include <libcss/font_face.h>
 #include "html/private.h"
 #include "html/dom_event.h"
+
+#ifdef __MACOS9__
+static void html_diag_document_open(html_content *html)
+{
+	if (html != NULL && html->document != NULL && html->ms_diag_doc_id == 0)
+		html->ms_diag_doc_id = ms_diag_document_open(0,
+			ms_diag_frame_get(html->bw));
+}
+#endif
+
 #include "html/css.h"
 
 /* Count parsed Facebook data-sjs nodes directly from libdom at the instant
@@ -1905,6 +1915,9 @@ html_create_html_data(html_content *c, const http_parameter *params)
 	error = dom_hubbub_parser_create(&parse_params,
 					 &c->parser,
 					 &c->document);
+#ifdef __MACOS9__
+	if (error == DOM_HUBBUB_OK) html_diag_document_open(c);
+#endif
 	if ((error != DOM_HUBBUB_OK) && (c->encoding != NULL)) {
 		/* Ok, we don't support the declared encoding. Bailing out
 		 * isn't exactly user-friendly, so fall back to autodetect */
@@ -1916,6 +1929,9 @@ html_create_html_data(html_content *c, const http_parameter *params)
 		error = dom_hubbub_parser_create(&parse_params,
 						 &c->parser,
 						 &c->document);
+#ifdef __MACOS9__
+		if (error == DOM_HUBBUB_OK) html_diag_document_open(c);
+#endif
 	}
 	if (error != DOM_HUBBUB_OK) {
 		nsurl_unref(c->base_url);
@@ -2158,6 +2174,9 @@ html_process_encoding_change(struct content *c,
 	error = dom_hubbub_parser_create(&parse_params,
 					 &html->parser,
 					 &html->document);
+#ifdef __MACOS9__
+	if (error == DOM_HUBBUB_OK) html_diag_document_open(html);
+#endif
 	if (error != DOM_HUBBUB_OK) {
 		/* Ok, we don't support the declared encoding. Bailing out
 		 * isn't exactly user-friendly, so fall back to Windows-1252 */
@@ -2171,6 +2190,9 @@ html_process_encoding_change(struct content *c,
 		error = dom_hubbub_parser_create(&parse_params,
 						 &html->parser,
 						 &html->document);
+#ifdef __MACOS9__
+		if (error == DOM_HUBBUB_OK) html_diag_document_open(html);
+#endif
 
 		if (error != DOM_HUBBUB_OK) {
 			return libdom_hubbub_error_to_nserror(error);

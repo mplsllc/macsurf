@@ -328,6 +328,16 @@ macos9_reconvert_pending_add(struct content *c, void *node, int kind)
 		return;
 	for (i = 0; i < RECONVERT_MAX_PENDING; i++) {
 		if (g_pending[i].c == c) {
+			if (g_pending[i].token != macos9_content_token(c)) {
+				struct ms_diag_provenance prov;
+				ms_diag_batch_freeze(g_pending[i].batch_id);
+				memset(&prov, 0, sizeof(prov));
+				prov.nav = ms_diag_cur_nav();
+				html_content_get_diag_identity(c, &prov.doc, &prov.frame);
+				prov.script = ms_diag_cur_script();
+				prov.task = ms_diag_cur_task();
+				g_pending[i].batch_id = ms_diag_batch_open(&prov);
+			}
 			ms_diag_batch_add(g_pending[i].batch_id, kind,
 				macsurf_js_current_task_id());
 			/* Refresh the token: same address, possibly a newer
