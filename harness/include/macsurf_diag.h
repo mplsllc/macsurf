@@ -25,8 +25,14 @@ enum ms_render_result { MS_RRES_RUNNING = 0, MS_RRES_DONE, MS_RRES_FALLBACK,
 	MS_RRES_COSMETIC_SUPPRESSED, MS_RRES_DEFER_NOT_DONE,
 	MS_RRES_DEFER_JS_ACTIVE, MS_RRES_BUSY, MS_RRES_STALE_DROP,
 	MS_RRES_OVERFLOW };
+enum ms_render_action { MS_RACTION_NONE = 0, MS_RACTION_PAINT,
+	MS_RACTION_RECASCADE, MS_RACTION_LOCAL_REFLOW, MS_RACTION_SUBTREE,
+	MS_RACTION_FULL, MS_RACTION_SYNC_FULL };
+enum ms_stage_kind { MS_STAGE_STYLEFAST = 0, MS_STAGE_INHERITED_COLOR };
+enum ms_stage_result { MS_SRES_COMMIT = 0, MS_SRES_FALLBACK, MS_SRES_DECLINE };
 struct ms_diag_render_scope {
-	unsigned long prev_nav, prev_frame, prev_doc, prev_batch, prev_pass;
+	unsigned long prev_nav, prev_frame, prev_doc, prev_script, prev_task,
+		prev_batch, prev_pass;
 	unsigned long my_pass;
 };
 void ms_diag_script_enter(struct ms_diag_scope *, unsigned long, int,
@@ -47,4 +53,7 @@ int ms_diag_batch_provenance(unsigned long, struct ms_diag_provenance *);
 unsigned long ms_diag_render_enter(struct ms_diag_render_scope *, int,
 	const struct ms_diag_provenance *);
 void ms_diag_render_leave(struct ms_diag_render_scope *, int, int);
+void ms_diag_render_action(int);
+void ms_diag_render_stage(int, int, int, int, unsigned long, unsigned long,
+	const char *, int);
 #endif

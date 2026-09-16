@@ -684,6 +684,7 @@ struct ms_diag_pass {
 	unsigned long id;		/* 0 == empty */
 	unsigned long nav, frame, doc, batch, task, script;
 	short kind;			/* enum ms_render_kind */
+	short action;		/* enum ms_render_action */
 	short result;			/* enum ms_render_result */
 	short reason;			/* enum ms_stage_reason */
 	unsigned long paint;		/* bound paint id, 0 if none */
@@ -1010,6 +1011,8 @@ static void ms_scope_push(struct ms_diag_render_scope *s,
 	s->prev_nav = g_cur_nav;
 	s->prev_frame = g_cur_frame;
 	s->prev_doc = g_cur_doc;
+	s->prev_script = g_cur_script;
+	s->prev_task = g_cur_task;
 	s->prev_batch = g_cur_batch;
 	s->prev_pass = g_cur_pass;
 	s->my_pass = pass;
@@ -1019,6 +1022,8 @@ static void ms_scope_push(struct ms_diag_render_scope *s,
 		}
 		g_cur_frame = prov->frame;
 		g_cur_doc = prov->doc;
+		g_cur_script = prov->script;
+		g_cur_task = prov->task;
 		g_cur_batch = prov->batch;
 	}
 	g_cur_pass = pass;
@@ -1030,9 +1035,17 @@ static void ms_scope_pop(struct ms_diag_render_scope *s)
 	g_cur_nav = s->prev_nav;
 	g_cur_frame = s->prev_frame;
 	g_cur_doc = s->prev_doc;
+	g_cur_script = s->prev_script;
+	g_cur_task = s->prev_task;
 	g_cur_batch = s->prev_batch;
 	g_cur_pass = s->prev_pass;
 	g_cur_paint = 0;
+}
+
+void ms_diag_render_action(int action)
+{
+	struct ms_diag_pass *e = ms_pass_find(g_cur_pass);
+	if (e != (struct ms_diag_pass *) 0) e->action = (short) action;
 }
 
 unsigned long ms_diag_render_enter(struct ms_diag_render_scope *s, int kind,
@@ -1252,6 +1265,18 @@ static const char *ms_render_result_s(int r)
 	default:               return "running";
 	}
 }
+static const char *ms_render_action_s(int a)
+{
+	switch (a) {
+	case MS_RACTION_PAINT: return "paint";
+	case MS_RACTION_RECASCADE: return "recascade";
+	case MS_RACTION_LOCAL_REFLOW: return "local_reflow";
+	case MS_RACTION_SUBTREE: return "subtree";
+	case MS_RACTION_FULL: return "full";
+	case MS_RACTION_SYNC_FULL: return "sync_full";
+	default: return "none";
+	}
+}
 static const char *ms_stage_kind_s(int k)
 {
 	return (k == MS_STAGE_INHERITED_COLOR) ? "inherited_color" : "stylefast";
@@ -1367,11 +1392,11 @@ long macsurf_diag_serialize_layout(char *buf, long cap)
 		}
 		snprintf(line, sizeof line,
 			"pass=%lu nav=%lu frame=%lu doc=%lu batch=%lu task=%lu "
-			"kind=%s result=%s reason=%s paint=%lu\n",
+			"kind=%s action=%s result=%s reason=%s paint=%lu\n",
 			(unsigned long) e->id, (unsigned long) e->nav,
 			(unsigned long) e->frame, (unsigned long) e->doc,
 			(unsigned long) e->batch, (unsigned long) e->task,
-			ms_render_kind_s(e->kind), ms_render_result_s(e->result),
+			ms_render_kind_s(e->kind), ms_render_action_s(e->action), ms_render_result_s(e->result),
 			ms_stage_reason_s(e->reason), (unsigned long) e->paint);
 		n = diag_cat(buf, cap, n, line);
 	}

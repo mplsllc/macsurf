@@ -254,6 +254,9 @@ enum ms_render_result { MS_RRES_RUNNING = 0, MS_RRES_DONE, MS_RRES_FALLBACK,
 			MS_RRES_COSMETIC_SUPPRESSED, MS_RRES_DEFER_NOT_DONE,
 			MS_RRES_DEFER_JS_ACTIVE, MS_RRES_BUSY, MS_RRES_STALE_DROP,
 			MS_RRES_OVERFLOW };
+enum ms_render_action { MS_RACTION_NONE = 0, MS_RACTION_PAINT,
+	MS_RACTION_RECASCADE, MS_RACTION_LOCAL_REFLOW, MS_RACTION_SUBTREE,
+	MS_RACTION_FULL, MS_RACTION_SYNC_FULL };
 
 /* The frozen causal descriptor. Fill with ms_diag_cur_provenance() or build it
  * from a pending-table slot; pass by const pointer, never re-read cur_*(). */
@@ -269,7 +272,8 @@ struct ms_diag_provenance {
 
 /* saved ambient render scope; scoped push/pop, NOT bare assignment */
 struct ms_diag_render_scope {
-	unsigned long prev_nav, prev_frame, prev_doc, prev_batch, prev_pass;
+	unsigned long prev_nav, prev_frame, prev_doc, prev_script, prev_task,
+		prev_batch, prev_pass;
 	unsigned long my_pass;
 };
 
@@ -290,6 +294,7 @@ int ms_diag_batch_provenance(unsigned long batch_id,
 unsigned long ms_diag_render_enter(struct ms_diag_render_scope *s, int kind,
 	const struct ms_diag_provenance *prov);
 void ms_diag_render_leave(struct ms_diag_render_scope *s, int result, int reason);
+void ms_diag_render_action(int action);
 
 /* --- render transaction: async initial layout (open once; push/pop per slice;
  *     close once). prov->pass is filled in by _open. --- */

@@ -796,8 +796,19 @@ macos9_reconvert_flush_now(void *cv)
 	 * slots -- otherwise the debounced callback rebuilds the same tree
 	 * again for work already done. */
 	for (i = 0; i < RECONVERT_MAX_PENDING; i++) {
-		if (g_pending[i].c == c)
+		if (g_pending[i].c == c) {
+			struct ms_diag_provenance sync_prov;
+			struct ms_diag_render_scope sync_scope;
+			if (ms_diag_batch_provenance(g_pending[i].batch_id,
+				&sync_prov)) {
+				(void) ms_diag_render_enter(&sync_scope, MS_RENDER_POLICY,
+					&sync_prov);
+				ms_diag_render_action(MS_RACTION_SYNC_FULL);
+				ms_diag_render_leave(&sync_scope, MS_RRES_DONE,
+					MS_SREASON_NONE);
+			}
 			macos9_reconvert_slot_clear(i);
+		}
 	}
 	/* R1.4 - if this flush drained the batch, restart the batch clock;
 	 * otherwise the next mark would inherit the old batch's age and
@@ -939,8 +950,12 @@ macos9_reconvert_cb(void *p)
 		if (g_pending[i].multi == 0 && g_pending[i].kind == MACOS9_DOMMUT_SETATTR_STYLE && g_pending[i].node != NULL) {
 			if (c->status == CONTENT_STATUS_READY || c->status == CONTENT_STATUS_DONE) {
 				g_style_fast_attempt++;
+				if (have_render_scope) ms_diag_render_stage(MS_STAGE_STYLEFAST,
+					MS_SRES_FALLBACK, MS_SREASON_NONE, 0, 0, 0, "attempt", 0);
 				if (html_reconvert_fast_style(c, g_pending[i].node) == 0) {
 					g_style_fast_commit++;
+					if (have_render_scope) ms_diag_render_stage(MS_STAGE_STYLEFAST,
+						MS_SRES_COMMIT, MS_SREASON_NONE, 0, 0, 0, "commit", 0);
 					if (have_render_scope) ms_diag_render_leave(&render_scope,
 						MS_RRES_DONE, MS_SREASON_NONE);
 					macos9_reconvert_slot_clear(i);
@@ -949,15 +964,21 @@ macos9_reconvert_cb(void *p)
 					continue;
 				}
 				g_style_fast_fallback++;
+				if (have_render_scope) ms_diag_render_stage(MS_STAGE_STYLEFAST,
+					MS_SRES_FALLBACK, MS_SREASON_NONE, 0, 0, 0, "fallback", 0);
 				/* A parent foreground colour can change every inheriting
 				 * descendant.  Only try this after the existing single-box
 				 * background/border/outline path declined, and never when the
 				 * batch also contains a structural mutation. */
 				if (!macos9_reconvert_batch_has_structural_mutation()) {
 					g_inherited_color_attempt++;
+					if (have_render_scope) ms_diag_render_stage(MS_STAGE_INHERITED_COLOR,
+						MS_SRES_FALLBACK, MS_SREASON_NONE, 0, 0, 0, "attempt", 0);
 					if (html_reconvert_fast_inherited_color(c,
 							g_pending[i].node) == 0) {
 						g_inherited_color_commit++;
+						if (have_render_scope) ms_diag_render_stage(MS_STAGE_INHERITED_COLOR,
+							MS_SRES_COMMIT, MS_SREASON_NONE, 0, 0, 0, "commit", 0);
 						if (have_render_scope) ms_diag_render_leave(&render_scope,
 							MS_RRES_DONE, MS_SREASON_NONE);
 						macos9_reconvert_slot_clear(i);
@@ -966,6 +987,8 @@ macos9_reconvert_cb(void *p)
 						continue;
 					}
 					g_inherited_color_fallback++;
+					if (have_render_scope) ms_diag_render_stage(MS_STAGE_INHERITED_COLOR,
+						MS_SRES_FALLBACK, MS_SREASON_NONE, 0, 0, 0, "fallback", 0);
 				}
 			}
 		}
@@ -974,6 +997,7 @@ macos9_reconvert_cb(void *p)
 			(macsurf_render_mask_is_structural(g_pending[i].kind_mask) ?
 			 MACSURF_RENDER_FULL : MACSURF_RENDER_NONE) :
 			macsurf_render_action_for(g_pending[i].kind, 0);
+		if (have_render_scope) ms_diag_render_action((int) action);
 		if (action != MACSURF_RENDER_FULL) {
 			if (have_render_scope) ms_diag_render_leave(&render_scope,
 				MS_RRES_DECLINED, MS_SREASON_NONE);
