@@ -650,6 +650,8 @@ box_construct_generate(struct box_construct_ctx *ctx,
 	enum css_display_e computed_display;
 	const css_computed_content_item *c_item;
 
+	bool is_after = false;
+
 	/* fixes140: previously the function bailed unless box was
 	 * BOX_BLOCK, which silently killed every q::before /
 	 * q::after rule because <q> is BOX_INLINE by default. Now
@@ -664,6 +666,17 @@ box_construct_generate(struct box_construct_ctx *ctx,
 			box->type != BOX_INLINE_FLEX)
 		return;
 
+	/* fixes140f: inline parent dispatched before it was added
+	 * to its inline_container has box->parent == NULL. Bail
+	 * now -- before counter and quote-depth mutations -- so
+	 * the after-time re-dispatch can run them cleanly. Block
+	 * parents and inline parents that ARE wired drop through. */
+	if ((box->type == BOX_INLINE ||
+			box->type == BOX_INLINE_BLOCK ||
+			box->type == BOX_INLINE_FLEX) &&
+			box->parent == NULL)
+		return;
+
 	/* To determine if an element has a pseudo element, we select
 	 * for it and test to see if the returned style's content
 	 * property is set to normal. */
@@ -674,11 +687,21 @@ box_construct_generate(struct box_construct_ctx *ctx,
 		return;
 	}
 
-	/* create box for this element */
+	/* CSS 2.1 §12.1: If display computes to none, pseudo-element is not generated */
 	computed_display = ns_computed_display(style, box_is_root(n));
+	if (computed_display == CSS_DISPLAY_NONE) {
+		return;
+	}
+
+	if (box->styles != NULL &&
+			box->styles->styles[CSS_PSEUDO_ELEMENT_AFTER] == style) {
+		is_after = true;
+	}
+
+	/* create box for this element */
 	if (computed_display == CSS_DISPLAY_BLOCK ||
 			computed_display == CSS_DISPLAY_TABLE) {
-		/* currently only support block level boxes */
+		/* block level boxes */
 
 		/** \todo Not wise to drop const from the computed style */
 		gen = box_create(NULL, (css_computed_style *) style,
@@ -688,40 +711,90 @@ box_construct_generate(struct box_construct_ctx *ctx,
 		}
 
 		/* set box type from computed display */
-		gen->type = box_map[ns_computed_display(
-				style, box_is_root(n))];
+		gen->type = box_map[computed_display];
 
 		box_add_child(box, gen);
+	} else if (computed_display == CSS_DISPLAY_INLINE_BLOCK) {
+		/* GAP-001: Support inline-block pseudo elements (e.g. breadcrumb
+		 * separators, action icons, badges with content: "" or text). */
+		gen = box_create(NULL, (css_computed_style *) style,
+				false, NULL, NULL, NULL, NULL, content->bctx);
+		if (gen == NULL) {
+			return;
+		}
+		gen->type = BOX_INLINE_BLOCK;
 
-		/* fixes347 - fetch background-image on the pseudo box. The
-		 * existing element-level fetch at the bottom of
-		 * box_construct_element fires for elements but NEVER for
-		 * pseudos, so `gen->background` stays NULL forever and the
-		 * texture (e.g. mactrove's --header-tile cloth pattern via
-		 * `.page__header--has-tile::before { background-image:
-		 * var(--header-tile); }`) is silently never painted. */
-		{
-			lwc_string *bgimage_uri = NULL;
-			uint8_t bgimg_kind = css_computed_background_image(
-				gen->style, &bgimage_uri);
-			if (bgimg_kind == CSS_BACKGROUND_IMAGE_IMAGE &&
-					bgimage_uri != NULL &&
-					nsoption_bool(background_images)
-					== true) {
-				nsurl *url = NULL;
-				nserror error = nsurl_create(
-					lwc_string_data(bgimage_uri),
-					&url);
-				if (error == NSERROR_OK) {
-					if (html_fetch_object(ctx->content,
-							url, gen,
-							image_types,
-							true) == false) {
-						nsurl_unref(url);
-						return;
-					}
-					nsurl_unref(url);
+		if (box->type == BOX_INLINE) {
+			if (is_after) {
+				box_add_child(box->parent, gen);
+			} else {
+				box_insert_sibling(box, gen);
+			}
+		} else {
+			struct box *container;
+			if (is_after && box->last != NULL &&
+					box->last->type == BOX_INLINE_CONTAINER) {
+				container = box->last;
+			} else if (!is_after && box->children != NULL &&
+					box->children->type == BOX_INLINE_CONTAINER) {
+				container = box->children;
+			} else {
+				container = box_create(NULL, NULL, false,
+						NULL, NULL, NULL, NULL,
+						content->bctx);
+				if (container == NULL) {
+					box_free(gen);
+					return;
 				}
+				container->type = BOX_INLINE_CONTAINER;
+				if (!is_after && box->children != NULL) {
+					container->parent = box;
+					container->next = box->children;
+					box->children->prev = container;
+					box->children = container;
+				} else {
+					box_add_child(box, container);
+				}
+			}
+			if (!is_after && container->children != NULL) {
+				gen->parent = container;
+				gen->next = container->children;
+				container->children->prev = gen;
+				container->children = gen;
+			} else {
+				box_add_child(container, gen);
+			}
+		}
+	}
+
+	/* fixes347 - fetch background-image on the pseudo box. The
+	 * existing element-level fetch at the bottom of
+	 * box_construct_element fires for elements but NEVER for
+	 * pseudos, so `gen->background` stays NULL forever and the
+	 * texture (e.g. mactrove's --header-tile cloth pattern via
+	 * `.page__header--has-tile::before { background-image:
+	 * var(--header-tile); }`) is silently never painted. */
+	if (gen != NULL) {
+		lwc_string *bgimage_uri = NULL;
+		uint8_t bgimg_kind = css_computed_background_image(
+			gen->style, &bgimage_uri);
+		if (bgimg_kind == CSS_BACKGROUND_IMAGE_IMAGE &&
+				bgimage_uri != NULL &&
+				nsoption_bool(background_images)
+				== true) {
+			nsurl *url = NULL;
+			nserror error = nsurl_create(
+				lwc_string_data(bgimage_uri),
+				&url);
+			if (error == NSERROR_OK) {
+				if (html_fetch_object(ctx->content,
+						url, gen,
+						image_types,
+						true) == false) {
+					nsurl_unref(url);
+					return;
+				}
+				nsurl_unref(url);
 			}
 		}
 	}
@@ -998,6 +1071,20 @@ box_construct_generate(struct box_construct_ctx *ctx,
 		text_box->type = BOX_TEXT;
 		text_box->text = text;
 		text_box->length = pos;
+
+		if (gen != NULL) {
+			/* Materialise text inside the generated inline-block box */
+			struct box *gen_ic = box_create(NULL, NULL, false,
+					NULL, NULL, NULL, NULL, content->bctx);
+			if (gen_ic != NULL) {
+				gen_ic->type = BOX_INLINE_CONTAINER;
+				box_add_child(gen, gen_ic);
+				box_add_child(gen_ic, text_box);
+			} else {
+				box_free(text_box);
+			}
+			return;
+		}
 
 		if ((box->type == BOX_INLINE ||
 				box->type == BOX_INLINE_BLOCK ||
