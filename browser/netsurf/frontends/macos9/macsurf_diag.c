@@ -841,6 +841,14 @@ void ms_diag_document_set_frame(unsigned long doc_id, unsigned long frame)
 	}
 }
 
+void ms_diag_document_set_nav(unsigned long doc_id, unsigned long nav)
+{
+	int i;
+	for (i = 0; i < MS_DOC_RING_N; i++) {
+		if (g_doc_ring[i].id == doc_id) { g_doc_ring[i].nav = nav; break; }
+	}
+}
+
 void ms_diag_document_close(unsigned long doc_id)
 {
 	int i;

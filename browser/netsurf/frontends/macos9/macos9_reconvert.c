@@ -39,6 +39,8 @@ extern int html_reconvert_content(struct content *c);
 extern int macsurf_js_page_execution_active(void);
 extern void macsurf_js_note_dom_mutation(void);
 extern unsigned long macsurf_js_current_task_id(void);
+extern void html_content_get_diag_identity(struct content *, unsigned long *,
+	unsigned long *);
 /* fixes1094 (#265 Round B) - see html.c. */
 extern int macsurf_html_has_droppable_inflight(struct content *c);
 
@@ -371,7 +373,7 @@ macos9_reconvert_pending_add(struct content *c, void *node, int kind)
 		struct ms_diag_provenance prov;
 		memset(&prov, 0, sizeof(prov));
 		prov.nav = ms_diag_cur_nav();
-		prov.frame = ms_diag_frame_get(NULL);
+		html_content_get_diag_identity(c, &prov.doc, &prov.frame);
 		prov.script = ms_diag_cur_script();
 		prov.task = ms_diag_cur_task();
 		g_pending[freeslot].batch_id = ms_diag_batch_open(&prov);

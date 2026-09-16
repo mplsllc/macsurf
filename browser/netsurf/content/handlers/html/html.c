@@ -6240,6 +6240,23 @@ html_open(struct content *c,
 	return NSERROR_OK;
 }
 
+#ifdef __MACOS9__
+void html_content_get_diag_identity(struct content *c, unsigned long *doc,
+	unsigned long *frame)
+{
+	html_content *html = (html_content *)c;
+	if (doc != NULL) *doc = (html == NULL) ? 0 : html->ms_diag_doc_id;
+	if (frame != NULL) *frame = (html == NULL) ? 0 :
+		ms_diag_frame_get(html->bw);
+}
+void html_content_set_diag_nav(struct content *c, unsigned long nav)
+{
+	html_content *html = (html_content *)c;
+	if (html != NULL && html->ms_diag_doc_id != 0)
+		ms_diag_document_set_nav(html->ms_diag_doc_id, nav);
+}
+#endif
+
 
 /**
  * Handle a window containing a CONTENT_HTML being closed.

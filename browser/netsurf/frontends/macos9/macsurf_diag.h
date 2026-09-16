@@ -272,6 +272,7 @@ struct ms_diag_render_scope {
 /* --- documents --- */
 unsigned long ms_diag_document_open(unsigned long nav, unsigned long frame);
 void ms_diag_document_set_frame(unsigned long doc_id, unsigned long frame);
+void ms_diag_document_set_nav(unsigned long doc_id, unsigned long nav);
 void ms_diag_document_close(unsigned long doc_id);
 
 /* --- mutation batches (R1: keyed by document, opened per pending slot) --- */
