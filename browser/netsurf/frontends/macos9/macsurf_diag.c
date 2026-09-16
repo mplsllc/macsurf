@@ -986,6 +986,7 @@ static struct ms_diag_pass *ms_pass_find(unsigned long id)
 static unsigned long ms_pass_alloc(const struct ms_diag_provenance *prov, int kind)
 {
 	struct ms_diag_pass *e = &g_pass_ring[g_pass_ring_head];
+	struct ms_diag_provenance trace_prov;
 	g_pass_ring_head = (g_pass_ring_head + 1) % MS_PASS_RING_N;
 	memset(e, 0, sizeof(*e));
 	e->id = ms_next(&g_pass_seq);
@@ -1000,8 +1001,11 @@ static unsigned long ms_pass_alloc(const struct ms_diag_provenance *prov, int ki
 	e->kind = (short) kind;
 	e->result = (short) MS_RRES_RUNNING;
 	e->reason = (short) MS_SREASON_NONE;
-	macsurf_trace_emit(MS_TC_LAYOUT, MS_TE_LAYOUT_BEGIN, 0, 0,
-		e->id, (unsigned long) kind);
+	memset(&trace_prov, 0, sizeof(trace_prov));
+	if (prov != (const struct ms_diag_provenance *) 0) trace_prov = *prov;
+	trace_prov.pass = e->id;
+	macsurf_trace_emit_with_provenance(MS_TC_LAYOUT, MS_TE_LAYOUT_BEGIN,
+		0, 0, &trace_prov, e->id, (unsigned long) kind);
 	return e->id;
 }
 
