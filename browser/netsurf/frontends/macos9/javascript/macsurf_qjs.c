@@ -6857,6 +6857,13 @@ static void qjs_fire_dispatch(JSContext *ctx, JSValueConst obj,
 	JS_FreeValue(ctx, fn);
 }
 
+struct qjs_synth_ev_slot {
+	dom_event *evt;
+	JSValue jsev;
+	struct qjs_synth_ev_slot *prev;
+};
+static struct qjs_synth_ev_slot *g_synth_ev_stack = NULL;
+
 static void qjs_dom_listener_cb(dom_event *evt, void *pw)
 {
 	dom_event_target *ct = NULL;
@@ -6930,8 +6937,13 @@ static void qjs_dom_listener_cb(dom_event *evt, void *pw)
 	 * Built via `new Event(type)` so the prototype chain is right, then the
 	 * real values are written over the constructor's defaults from the actual
 	 * dom_event. Falls back to a plain object if the constructor is somehow
-	 * missing, because an event with no prototype still beats no dispatch. */
-	{
+	/* fixes1178: If this dispatch was triggered by el.dispatchEvent(customEvent),
+	 * reuse the original JS event object so that custom properties (detail,
+	 * container, image, etc.) and class prototypes (class H extends Event)
+	 * are preserved across dispatch as required by the W3C/WHATWG DOM specs. */
+	if (g_synth_ev_stack != NULL && g_synth_ev_stack->evt == evt) {
+		evobj = JS_DupValue(ctx, g_synth_ev_stack->jsev);
+	} else {
 		JSValue global = JS_GetGlobalObject(ctx);
 		JSValue ctor = JS_GetPropertyStr(ctx, global, "Event");
 		evobj = JS_UNDEFINED;
@@ -6977,7 +6989,8 @@ static void qjs_dom_listener_cb(dom_event *evt, void *pw)
 		/* isTrusted is TRUE only here -- this is the native UI path.
 		 * Anything from `new Event` / dispatchEvent reports false, and some
 		 * libraries branch on it to reject synthetic input. */
-		JS_SetPropertyStr(ctx, evobj, "isTrusted", JS_NewBool(ctx, 1));
+		JS_SetPropertyStr(ctx, evobj, "isTrusted",
+				JS_NewBool(ctx, (g_synth_ev_stack != NULL && g_synth_ev_stack->evt == evt) ? 0 : 1));
 	}
 
 	/* Mouse and keyboard details, from the values the frontend already has.
@@ -7439,6 +7452,7 @@ static JSValue qjs_el_dispatch_event_data(JSContext *ctx,
 	dom_event *evt = NULL;
 	bool ok_flag = true;
 	bool bubbles = true, cancelable = true;
+	struct qjs_synth_ev_slot slot;
 	(void)this_val; (void)magic;
 
 	node = qjs_get_node(this_val);
@@ -7489,9 +7503,16 @@ static JSValue qjs_el_dispatch_event_data(JSContext *ctx,
 	}
 	macsurf_dom_string_unref(tds);
 
+	slot.evt = evt;
+	slot.jsev = argv[0];
+	slot.prev = g_synth_ev_stack;
+	g_synth_ev_stack = &slot;
+
 	g_qjs_in_dispatch = 1;
 	(void)dom_event_target_dispatch_event(node, evt, &ok_flag);
 	g_qjs_in_dispatch = 0;
+
+	g_synth_ev_stack = slot.prev;
 	dom_event_unref(evt);
 
 	/* false when a cancelable event was cancelled -- the whole point of the
@@ -10856,10 +10877,18 @@ static void register_browser_globals(JSContext *ctx)
 			"this.composed=!!opts.composed;"
 			"this.defaultPrevented=false;"
 			"this.target=null;this.currentTarget=null;"
-			"this.preventDefault=function(){this.defaultPrevented=true;};"
-			"this.stopPropagation=function(){};"
-			"this.stopImmediatePropagation=function(){};"
 		"}"
+		"Event.NONE=0;Event.CAPTURING_PHASE=1;Event.AT_TARGET=2;Event.BUBBLING_PHASE=3;"
+		"Event.prototype.NONE=0;Event.prototype.CAPTURING_PHASE=1;Event.prototype.AT_TARGET=2;Event.prototype.BUBBLING_PHASE=3;"
+		"Event.prototype.preventDefault=function(){if(this.cancelable)this.defaultPrevented=true;};"
+		"Event.prototype.stopPropagation=function(){};"
+		"Event.prototype.stopImmediatePropagation=function(){this.__msStopNow=true;};"
+		"Event.prototype.composedPath=function(){"
+			"var p=[];var n=this.target||this.srcElement;"
+			"while(n){p.push(n);n=n.parentNode;}"
+			"if(p.length>0&&p[p.length-1]===document&&typeof window!=='undefined'){p.push(window);}"
+			"return p;"
+		"};"
 		"this.Event=Event;"
 		"function CustomEvent(type,opts){"
 			"Event.call(this,type,opts);"
