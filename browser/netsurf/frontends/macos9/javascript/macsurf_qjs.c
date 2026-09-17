@@ -155,13 +155,14 @@ static void qjs_task_push(int kind)
 static void qjs_task_pop(void)
 {
 	if (g_qjs_task_depth > 0 && --g_qjs_task_depth == 0) {
-		unsigned long id=g_qjs_task_id;
-		unsigned long n=g_qjs_task_mutations;
-		extern void macos9_reconvert_js_task_complete(unsigned long);
-		g_qjs_task_id=0;
-		g_qjs_task_kind=MACSURF_JS_TASK_NONE;
-		g_qjs_task_mutations=0;
-		if (n != 0) macos9_reconvert_js_task_complete(id);
+		unsigned long id = g_qjs_task_id;
+		unsigned long n = g_qjs_task_mutations;
+		int kind = g_qjs_task_kind;
+		extern void macos9_reconvert_js_task_complete_kind(unsigned long, int);
+		g_qjs_task_id = 0;
+		g_qjs_task_kind = MACSURF_JS_TASK_NONE;
+		g_qjs_task_mutations = 0;
+		if (n != 0) macos9_reconvert_js_task_complete_kind(id, kind);
 		ms_diag_task_leave(&g_qjs_task_diag_scope);
 	}
 }

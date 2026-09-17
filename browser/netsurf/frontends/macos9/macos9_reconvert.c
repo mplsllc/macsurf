@@ -172,20 +172,17 @@ enum macsurf_render_action {
 static enum macsurf_render_action
 macsurf_render_action_for(int kind, int multi)
 {
-	if (multi) return MACSURF_RENDER_NONE;
+	(void)multi;
 	switch (kind) {
 	case MACOS9_DOMMUT_INNERHTML:
 	case MACOS9_DOMMUT_APPENDCHILD:
 	case MACOS9_DOMMUT_REMOVECHILD:
 	case MACOS9_DOMMUT_INSERTBEFORE:
-		return MACSURF_RENDER_FULL;
-	case MACOS9_DOMMUT_SETATTR_STYLE:
-		return MACSURF_RENDER_RECASCADE;
 	case MACOS9_DOMMUT_SETATTR_CLASS:
-		return MACSURF_RENDER_RECASCADE;
+	case MACOS9_DOMMUT_SETATTR_STYLE:
 	case MACOS9_DOMMUT_TEXTCONTENT:
 	case MACOS9_DOMMUT_CHARDATA:
-		return MACSURF_RENDER_LOCAL_REFLOW;
+		return MACSURF_RENDER_FULL;
 	default:
 		return MACSURF_RENDER_NONE;
 	}
@@ -196,7 +193,11 @@ static int macsurf_render_mask_is_structural(unsigned long mask)
 	return (mask & ((1UL << MACOS9_DOMMUT_INNERHTML) |
 		(1UL << MACOS9_DOMMUT_APPENDCHILD) |
 		(1UL << MACOS9_DOMMUT_REMOVECHILD) |
-		(1UL << MACOS9_DOMMUT_INSERTBEFORE))) != 0;
+		(1UL << MACOS9_DOMMUT_INSERTBEFORE) |
+		(1UL << MACOS9_DOMMUT_SETATTR_CLASS) |
+		(1UL << MACOS9_DOMMUT_SETATTR_STYLE) |
+		(1UL << MACOS9_DOMMUT_TEXTCONTENT) |
+		(1UL << MACOS9_DOMMUT_CHARDATA))) != 0;
 }
 
 #ifdef __MACOS9__
@@ -1001,12 +1002,14 @@ macos9_reconvert_cb(void *p)
 		if (action != MACSURF_RENDER_FULL) {
 			if (have_render_scope) ms_diag_render_leave(&render_scope,
 				MS_RRES_DECLINED, MS_SREASON_NONE);
+			macsurf_debug_log_writef("LIFE render decline slot=%d kind=%d multi=%d mask=0x%lx",
+				i, g_pending[i].kind, g_pending[i].multi, g_pending[i].kind_mask);
 			macos9_reconvert_slot_clear(i);
 			continue;
 		}
-		/* Full rebuild is reserved for structural edits after loading has
+		/* Full rebuild is reserved for edits after loading has
 		 * settled. Keep a valid request coalesced until that quiescent state. */
-		if (c->status != CONTENT_STATUS_DONE) {
+		if (c->status != CONTENT_STATUS_READY && c->status != CONTENT_STATUS_DONE) {
 			if (have_render_scope) ms_diag_render_leave(&render_scope,
 				MS_RRES_DEFER_NOT_DONE, MS_SREASON_NOT_READY);
 			busy = 1;
@@ -1020,7 +1023,7 @@ macos9_reconvert_cb(void *p)
 		}
 		rc = html_reconvert_content(c);	/* 0 = queued, !=0 = busy */
 		macsurf_debug_log_writef(
-			"WORK reconvert: html_reconvert_content rc=%d c=%p", rc,
+			"LIFE reconvert: html_reconvert_content rc=%d c=%p", rc,
 			(void *) c);
 		if (rc != 0) {
 			/* mid-layout or a convert already in flight - KEEP the
@@ -1220,6 +1223,19 @@ static void macos9_reconvert_schedule_pending(void)
 void macos9_reconvert_js_task_complete(unsigned long task_id)
 {
 	(void)task_id;
+	if (!macsurf_js_page_execution_active())
+		macos9_reconvert_schedule_pending();
+}
+
+void macos9_reconvert_js_task_complete_kind(unsigned long task_id, int kind)
+{
+	(void)task_id;
+	/* If user interaction (click, keypress) triggered mutations, reset debounce
+	 * and cosmetic suppression so the user sees the result immediately. */
+	if (kind == 2 /* MACSURF_JS_TASK_EVENT */) {
+		g_consecutive_cosmetic = 0;
+		g_reconvert_debounce_ms = RECONVERT_DEBOUNCE_MS;
+	}
 	if (!macsurf_js_page_execution_active())
 		macos9_reconvert_schedule_pending();
 }
