@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Flex Column Stretched Cross Size</title>
+<style>
+body { font-family: Geneva, sans-serif; margin: 0; padding: 0; background: #eee; }
+.wrapper {
+    display: flex;
+    flex-direction: column;
+    width: 800px;
+    background: #fff;
+    margin: 20px auto;
+    border: 1px solid #ccc;
+}
+.header {
+    height: 50px;
+    background: #369;
+    color: #fff;
+    padding: 10px;
+}
+.body {
+    flex-grow: 1;
+    padding: 10px;
+    background: #fafafa;
+}
+.body h2 {
+    margin: 0 0 10px 0;
+}
+.body p {
+    margin: 0;
+}
+.footer {
+    height: 40px;
+    background: #222;
+    color: #fff;
+    padding: 10px;
+}
+</style>
+</head>
+<body>
+<div class="wrapper">
+    <div class="header">Header</div>
+    <div class="body">
+        <h2>Short Title</h2>
+        <p>This is a paragraph inside the flex body. In a column flex container, the body should stretch across the full available cross width rather than being crushed to its max-content heading width during base size calculation.</p>
+    </div>
+    <div class="footer">Footer</div>
+</div>
+</body>
+</html>
