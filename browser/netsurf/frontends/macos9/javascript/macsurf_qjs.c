@@ -720,6 +720,7 @@ static void qjs_console_emit(JSContext *ctx, const char *prefix,
 	char buf[2048];
 	size_t pos = 0;
 	size_t plen = strlen(prefix);
+	const char *errmsg;
 
 	/* fixes1246 - budget only the two LIFE-promoted levels (error/warn);
 	 * log/info/debug stay WORK-invisible in release exactly as before, so
@@ -756,6 +757,12 @@ static void qjs_console_emit(JSContext *ctx, const char *prefix,
 		}
 	}
 	MS_LOG(buf);
+	if (strcmp(prefix, "LIFE console.error:") == 0) {
+		errmsg = buf + plen;
+		while (*errmsg == ' ') errmsg++;
+		ms_diag_error_record(0UL, 0UL, MS_ERR_JS_EXCEPTION, 0, MS_OPR_NONE,
+				"console.error", errmsg);
+	}
 }
 
 #define CONSOLE_FN(name, prefix) \
@@ -5503,13 +5510,13 @@ static void qjs_el_install_js_helpers(JSContext *ctx, JSValue proto)
 		"}"
 		"try{a[i].call(this,ev);}"
 		"catch(e){try{console.error('LIFE jsevent listener threw ['+t+']: '+"
-		"((e&&e.message)||e));}catch(_){}}}}"
+		"((e&&e.name)?(e.name+': '):'')+((e&&e.message)||e)+(e&&e.stack?(' STACK: '+e.stack):''));}catch(_){}}}}"
 		"if(ev&&ev.__msStopNow)return true;"
 		/* on* handlers are non-capture by definition, so they must never
 		 * run in the capturing phase. */
 		"if(ph!==1&&this._H&&this._H[t]){try{this._H[t].call(this,ev);}"
 		"catch(e){try{console.error('LIFE jsevent on'+t+' threw: '+"
-		"((e&&e.message)||e));}catch(_){}}}"
+		"((e&&e.name)?(e.name+': '):'')+((e&&e.message)||e)+(e&&e.stack?(' STACK: '+e.stack):''));}catch(_){}}}"
 		"return true;};"
 		/* fixes1008 (2b) - THE MISSING DOM SURFACE.
 		 *
@@ -11243,7 +11250,7 @@ static void register_browser_globals(JSContext *ctx)
 					"if(L)L.forEach(function(f){try{f(ev);}catch(e){"
 						"try{if(typeof __msLife==='function')"
 							"__msLife('docevt THREW type='+t+': '+"
-								"((e&&e.message)||e));}catch(_){}"
+								"((e&&e.name)?(e.name+': '):'')+((e&&e.message)||e)+(e&&e.stack?(' STACK: '+e.stack):''));}catch(_){}"
 					"}});return true;};"
 		"}");
 
@@ -11558,7 +11565,7 @@ static void register_browser_globals(JSContext *ctx)
 			"if(arr)arr.forEach(function(f){try{f(ev);}catch(e){"
 				"try{if(typeof __msLife==='function')"
 					"__msLife('winevt THREW type='+t+': '+"
-						"((e&&e.message)||e));}catch(_){}"
+						"((e&&e.name)?(e.name+': '):'')+((e&&e.message)||e)+(e&&e.stack?(' STACK: '+e.stack):''));}catch(_){}"
 			"}});return true;};"
 		/* fixes1011 - the REAL getComputedStyle. __gcsNative reads the
 		 * cascade + box (installed in qjs_dom_install); this wrapper adds
