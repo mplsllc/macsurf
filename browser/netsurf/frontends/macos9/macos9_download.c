@@ -46,6 +46,7 @@
 #include "utils/ns_errors.h"
 #include "utils/log.h"
 #include "utils/nsurl.h"
+#include "utils/nsoption.h"
 #include "netsurf/download.h"
 #include "desktop/download.h"
 
@@ -66,12 +67,14 @@ static int g_dl_count = 0;
 #ifdef __MACOS9__
 static WindowRef   g_dl_mgr_win = NULL;
 static ControlRef  g_btn_open_folder = NULL;
+static ControlRef  g_btn_change_folder = NULL;
 static ControlRef  g_btn_clear = NULL;
 static ControlRef  g_dl_sb = NULL;
 static int         g_dl_scroll_top = 0;
 static unsigned long g_last_click_time = 0;
 static int         g_last_click_row = -1;
 static void dl_mgr_progress(void);   /* fwd: dl_cancel calls it */
+static void dl_mgr_change_folder(void);
 
 /* Map a NetSurf MIME string to a Mac type/creator pair. Best-effort -
  * anything not recognised falls back to 'BINA' / '????'. */
@@ -281,6 +284,52 @@ static void dl_mgr_clear_finished(void)
 	dl_mgr_progress();
 }
 
+static void dl_mgr_change_folder(void)
+{
+	NavDialogOptions options;
+	NavReplyRecord reply;
+	AEKeyword key;
+	FSRef fsref;
+	FSSpec spec;
+	OSErr err;
+	char path[1024];
+	unsigned char msg[256];
+
+	/* Initialize Navigation Services dialog options */
+	if (NavGetDefaultDialogOptions(&options) != noErr) return;
+
+	options.dialogOptionFlags = 0;
+	c_to_pstring("Select a folder for downloaded files:", msg);
+	BlockMoveData(msg, options.message, msg[0] + 1);
+
+	err = NavChooseFolder(NULL, &reply, &options, NULL, NULL, NULL);
+	if (err != noErr) return;
+
+	err = AEGetNthPtr(&reply.selection, 1, typeFSRef, &key, NULL,
+		&fsref, sizeof(fsref), NULL);
+	if (err != noErr) {
+		NavDisposeReply(&reply);
+		return;
+	}
+
+	err = FSGetCatalogInfo(&fsref, kFSCatInfoNone, NULL, NULL, &spec, NULL);
+	if (err != noErr) {
+		NavDisposeReply(&reply);
+		return;
+	}
+
+	/* Convert FSSpec to full path for storage */
+	err = macos9_fsspec_to_path(&spec, path, (long)sizeof path);
+	if (err == 0) {
+		nsoption_set_charp(download_folder_path, strdup(path));
+	}
+
+	NavDisposeReply(&reply);
+
+	/* Refresh the download manager to show new folder */
+	dl_mgr_progress();
+}
+
 static void dl_format_bytes(unsigned long b, char *buf)
 {
 	if (b >= 1048576) {
@@ -452,7 +501,7 @@ static void dl_draw_progress_bar(const Rect *bar, unsigned long written, unsigne
 
 static void dl_mgr_ensure(void)
 {
-	Rect b, r_open_folder, r_clear, r_sb;
+	Rect b, r_open_folder, r_change_folder, r_clear, r_sb;
 	Str255 title;
 	const char *t = "Downloads";
 	size_t n;
@@ -474,7 +523,11 @@ static void dl_mgr_ensure(void)
 	g_btn_open_folder = NewControl(g_dl_mgr_win, &r_open_folder,
 		"\pOpen Downloads Folder", true, 0, 0, 1, kControlPushButtonProc, 0);
 
-	SetRect(&r_clear, 192, 40, 302, 64);
+	SetRect(&r_change_folder, 192, 40, 312, 64);
+	g_btn_change_folder = NewControl(g_dl_mgr_win, &r_change_folder,
+		"\pChange Folder...", true, 0, 0, 1, kControlPushButtonProc, 0);
+
+	SetRect(&r_clear, 320, 40, 430, 64);
 	g_btn_clear = NewControl(g_dl_mgr_win, &r_clear,
 		"\pClear Finished", true, 0, 0, 1, kControlPushButtonProc, 0);
 
@@ -814,6 +867,8 @@ void macos9_download_mgr_click(short part, Point where)
 			} else if (TrackControl(hit_ctrl, p, NULL) != 0) {
 				if (hit_ctrl == g_btn_open_folder) {
 					dl_mgr_open_folder();
+				} else if (hit_ctrl == g_btn_change_folder) {
+					dl_mgr_change_folder();
 				} else if (hit_ctrl == g_btn_clear) {
 					dl_mgr_clear_finished();
 				}

@@ -245,10 +245,10 @@ void macos9_prefs_apply_live(void)
  */
 
 #define PREFS_W_W 480
-#define PREFS_W_H 400
-#define PREFS_BANNER_H 34
-#define PREFS_PANEL_TOP 42
-#define PREFS_PANEL_BOT 348
+#define PREFS_W_H 420
+#define PREFS_BANNER_H 40
+#define PREFS_PANEL_TOP 48
+#define PREFS_PANEL_BOT 368
 
 enum {
 	PREFS_CAT_GENERAL = 0,
@@ -350,19 +350,19 @@ static const Rect s_btn_ok_rect           = { 358, 372, 382, 460 };
 static const Rect s_tabs_rect             = {  42,  12, 348, 468 };
 
 /* General panel */
-static const Rect s_te_home_rect          = {  88,  24, 110, 456 };
-static const Rect s_btn_home_current_rect = { 118,  24, 140, 154 };
-static const Rect s_btn_home_default_rect = { 118, 164, 140, 284 };
-static const Rect s_te_ww_rect            = { 186,  76, 208, 140 };
-static const Rect s_te_wh_rect            = { 186, 216, 208, 280 };
+static const Rect s_te_home_rect          = {  94,  24, 116, 456 };
+static const Rect s_btn_home_current_rect = { 124,  24, 146, 154 };
+static const Rect s_btn_home_default_rect = { 124, 164, 146, 284 };
+static const Rect s_te_ww_rect            = { 192,  76, 214, 140 };
+static const Rect s_te_wh_rect            = { 192, 216, 214, 280 };
 
 /* Web Content panel */
-static const Rect s_ck_images_rect        = {  74,  24,  94, 456 };
-static const Rect s_ck_anim_rect          = { 118,  44, 138, 456 };
-static const Rect s_ck_css_rect           = { 162,  24, 182, 456 };
-static const Rect s_ck_js_rect            = { 206,  24, 226, 456 };
-static const Rect s_ck_popups_rect        = { 250,  24, 270, 456 };
-static const Rect s_ck_ads_rect           = { 294,  24, 314, 456 };
+static const Rect s_ck_images_rect        = {  80,  24, 100, 456 };
+static const Rect s_ck_anim_rect          = { 124,  44, 144, 456 };
+static const Rect s_ck_css_rect           = { 168,  24, 188, 456 };
+static const Rect s_ck_js_rect            = { 212,  24, 232, 456 };
+static const Rect s_ck_popups_rect        = { 256,  24, 276, 456 };
+static const Rect s_ck_ads_rect           = { 300,  24, 320, 456 };
 
 /* Appearance panel */
 static const Rect s_pp_font_rect          = {  88, 160, 110, 280 };
@@ -469,12 +469,11 @@ static void prefs_banner(const Rect *content, const char *title)
 static ControlRef prefs_create_checkbox(WindowRef win, const Rect *r,
 		const char *title, int initial)
 {
-	unsigned char pstr[256];
-	ControlRef c;
-	c_to_pstring(title, pstr);
-	/* Checkbox bounds: min = 0, max = 1 */
-	c = NewControl(win, r, pstr, 1, (short)(initial ? 1 : 0), 0, 1,
+	/* Create checkbox WITHOUT title - we'll draw label manually to avoid
+	 * white background cutout on platinum window background. */
+	ControlRef c = NewControl(win, r, "\p", 1, (short)(initial ? 1 : 0), 0, 1,
 		kControlCheckBoxProc, 0);
+	(void)title; /* Label drawn in prefs_paint */
 	return c;
 }
 
@@ -935,25 +934,41 @@ static void prefs_paint(struct prefs_win *pw)
 	case PREFS_CAT_GENERAL:
 		RGBForeColor(&black_c);
 		TextFont(1); TextFace(bold); TextSize(12);
-		MoveTo(24, 80);
+		MoveTo(24, 90);
 		DrawString("\pHome page:");
 
-		MoveTo(24, 172);
+		MoveTo(24, 182);
 		DrawString("\pNew window size:");
 
 		TextFace(normal);
-		MoveTo(28, 202);
+		MoveTo(28, 212);
 		DrawString("\pWidth:");
-		MoveTo(168, 202);
+		MoveTo(168, 212);
 		DrawString("\pHeight:");
 
 		RGBForeColor(&gray_c);
 		TextFont(3); TextSize(9);
-		MoveTo(288, 202);
+		MoveTo(288, 212);
 		DrawString("\p(0 = automatic default)");
 		break;
 
 	case PREFS_CAT_CONTENT:
+		RGBForeColor(&black_c);
+		TextFont(1); TextFace(normal); TextSize(12);
+		/* Checkbox labels - drawn manually to avoid white cutout */
+		MoveTo((short)(s_ck_images_rect.left + 22), (short)(s_ck_images_rect.top + 15));
+		DrawString("\pLoad images");
+		MoveTo((short)(s_ck_anim_rect.left + 22), (short)(s_ck_anim_rect.top + 15));
+		DrawString("\pAnimate images");
+		MoveTo((short)(s_ck_css_rect.left + 22), (short)(s_ck_css_rect.top + 15));
+		DrawString("\pUse website styles (CSS)");
+		MoveTo((short)(s_ck_js_rect.left + 22), (short)(s_ck_js_rect.top + 15));
+		DrawString("\pEnable JavaScript");
+		MoveTo((short)(s_ck_popups_rect.left + 22), (short)(s_ck_popups_rect.top + 15));
+		DrawString("\pBlock pop-up windows");
+		MoveTo((short)(s_ck_ads_rect.left + 22), (short)(s_ck_ads_rect.top + 15));
+		DrawString("\pBlock advertisements");
+
 		RGBForeColor(&gray_c);
 		TextFont(3); TextFace(normal); TextSize(9);
 		MoveTo(44, 108);
@@ -985,6 +1000,16 @@ static void prefs_paint(struct prefs_win *pw)
 		break;
 
 	case PREFS_CAT_PRIVACY:
+		RGBForeColor(&black_c);
+		TextFont(1); TextFace(normal); TextSize(12);
+		/* Checkbox labels - drawn manually to avoid white cutout */
+		MoveTo((short)(s_ck_cookies_rect.left + 22), (short)(s_ck_cookies_rect.top + 15));
+		DrawString("\pStore and send cookies");
+		MoveTo((short)(s_ck_ref_rect.left + 22), (short)(s_ck_ref_rect.top + 15));
+		DrawString("\pSend Referer header");
+		MoveTo((short)(s_ck_dnt_rect.left + 22), (short)(s_ck_dnt_rect.top + 15));
+		DrawString("\pSend Do Not Track request");
+
 		RGBForeColor(&gray_c);
 		TextFont(3); TextFace(normal); TextSize(9);
 		MoveTo(44, 108);
@@ -995,7 +1020,7 @@ static void prefs_paint(struct prefs_win *pw)
 		DrawString("\pAsks websites and advertisers not to track your browsing habits.");
 		MoveTo(24, 272);
 		DrawString("\pRemoves temporarily cached files and recorded page visit history.");
-		break;
+		break;;
 
 	case PREFS_CAT_NETWORK:
 		RGBForeColor(&black_c);

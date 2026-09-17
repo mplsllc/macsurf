@@ -25,6 +25,7 @@
 
 #include "macos9_disk_cache.h"
 #include "macsurf_debug.h"
+#include "utils/nsoption.h"
 
 #include <string.h>
 #include <stdlib.h>
@@ -1498,10 +1499,21 @@ void macos9_history_save(const char *buf, long len)
 
 /* fixes647 - downloads land in MacSurfData/Downloads (was the standalone
  * "MacSurf Downloads" folder). Same shared MacSurfData root as cache and
- * bookmarks, so there's one folder next to the app, not several. */
+ * bookmarks, so there's one folder next to the app, not several.
+ * If user has set a custom download folder via preferences, use that instead. */
 OSErr macos9_downloads_dir_get(short *vRef, long *dirID)
 {
 #ifdef __MACOS9__
+	const char *custom_path = nsoption_charp(download_folder_path);
+	if (custom_path != NULL && custom_path[0] != '\0') {
+		FSSpec spec;
+		OSErr err = macos9_path_to_fsspec(custom_path, &spec);
+		if (err == noErr) {
+			*vRef = spec.vRefNum;
+			*dirID = spec.parID;
+			return noErr;
+		}
+	}
 	return macsurfdata_dir_get("Downloads", vRef, dirID);
 #else
 	(void)vRef; (void)dirID;

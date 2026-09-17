@@ -318,6 +318,7 @@ void macos9_window_draw_toolbar_icons(struct gui_window *g);
 void macos9_window_draw_toolbar_bg(struct gui_window *g);
 void macos9_window_update_scrollbars(struct gui_window *g);
 void macos9_window_scroll_to(struct gui_window *g, int nx, int ny);
+int macos9_path_to_fsspec(const char *path, FSSpec *out);
 void macos9_window_scroll_by(struct gui_window *g, int dx, int dy);
 void macos9_window_handle_scrollbar_click(struct gui_window *g, ControlRef c, short p, void *lp);
 void macos9_window_te_activate_url(struct gui_window *g);

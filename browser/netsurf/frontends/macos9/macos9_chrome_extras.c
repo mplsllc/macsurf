@@ -3233,8 +3233,8 @@ void macos9_bookmark_window_show(struct gui_window *g)
 
 	/* Footer row */
 	SetRect(&r_move,   12, 386,  82, 410);
-	SetRect(&r_imp,    88, 386, 160, 410);
-	SetRect(&r_exp,   166, 386, 238, 410);
+	SetRect(&r_imp,    88, 386, 178, 410);
+	SetRect(&r_exp,   184, 386, 274, 410);
 	SetRect(&r_visit, 464, 386, 550, 410);
 	SetRect(&r_done,  558, 386, 626, 410);
 

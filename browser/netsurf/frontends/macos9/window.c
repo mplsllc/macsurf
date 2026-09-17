@@ -2673,6 +2673,78 @@ int macos9_fsspec_to_path(const FSSpec *spec, char *out, long cap)
 	return 0;
 }
 
+/* fixes1197 - reverse of macos9_fsspec_to_path: parse a full HFS path
+ * "Volume:dir:...:leaf" into an FSSpec. Returns noErr on success.
+ * Used by download folder preference to resolve custom path. */
+int macos9_path_to_fsspec(const char *path, FSSpec *out)
+{
+	Str255 pstr;
+	const char *p = path;
+	const char *start;
+	size_t len;
+	short vRef = 0;
+	long dirID = fsRtParID;
+	long dummy_dirid = 0;
+	OSErr err;
+	FSSpec spec;
+
+	if (path == NULL || path[0] == '\0') return paramErr;
+
+	/* Parse volume:name:dir:... format */
+	/* Find first colon (volume separator) */
+	start = p;
+	while (*p != '\0' && *p != ':') p++;
+	if (*p != ':') return paramErr;  /* no volume separator */
+
+	len = p - start;
+	if (len > 31) len = 31;
+	pstr[0] = (unsigned char)len;
+	memcpy(pstr + 1, start, len);
+
+	err = HGetVol(pstr, &vRef, &dummy_dirid);
+	if (err != noErr) return err;
+
+	p++; /* skip ':' */
+
+	/* Walk path components */
+	while (*p != '\0') {
+		start = p;
+		while (*p != '\0' && *p != ':') p++;
+		len = p - start;
+		if (len == 0) break;
+		if (len > 31) len = 31;
+		pstr[0] = (unsigned char)len;
+		memcpy(pstr + 1, start, len);
+
+		err = FSMakeFSSpec(vRef, dirID, pstr, &spec);
+		if (err != noErr) return err;
+
+		/* If this is a directory, descend into it */
+		if (*p == ':') {
+			CInfoPBRec pb;
+			memset(&pb, 0, sizeof pb);
+			pb.dirInfo.ioNamePtr = pstr;
+			pb.dirInfo.ioVRefNum = vRef;
+			pb.dirInfo.ioDrDirID = dirID;
+			pb.dirInfo.ioFDirIndex = -1;
+			if (PBGetCatInfoSync(&pb) == noErr) {
+				if ((pb.dirInfo.ioFlAttrib & 0x10) != 0) { /* is directory */
+					dirID = pb.dirInfo.ioDrDirID;
+				}
+			}
+			p++;
+		} else {
+			/* Last component - this is the target */
+			*out = spec;
+			return noErr;
+		}
+	}
+
+	/* If we got here, path ended with ':' - it's a directory */
+	*out = spec;
+	return noErr;
+}
+
 /* fixes721 - file_gadget_open gui callback. Core calls this when the user
  * clicks an <input type=file>. Show a Navigation Services Open dialog (the
  * same generation as the fixes313a NavPutFile save dialog, which links under

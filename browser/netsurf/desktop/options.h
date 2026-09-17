@@ -178,6 +178,9 @@ NSOPTION_STRING(cookie_jar, NULL)
 /** Home page location */
 NSOPTION_STRING(homepage_url, NULL)
 
+/** Custom download folder path (MacSurf-specific) */
+NSOPTION_STRING(download_folder_path, NULL)
+
 /** search web from url bar */
 NSOPTION_BOOL(search_url_bar, false)
 
