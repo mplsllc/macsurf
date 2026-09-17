@@ -9908,6 +9908,9 @@ static void qjs_el_install_proto(JSContext *ctx)
 		"for(i=0;i<ht.length;i++){"
 			"var c=(typeof globalThis!=='undefined'?globalThis:this)[ht[i]];"
 			"if(c&&c.prototype){try{c.prototype.__proto__=p;}catch(e){}}}"
+		"var scr=(typeof globalThis!=='undefined'?globalThis:this).HTMLScriptElement;"
+		"if(scr&&scr.prototype){"
+			"scr.prototype.async=true;scr.prototype.readyState='complete';}"
 		"return p;})()";
 	JSValue proto;
 
@@ -10857,7 +10860,13 @@ static void register_browser_globals(JSContext *ctx)
 		"}"
 		"CustomEvent.prototype=Object.create(Event.prototype);"
 		"this.CustomEvent=CustomEvent;"
-		"function MouseEvent(type,opts){Event.call(this,type,opts);"
+		"function UIEvent(type,opts){Event.call(this,type,opts);"
+			"opts=opts||{};"
+			"this.view=opts.view||null;this.detail=opts.detail||0;"
+		"}"
+		"UIEvent.prototype=Object.create(Event.prototype);"
+		"this.UIEvent=UIEvent;"
+		"function MouseEvent(type,opts){UIEvent.call(this,type,opts);"
 			"opts=opts||{};"
 			"this.clientX=opts.clientX||0;this.clientY=opts.clientY||0;"
 			"this.screenX=opts.screenX||0;this.screenY=opts.screenY||0;"
@@ -10866,16 +10875,29 @@ static void register_browser_globals(JSContext *ctx)
 			"this.ctrlKey=!!opts.ctrlKey;this.altKey=!!opts.altKey;"
 			"this.metaKey=!!opts.metaKey;"
 		"}"
-		"MouseEvent.prototype=Object.create(Event.prototype);"
+		"MouseEvent.prototype=Object.create(UIEvent.prototype);"
 		"this.MouseEvent=MouseEvent;"
-		"function KeyboardEvent(type,opts){Event.call(this,type,opts);"
+		"function PointerEvent(type,opts){MouseEvent.call(this,type,opts);"
+			"opts=opts||{};"
+			"this.pointerId=opts.pointerId||0;"
+			"this.width=opts.width||1;this.height=opts.height||1;"
+			"this.pressure=opts.pressure||0;"
+			"this.tangentialPressure=opts.tangentialPressure||0;"
+			"this.tiltX=opts.tiltX||0;this.tiltY=opts.tiltY||0;"
+			"this.twist=opts.twist||0;"
+			"this.pointerType=opts.pointerType||'';"
+			"this.isPrimary=!!opts.isPrimary;"
+		"}"
+		"PointerEvent.prototype=Object.create(MouseEvent.prototype);"
+		"this.PointerEvent=PointerEvent;"
+		"function KeyboardEvent(type,opts){UIEvent.call(this,type,opts);"
 			"opts=opts||{};"
 			"this.key=opts.key||'';this.code=opts.code||'';"
 			"this.keyCode=opts.keyCode||0;this.which=opts.which||0;"
 			"this.shiftKey=!!opts.shiftKey;this.ctrlKey=!!opts.ctrlKey;"
 			"this.altKey=!!opts.altKey;this.metaKey=!!opts.metaKey;"
 		"}"
-		"KeyboardEvent.prototype=Object.create(Event.prototype);"
+		"KeyboardEvent.prototype=Object.create(UIEvent.prototype);"
 		"this.KeyboardEvent=KeyboardEvent;");
 
 	/* --- document shims --- */
@@ -11134,6 +11156,21 @@ static void register_browser_globals(JSContext *ctx)
 			"document.ownerDocument=null;"
 			"document.querySelectorAll=document.querySelectorAll||"
 				"function(){return [];};"
+			/* fixes1175 - standard document collections: scripts, images, forms, links.
+			 * core-compiled.js:35 loadScripts checks `m.scripts[0]` to inspect
+			 * script loader capability; throwing TypeError halted XF lazy init. */
+			"Object.defineProperty(document,'scripts',{"
+				"configurable:true,get:function(){"
+					"return document.getElementsByTagName('script');}});"
+			"Object.defineProperty(document,'images',{"
+				"configurable:true,get:function(){"
+					"return document.getElementsByTagName('img');}});"
+			"Object.defineProperty(document,'forms',{"
+				"configurable:true,get:function(){"
+					"return document.getElementsByTagName('form');}});"
+			"Object.defineProperty(document,'links',{"
+				"configurable:true,get:function(){"
+					"return document.querySelectorAll('a[href],area[href]');}});"
 			/* fixes1006 (1b) - tell libdom, or a real click never
 			 * arrives. The _listeners registry is unchanged; the
 			 * missing half was the registration. __msRegDocEvent is
@@ -12658,6 +12695,8 @@ static void register_browser_globals(JSContext *ctx)
 		"g[names[i]]=function(){};"
 		"}"
 		"}"
+		"if(typeof g.HTMLScriptElement!=='undefined'&&g.HTMLScriptElement.prototype){"
+		"g.HTMLScriptElement.prototype.async=true;g.HTMLScriptElement.prototype.readyState='complete';}"
 		/* fixes1144 - NodeFilter constants. Froala editor 4.2.1
 		 * accesses NodeFilter.SHOW_TEXT in its TreeWalker init;
 		 * NodeFilter must be an object with the spec's constant
