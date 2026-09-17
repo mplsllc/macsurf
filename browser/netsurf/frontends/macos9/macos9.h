@@ -177,6 +177,10 @@ struct gui_download_window {
 	int                dl_state;       /* fixes645: 0 active,1 done,2 fail/cancel */
 	struct gui_download_window *dl_next; /* fixes645: manager list link */
 	struct download_context *dl_ctx;   /* fixes646: for Cancel (abort) */
+	unsigned long      start_ticks;
+	unsigned long      last_rate_ticks;
+	unsigned long      last_rate_bytes;
+	unsigned long      last_rate_bps;
 };
 
 /* 5. External Declarations */
@@ -284,8 +288,10 @@ void macos9_cache_clear_ui(void);
 long macos9_download_mgr_is(WindowRef w);   /* 1 if w is the mgr window */
 void macos9_download_mgr_draw(void);
 void macos9_download_mgr_show(void);        /* fixes883: View > Downloads */
+void macos9_download_mgr_hide(void);
 void macos9_download_mgr_click(short part, Point where);
 #ifdef __MACOS9__
+void macos9_chrome_mgr_header(const Rect *content, const char *title, int icon);
 OSErr macos9_downloads_dir_get(short *vRef, long *dirID);
 /* fixes647: shared <app>/MacSurfData[/subfolder] resolver (Cache, Downloads,
  * Bookmarks, log all nest under one MacSurfData folder). subfolder NULL =

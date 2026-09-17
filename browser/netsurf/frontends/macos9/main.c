@@ -455,6 +455,10 @@ static void macos9_handle_menu(short menu_id, short item) {
 			 * window (was a dead menu item - no case existed). Same
 			 * per-window teardown as the go-away box. */
 			front = FrontWindow();
+			if (macos9_download_mgr_is(front)) {
+				macos9_download_mgr_hide();
+				break;
+			}
 			gw = front ? macos9_find_window(front) : NULL;
 			if (gw != NULL) {
 				if (gw->bw != NULL)

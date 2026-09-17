@@ -63,18 +63,16 @@ static struct gui_download_window *g_dl_list = NULL;
 static int g_dl_count = 0;
 #define MACSURF_DL_MAX 64
 
-/* Manager-window row layout (window-local coords). */
-#define DL_ROW0_BASE 50   /* text baseline of row 0, below the header rule */
-#define DL_ROW_H     18   /* per-row vertical step */
-#define DL_CANCEL_W  56   /* width of the per-row [Cancel] box */
-#define DL_ROWS_MAX  10   /* max rows drawn / hit-tested */
-
 #ifdef __MACOS9__
-static WindowRef g_dl_mgr_win = NULL;
+static WindowRef   g_dl_mgr_win = NULL;
+static ControlRef  g_btn_open_folder = NULL;
+static ControlRef  g_btn_clear = NULL;
+static ControlRef  g_dl_sb = NULL;
+static int         g_dl_scroll_top = 0;
+static unsigned long g_last_click_time = 0;
+static int         g_last_click_row = -1;
 static void dl_mgr_progress(void);   /* fwd: dl_cancel calls it */
-#endif
 
-#ifdef __MACOS9__
 /* Map a NetSurf MIME string to a Mac type/creator pair. Best-effort -
  * anything not recognised falls back to 'BINA' / '????'. */
 static void
@@ -214,16 +212,255 @@ macos9_download_status(struct gui_download_window *dw, const char *msg)
 
 /* ── Manager window ─────────────────────────────────────────────── */
 
+#ifdef __MACOS9__
+static void c_to_pstring(const char *src, unsigned char *dest)
+{
+	size_t len;
+	if (src == NULL) { dest[0] = 0; return; }
+	len = strlen(src);
+	if (len > 255) len = 255;
+	dest[0] = (unsigned char)len;
+	memcpy(dest + 1, src, len);
+}
+
+static void dl_open_spec(const FSSpec *spec)
+{
+	AEAddressDesc target;
+	AppleEvent ae, reply;
+	AEDescList docList;
+	OSType finderCreator = 'FNDR';
+	OSErr err;
+
+	err = AECreateDesc(typeApplSignature, &finderCreator, sizeof(OSType), &target);
+	if (err != noErr) return;
+
+	err = AECreateAppleEvent(kCoreEventClass, kAEOpenDocuments,
+		&target, kAutoGenerateReturnID, kAnyTransactionID, &ae);
+	AEDisposeDesc(&target);
+	if (err != noErr) return;
+
+	err = AECreateList(NULL, 0, false, &docList);
+	if (err == noErr) {
+		AEPutPtr(&docList, 1, typeFSS, spec, sizeof(FSSpec));
+		AEPutParamDesc(&ae, keyDirectObject, &docList);
+		AEDisposeDesc(&docList);
+	}
+
+	AESend(&ae, &reply, kAENoReply | kAENeverInteract,
+		kAENormalPriority, kAEDefaultTimeout, NULL, NULL);
+	AEDisposeDesc(&ae);
+}
+
+static void dl_mgr_open_folder(void)
+{
+	short vRef = 0;
+	long dirID = 0;
+	if (macos9_downloads_dir_get(&vRef, &dirID) == noErr) {
+		FSSpec folderSpec;
+		if (FSMakeFSSpec(vRef, dirID, "\p", &folderSpec) == noErr) {
+			dl_open_spec(&folderSpec);
+		}
+	}
+}
+
+static void dl_mgr_clear_finished(void)
+{
+	struct gui_download_window **curr = &g_dl_list;
+	while (*curr != NULL) {
+		struct gui_download_window *entry = *curr;
+		if (entry->dl_state != 0) {  /* Done or Stopped */
+			*curr = entry->dl_next;
+			free(entry);
+			g_dl_count--;
+		} else {
+			curr = &entry->dl_next;
+		}
+	}
+	if (g_dl_scroll_top > 0 && g_dl_count <= 5)
+		g_dl_scroll_top = 0;
+	dl_mgr_progress();
+}
+
+static void dl_format_bytes(unsigned long b, char *buf)
+{
+	if (b >= 1048576) {
+		unsigned long mb = b / 1048576;
+		unsigned long frac = ((b % 1048576) * 10) / 1048576;
+		sprintf(buf, "%lu.%lu MB", mb, frac);
+	} else if (b >= 1024) {
+		sprintf(buf, "%lu KB", b / 1024);
+	} else {
+		sprintf(buf, "%lu bytes", b);
+	}
+}
+
+static void dl_format_rate(unsigned long bps, char *buf)
+{
+	if (bps >= 1048576) {
+		unsigned long mb = bps / 1048576;
+		unsigned long frac = ((bps % 1048576) * 10) / 1048576;
+		sprintf(buf, "%lu.%lu MB/s", mb, frac);
+	} else if (bps >= 1024) {
+		sprintf(buf, "%lu KB/s", bps / 1024);
+	} else if (bps > 0) {
+		sprintf(buf, "%lu B/s", bps);
+	} else {
+		strcpy(buf, "-- KB/s");
+	}
+}
+
+static void dl_format_eta(const struct gui_download_window *dw, char *buf)
+{
+	if (dw->last_rate_bps > 0 && dw->bytes_written < dw->total_length) {
+		unsigned long rem = dw->total_length - dw->bytes_written;
+		unsigned long eta = rem / dw->last_rate_bps;
+		if (eta < 60)
+			sprintf(buf, "%lus left", eta);
+		else if (eta < 3600)
+			sprintf(buf, "%lum %lus left", eta / 60, eta % 60);
+		else
+			sprintf(buf, "%luh %lum left", eta / 3600, (eta % 3600) / 60);
+	} else {
+		strcpy(buf, "-- left");
+	}
+}
+
+static void dl_draw_btn(const Rect *r, const unsigned char *pstr, int pressed)
+{
+	RGBColor wht, blk, med, drk;
+	short tw, tx, ty;
+	wht.red = wht.green = wht.blue = 0xFFFF;
+	blk.red = blk.green = blk.blue = 0;
+	med.red = 0xDDDD; med.green = 0xDDDD; med.blue = 0xDDDD;
+	drk.red = 0x8888; drk.green = 0x8888; drk.blue = 0x8888;
+
+	RGBForeColor(pressed ? &drk : &med);
+	PaintRoundRect(r, 6, 6);
+
+	/* highlight top-left */
+	RGBForeColor(pressed ? &blk : &wht);
+	MoveTo((short)(r->left + 1), (short)(r->bottom - 2));
+	LineTo((short)(r->left + 1), (short)(r->top + 1));
+	LineTo((short)(r->right - 2), (short)(r->top + 1));
+
+	/* shadow bottom-right */
+	RGBForeColor(pressed ? &wht : &drk);
+	MoveTo((short)(r->left + 2), (short)(r->bottom - 1));
+	LineTo((short)(r->right - 1), (short)(r->bottom - 1));
+	LineTo((short)(r->right - 1), (short)(r->top + 2));
+
+	/* border */
+	RGBForeColor(&blk);
+	FrameRoundRect(r, 6, 6);
+
+	/* label */
+	TextFont(1); TextFace(normal); TextSize(10);
+	tw = StringWidth(pstr);
+	tx = (short)(r->left + (r->right - r->left - tw) / 2);
+	ty = (short)(r->top + (r->bottom - r->top) / 2 + 3);
+	if (pressed) { tx++; ty++; }
+	MoveTo(tx, ty);
+	DrawString(pstr);
+}
+
+static void dl_draw_progress_bar(const Rect *bar, unsigned long written, unsigned long total, int state)
+{
+	Rect inner, fill;
+	RGBColor c_border, c_bg, c_hi, c_sh, c_fill_top, c_fill_bot;
+	int fill_w = 0;
+	int bar_w = bar->right - bar->left - 2;
+
+	c_border.red = 0x6666; c_border.green = 0x6666; c_border.blue = 0x6666;
+	c_bg.red = 0xEAEA; c_bg.green = 0xEAEA; c_bg.blue = 0xEAEA;
+	c_hi.red = 0xFFFF; c_hi.green = 0xFFFF; c_hi.blue = 0xFFFF;
+	c_sh.red = 0x9999; c_sh.green = 0x9999; c_sh.blue = 0x9999;
+
+	/* Outer border */
+	RGBForeColor(&c_border);
+	FrameRect(bar);
+
+	/* Inner sunken bevel */
+	inner = *bar;
+	InsetRect(&inner, 1, 1);
+	RGBForeColor(&c_bg);
+	PaintRect(&inner);
+
+	RGBForeColor(&c_sh);
+	MoveTo(inner.left, (short)(inner.bottom - 1));
+	LineTo(inner.left, inner.top);
+	LineTo((short)(inner.right - 1), inner.top);
+
+	RGBForeColor(&c_hi);
+	MoveTo((short)(inner.left + 1), (short)(inner.bottom - 1));
+	LineTo((short)(inner.right - 1), (short)(inner.bottom - 1));
+	LineTo((short)(inner.right - 1), (short)(inner.top + 1));
+
+	if (state == 1) {
+		/* Completed: full bar in forest green */
+		fill_w = bar_w;
+		c_fill_top.red = 0x5555; c_fill_top.green = 0xAAAA; c_fill_top.blue = 0x5555;
+		c_fill_bot.red = 0x3333; c_fill_bot.green = 0x8888; c_fill_bot.blue = 0x3333;
+	} else if (state == 2) {
+		/* Stopped / Failed: muted gray fill */
+		if (total > 0 && bar_w > 0)
+			fill_w = (int)((unsigned long long)bar_w * written / total);
+		if (fill_w > bar_w) fill_w = bar_w;
+		c_fill_top.red = 0xAAAA; c_fill_top.green = 0xAAAA; c_fill_top.blue = 0xAAAA;
+		c_fill_bot.red = 0x8888; c_fill_bot.green = 0x8888; c_fill_bot.blue = 0x8888;
+	} else {
+		/* Active */
+		if (total > 0 && bar_w > 0) {
+			fill_w = (int)((unsigned long long)bar_w * written / total);
+			if (fill_w > bar_w) fill_w = bar_w;
+		} else {
+			/* Indeterminate moving block */
+			int block_w = 36;
+			int offset = (int)((TickCount() * 2) % (unsigned long)(bar_w + block_w)) - block_w;
+			int left_x = inner.left + 1 + offset;
+			int right_x = left_x + block_w;
+			if (left_x < inner.left + 1) left_x = inner.left + 1;
+			if (right_x > inner.right - 1) right_x = inner.right - 1;
+			if (right_x > left_x) {
+				SetRect(&fill, (short)left_x, (short)(inner.top + 1),
+					(short)right_x, (short)(inner.bottom - 1));
+				c_fill_top.red = 0x6666; c_fill_top.green = 0x9999; c_fill_top.blue = 0xDDDD;
+				c_fill_bot.red = 0x3333; c_fill_bot.green = 0x6666; c_fill_bot.blue = 0xBBBB;
+				RGBForeColor(&c_fill_top);
+				PaintRect(&fill);
+				return;
+			}
+			return;
+		}
+		c_fill_top.red = 0x5555; c_fill_top.green = 0x8888; c_fill_top.blue = 0xDDDD;
+		c_fill_bot.red = 0x2222; c_fill_bot.green = 0x5555; c_fill_bot.blue = 0xAAAA;
+	}
+
+	if (fill_w > 0) {
+		short mid_y;
+		Rect ftop, fbot;
+		SetRect(&fill, (short)(inner.left + 1), (short)(inner.top + 1),
+			(short)(inner.left + 1 + fill_w), (short)(inner.bottom - 1));
+		mid_y = (short)(fill.top + (fill.bottom - fill.top) / 2);
+		SetRect(&ftop, fill.left, fill.top, fill.right, mid_y);
+		SetRect(&fbot, fill.left, mid_y, fill.right, fill.bottom);
+		RGBForeColor(&c_fill_top);
+		PaintRect(&ftop);
+		RGBForeColor(&c_fill_bot);
+		PaintRect(&fbot);
+	}
+}
+
 static void dl_mgr_ensure(void)
 {
-	Rect b;
+	Rect b, r_open_folder, r_clear, r_sb;
 	Str255 title;
 	const char *t = "Downloads";
 	size_t n;
 	if (g_dl_mgr_win != NULL) return;
-	SetRect(&b, 60, 250, 500, 460);
-	if (CreateNewWindow(kDocumentWindowClass, kWindowCloseBoxAttribute,
-			&b, &g_dl_mgr_win) != noErr) {
+	SetRect(&b, 100, 120, 640, 460);  /* 540 x 340 px */
+	if (CreateNewWindow(kDocumentWindowClass,
+			kWindowCloseBoxAttribute | kWindowCollapseBoxAttribute,
+			&b, &g_dl_mgr_win) != noErr || g_dl_mgr_win == NULL) {
 		g_dl_mgr_win = NULL;
 		return;
 	}
@@ -231,72 +468,202 @@ static void dl_mgr_ensure(void)
 	title[0] = (unsigned char)n;
 	memcpy(title + 1, t, n);
 	SetWTitle(g_dl_mgr_win, title);
+
+	/* Top toolbar native push buttons */
+	SetRect(&r_open_folder, 12, 40, 184, 64);
+	g_btn_open_folder = NewControl(g_dl_mgr_win, &r_open_folder,
+		"\pOpen Downloads Folder", true, 0, 0, 1, kControlPushButtonProc, 0);
+
+	SetRect(&r_clear, 192, 40, 302, 64);
+	g_btn_clear = NewControl(g_dl_mgr_win, &r_clear,
+		"\pClear Finished", true, 0, 0, 1, kControlPushButtonProc, 0);
+
+	/* Proportional scrollbar (non-live: kControlScrollBarLiveProc crashes on G3) */
+	SetRect(&r_sb, 510, 72, 528, 308);
+	g_dl_sb = NewControl(g_dl_mgr_win, &r_sb,
+		"\p", true, 0, 0, 0, kControlScrollBarProc, 0);
 }
 
-/* Paint the list into the current (already-set) port. */
+/* Paint the manager window into the current port */
 static void dl_mgr_paint(void)
 {
-	Rect pr;
+	Rect pr, list, list_fr;
 	struct gui_download_window *nd;
-	int shown = 0;
-	short cancel_x;
+	int shown = 0, cur = 0;
+	int n_active = 0, n_done = 0;
+	RGBColor blk, wht, sep, row_alt;
+	blk.red = blk.green = blk.blue = 0;
+	wht.red = wht.green = wht.blue = 0xFFFF;
+	sep.red = sep.green = sep.blue = 0xDDDD;
+	row_alt.red = row_alt.green = row_alt.blue = 0xF7F7;
+
 	if (g_dl_mgr_win == NULL) return;
 	GetWindowPortBounds(g_dl_mgr_win, &pr);
 	EraseRect(&pr);
-	TextFont(3);          /* Geneva */
-	TextSize(10);
-	TextFace(1);          /* bold (Style bit) */
-	MoveTo((short)(pr.left + 12), (short)(pr.top + 22));
-	DrawString("\pDownloads");
-	TextFace(0);          /* normal */
-	MoveTo((short)(pr.left + 8), (short)(pr.top + 30));
-	LineTo((short)(pr.right - 8), (short)(pr.top + 30));
-	if (g_dl_list == NULL) {
-		MoveTo((short)(pr.left + 12), (short)(pr.top + DL_ROW0_BASE));
-		DrawString("\p(no downloads yet)");
-		return;
+
+	/* Gold header banner */
+	macos9_chrome_mgr_header(&pr, "Downloads", 0);
+
+	/* Scrollbar update */
+	if (g_dl_sb != NULL) {
+		int maxtop = g_dl_count - 5;
+		if (maxtop < 0) maxtop = 0;
+		SetControlMaximum(g_dl_sb, (short)maxtop);
+		SetControlValue(g_dl_sb, (short)g_dl_scroll_top);
 	}
-	cancel_x = (short)(pr.right - DL_CANCEL_W - 6);
-	for (nd = g_dl_list; nd != NULL && shown < DL_ROWS_MAX;
-	     nd = nd->dl_next, shown++) {
-		char line[180];
-		size_t ln;
-		Rect tclip;
-		short y = (short)(pr.top + DL_ROW0_BASE + shown * DL_ROW_H);
-		if (nd->dl_state == 1) {
-			sprintf(line, "%s  -  Done (%lu bytes)",
-				nd->filename, nd->bytes_written);
-		} else if (nd->dl_state == 2) {
-			sprintf(line, "%s  -  Stopped (%lu bytes)",
-				nd->filename, nd->bytes_written);
-		} else if (nd->total_length > 0) {
-			sprintf(line, "%s  -  %lu / %lu",
-				nd->filename, nd->bytes_written,
-				nd->total_length);
-		} else {
-			sprintf(line, "%s  -  %lu bytes",
-				nd->filename, nd->bytes_written);
+
+	/* Draw native top controls */
+	DrawControls(g_dl_mgr_win);
+
+	/* List Container */
+	SetRect(&list, 12, 72, 510, 308);
+	list_fr = list;
+	InsetRect(&list_fr, -1, -1);
+	RGBForeColor(&blk);
+	FrameRect(&list_fr);
+
+	if (g_dl_list == NULL || g_dl_count == 0) {
+		RGBColor bg;
+		bg.red = bg.green = bg.blue = 0xFAFA;
+		RGBForeColor(&bg);
+		PaintRect(&list);
+		RGBForeColor(&blk);
+		TextFont(1); TextFace(bold); TextSize(13);
+		MoveTo((short)(list.left + 155), (short)(list.top + 95));
+		DrawString("\pNo active downloads");
+		TextFace(normal); TextSize(11);
+		MoveTo((short)(list.left + 95), (short)(list.top + 120));
+		DrawString("\pFiles downloaded from web pages will be saved to your");
+		MoveTo((short)(list.left + 130), (short)(list.top + 138));
+		DrawString("\p\"MacSurf Downloads\" folder and shown here.");
+	} else {
+		RgnHandle saveclip = NewRgn();
+		GetClip(saveclip);
+		ClipRect(&list);
+
+		/* Count active and done */
+		for (nd = g_dl_list; nd != NULL; nd = nd->dl_next) {
+			if (nd->dl_state == 0) n_active++;
+			else if (nd->dl_state == 1) n_done++;
 		}
-		ln = strlen(line);
-		if (ln > 179) ln = 179;
-		/* Clip the row text so it can't run under the Cancel box. */
-		tclip = pr;
-		tclip.right = (nd->dl_state == 0) ?
-			(short)(cancel_x - 6) : (short)(pr.right - 6);
-		ClipRect(&tclip);
-		MoveTo((short)(pr.left + 12), y);
-		DrawText(line, 0, (short)ln);
-		ClipRect(&pr);
-		if (nd->dl_state == 0) {
-			Rect cb;
-			cb.left = cancel_x;
-			cb.top = (short)(y - 12);
-			cb.right = (short)(pr.right - 6);
-			cb.bottom = (short)(y + 3);
-			FrameRect(&cb);
-			MoveTo((short)(cancel_x + 6), y);
-			DrawString("\pCancel");
+
+		/* Skip to scroll position */
+		for (nd = g_dl_list; nd != NULL && cur < g_dl_scroll_top; nd = nd->dl_next)
+			cur++;
+
+		for (; nd != NULL && shown < 5; nd = nd->dl_next, shown++) {
+			short y = (short)(list.top + shown * 46);
+			Rect r_row, r_dot, r_bar;
+			Rect col_fn, col_det;
+			RGBColor dot_col;
+			char b_cur[32], b_tot[32], r_str[32], eta_str[32], det[160];
+
+			/* Row background */
+			SetRect(&r_row, list.left, y, list.right, (short)(y + 46));
+			RGBForeColor(shown % 2 == 0 ? &wht : &row_alt);
+			PaintRect(&r_row);
+
+			/* Row separator */
+			RGBForeColor(&sep);
+			MoveTo(list.left, (short)(y + 45));
+			LineTo(list.right, (short)(y + 45));
+
+			/* Status dot */
+			SetRect(&r_dot, (short)(list.left + 8), (short)(y + 8),
+				(short)(list.left + 16), (short)(y + 16));
+			if (nd->dl_state == 0) {
+				dot_col.red = 0x2020; dot_col.green = 0x7070; dot_col.blue = 0xEEEE;
+			} else if (nd->dl_state == 1) {
+				dot_col.red = 0x3030; dot_col.green = 0xCCCC; dot_col.blue = 0x3030;
+			} else {
+				dot_col.red = 0xDDDD; dot_col.green = 0x3030; dot_col.blue = 0x3030;
+			}
+			RGBForeColor(&dot_col);
+			PaintOval(&r_dot);
+
+			/* Filename */
+			TextFont(1); TextFace(bold); TextSize(12);
+			RGBForeColor(&blk);
+			SetRect(&col_fn, (short)(list.left + 22), (short)y,
+				(short)(list.right - 145), (short)(y + 20));
+			ClipRect(&col_fn);
+			MoveTo((short)(list.left + 22), (short)(y + 16));
+			DrawText(nd->filename, 0, (short)strlen(nd->filename));
+			ClipRect(&list);
+
+			/* Action buttons on the right */
+			if (nd->dl_state == 0) {
+				Rect r_cancel;
+				SetRect(&r_cancel, (short)(list.right - 68), (short)(y + 11),
+					(short)(list.right - 8), (short)(y + 35));
+				dl_draw_btn(&r_cancel, "\pCancel", 0);
+			} else if (nd->dl_state == 1) {
+				Rect r_reveal, r_open;
+				SetRect(&r_reveal, (short)(list.right - 134), (short)(y + 11),
+					(short)(list.right - 72), (short)(y + 35));
+				SetRect(&r_open, (short)(list.right - 68), (short)(y + 11),
+					(short)(list.right - 8), (short)(y + 35));
+				dl_draw_btn(&r_reveal, "\pReveal", 0);
+				dl_draw_btn(&r_open, "\pOpen", 0);
+			} else {
+				RGBColor redc;
+				redc.red = 0xCCCC; redc.green = 0x3333; redc.blue = 0x3333;
+				RGBForeColor(&redc);
+				TextFont(1); TextFace(italic); TextSize(11);
+				MoveTo((short)(list.right - 62), (short)(y + 24));
+				DrawString("\pStopped");
+				TextFace(normal);
+			}
+
+			/* Progress Bar */
+			SetRect(&r_bar, (short)(list.left + 22), (short)(y + 23),
+				(short)(list.left + 182), (short)(y + 36));
+			dl_draw_progress_bar(&r_bar, nd->bytes_written, nd->total_length, nd->dl_state);
+
+			/* Progress details text */
+			dl_format_bytes(nd->bytes_written, b_cur);
+			if (nd->dl_state == 1) {
+				sprintf(det, "%s - Completed", b_cur);
+			} else if (nd->dl_state == 2) {
+				sprintf(det, "%s - Stopped", b_cur);
+			} else {
+				dl_format_rate(nd->last_rate_bps, r_str);
+				if (nd->total_length > 0) {
+					dl_format_bytes(nd->total_length, b_tot);
+					dl_format_eta(nd, eta_str);
+					sprintf(det, "%s of %s (%s, %s)", b_cur, b_tot, r_str, eta_str);
+				} else {
+					sprintf(det, "%s (%s)", b_cur, r_str);
+				}
+			}
+
+			RGBForeColor(&blk);
+			TextFont(1); TextFace(normal); TextSize(10);
+			SetRect(&col_det, (short)(list.left + 190), (short)(y + 22),
+				(short)(list.right - 142), (short)(y + 38));
+			ClipRect(&col_det);
+			MoveTo((short)(list.left + 190), (short)(y + 33));
+			DrawText(det, 0, (short)strlen(det));
+			ClipRect(&list);
 		}
+
+		SetClip(saveclip);
+		DisposeRgn(saveclip);
+	}
+
+	/* Footer status line */
+	RGBForeColor(&blk);
+	TextFont(1); TextFace(normal); TextSize(10);
+	MoveTo(14, 326);
+	DrawString("\pFolder: MacSurf Downloads");
+
+	if (g_dl_count > 0) {
+		char sum_str[64];
+		Str255 psum;
+		sprintf(sum_str, "%d active, %d finished", n_active, n_done);
+		c_to_pstring(sum_str, psum);
+		MoveTo((short)(list.right - StringWidth(psum)), 326);
+		DrawString(psum);
 	}
 }
 
@@ -336,6 +703,12 @@ static void dl_mgr_show(void)
 void macos9_download_mgr_show(void)
 {
 	dl_mgr_show();
+}
+
+void macos9_download_mgr_hide(void)
+{
+	if (g_dl_mgr_win != NULL && IsWindowVisible(g_dl_mgr_win))
+		HideWindow(g_dl_mgr_win);
 }
 
 /* Direct (non-update) repaint used for live progress. Clipped to the
@@ -406,20 +779,21 @@ void macos9_download_mgr_click(short part, Point where)
 #ifdef __MACOS9__
 	if (g_dl_mgr_win == NULL) return;
 	if (part == inDrag) {
-		Rect b;
-		b.left = -32000; b.top = -32000;
-		b.right = 32000; b.bottom = 32000;
-		DragWindow(g_dl_mgr_win, where, &b);
+		BitMap sbmp;
+		Rect db;
+		GetQDGlobalsScreenBits(&sbmp);
+		db = sbmp.bounds;
+		DragWindow(g_dl_mgr_win, where, &db);
 	} else if (part == inGoAway) {
 		if (TrackGoAway(g_dl_mgr_win, where))
 			HideWindow(g_dl_mgr_win);
 	} else if (part == inContent) {
 		GrafPtr saved;
 		Point p = where;
-		struct gui_download_window *nd;
-		int shown = 0;
-		short cancel_x;
-		Rect pr;
+		ControlRef hit_ctrl = NULL;
+		short cpart;
+		Rect list;
+
 		if (g_dl_mgr_win != FrontWindow()) {
 			SelectWindow(g_dl_mgr_win);
 			return;
@@ -427,17 +801,73 @@ void macos9_download_mgr_click(short part, Point where)
 		GetPort(&saved);
 		SetPortWindowPort(g_dl_mgr_win);
 		GlobalToLocal(&p);
-		GetWindowPortBounds(g_dl_mgr_win, &pr);
-		cancel_x = (short)(pr.right - DL_CANCEL_W - 6);
-		for (nd = g_dl_list; nd != NULL && shown < DL_ROWS_MAX;
-		     nd = nd->dl_next, shown++) {
-			short y = (short)(pr.top + DL_ROW0_BASE +
-					shown * DL_ROW_H);
-			if (nd->dl_state == 0 &&
-			    p.v >= (short)(y - 12) && p.v <= (short)(y + 3) &&
-			    p.h >= cancel_x && p.h <= (short)(pr.right - 6)) {
-				dl_cancel(nd);
-				break;
+
+		/* 1. Check top controls & scrollbar */
+		cpart = FindControl(p, g_dl_mgr_win, &hit_ctrl);
+		if (cpart != 0 && hit_ctrl != NULL) {
+			if (hit_ctrl == g_dl_sb) {
+				short code = TrackControl(g_dl_sb, p, NULL);
+				if (code != 0) {
+					g_dl_scroll_top = GetControlValue(g_dl_sb);
+					dl_mgr_paint();
+				}
+			} else if (TrackControl(hit_ctrl, p, NULL) != 0) {
+				if (hit_ctrl == g_btn_open_folder) {
+					dl_mgr_open_folder();
+				} else if (hit_ctrl == g_btn_clear) {
+					dl_mgr_clear_finished();
+				}
+			}
+			SetPort(saved);
+			return;
+		}
+
+		/* 2. Check list row action clicks */
+		SetRect(&list, 12, 72, 510, 308);
+		if (p.h >= list.left && p.h <= list.right &&
+		    p.v >= list.top && p.v <= list.bottom) {
+			int row_idx = (p.v - list.top) / 46;
+			int target_idx = g_dl_scroll_top + row_idx;
+			struct gui_download_window *nd = g_dl_list;
+			int cur = 0;
+			while (nd != NULL && cur < target_idx) {
+				nd = nd->dl_next;
+				cur++;
+			}
+			if (nd != NULL) {
+				short y = (short)(list.top + row_idx * 46);
+				if (nd->dl_state == 0) {
+					Rect r_cancel;
+					SetRect(&r_cancel, (short)(list.right - 68), (short)(y + 11),
+						(short)(list.right - 8), (short)(y + 35));
+					if (PtInRect(p, &r_cancel)) {
+						dl_draw_btn(&r_cancel, "\pCancel", 1);
+						dl_cancel(nd);
+					}
+				} else if (nd->dl_state == 1) {
+					Rect r_reveal, r_open;
+					SetRect(&r_reveal, (short)(list.right - 134), (short)(y + 11),
+						(short)(list.right - 72), (short)(y + 35));
+					SetRect(&r_open, (short)(list.right - 68), (short)(y + 11),
+						(short)(list.right - 8), (short)(y + 35));
+					if (PtInRect(p, &r_reveal)) {
+						dl_draw_btn(&r_reveal, "\pReveal", 1);
+						dl_mgr_open_folder();
+						dl_mgr_paint();
+					} else if (PtInRect(p, &r_open)) {
+						dl_draw_btn(&r_open, "\pOpen", 1);
+						dl_open_spec(&nd->fsspec);
+						dl_mgr_paint();
+					} else {
+						/* Double click anywhere on row opens the file */
+						unsigned long now = TickCount();
+						if (g_last_click_row == target_idx && (now - g_last_click_time) <= GetDblTime()) {
+							dl_open_spec(&nd->fsspec);
+						}
+						g_last_click_row = target_idx;
+						g_last_click_time = now;
+					}
+				}
 			}
 		}
 		SetPort(saved);
@@ -477,8 +907,14 @@ macos9_download_create(struct download_context *ctx,
 	dw->dl_state = 0;
 	dw->dl_next = NULL;
 	dw->dl_ctx = ctx;   /* fixes646: kept so Cancel can abort the fetch */
+	dw->start_ticks = 0;
+	dw->last_rate_ticks = 0;
+	dw->last_rate_bytes = 0;
+	dw->last_rate_bps = 0;
 
 #ifdef __MACOS9__
+	dw->start_ticks = TickCount();
+	dw->last_rate_ticks = dw->start_ticks;
 	suggested = download_context_get_filename(ctx);
 	mime = download_context_get_mime_type(ctx);
 	total_ll = download_context_get_total_length(ctx);
@@ -561,6 +997,7 @@ macos9_download_data(struct gui_download_window *dw,
 #ifdef __MACOS9__
 	long count;
 	OSErr err;
+	unsigned long now_ticks;
 #endif
 
 	if (dw == NULL) return NSERROR_OK;
@@ -585,6 +1022,15 @@ macos9_download_data(struct gui_download_window *dw,
 	/* Throttle UI updates to ~every 16 KB. */
 	if ((dw->bytes_written & 0x3FFFul) < (unsigned long)size) {
 		char status[128];
+		now_ticks = TickCount();
+		if (now_ticks >= dw->last_rate_ticks + 30) {
+			unsigned long dt = now_ticks - dw->last_rate_ticks;
+			unsigned long db = dw->bytes_written - dw->last_rate_bytes;
+			if (dt > 0)
+				dw->last_rate_bps = (db * 60) / dt;
+			dw->last_rate_ticks = now_ticks;
+			dw->last_rate_bytes = dw->bytes_written;
+		}
 		if (dw->total_length > 0) {
 			sprintf(status,
 				"Downloading %s: %lu of %lu bytes",
@@ -678,3 +1124,4 @@ static struct gui_download_table download_table = {
 };
 
 struct gui_download_table *macos9_download_table = &download_table;
+#endif /* __MACOS9__ */

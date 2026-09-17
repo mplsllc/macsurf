@@ -1775,7 +1775,7 @@ static void mgr_icon_ensure(int id)
 /* fixes742/745 - a shiny gold gradient title banner across the top of a manager
  * window, with an icon (id 1=History, 2=Bookmarks, 0=none) + bold white title.
  * content is the window's local rect. */
-static void chrome_mgr_header(const Rect *content, const char *title, int icon)
+void macos9_chrome_mgr_header(const Rect *content, const char *title, int icon)
 {
 	Rect band;
 	Rect ln;
@@ -1832,6 +1832,7 @@ static void chrome_mgr_header(const Rect *content, const char *title, int icon)
 	}
 	RGBForeColor(&saved_fg);
 }
+#define chrome_mgr_header macos9_chrome_mgr_header
 
 /* fixes742 - shiny rounded button: a light top-lit gradient clipped to the
  * round-rect, a crisp frame, centred label. */
@@ -2503,6 +2504,7 @@ void macos9_history_window_show(struct gui_window *g)
 
 #else  /* !__MACOS9__ */
 void macos9_history_window_show(struct gui_window *g) { (void)g; }
+void macos9_chrome_mgr_header(const Rect *content, const char *title, int icon) { (void)content; (void)title; (void)icon; }
 #endif
 
 /* ====================================================================
