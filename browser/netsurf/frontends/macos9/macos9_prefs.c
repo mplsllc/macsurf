@@ -304,9 +304,8 @@ static WindowRef g_prefs_open_win = NULL;
 
 struct prefs_win {
 	WindowRef win;
-	/* category selector */
-	ControlRef pp_cat;
-	MenuHandle m_cat;
+	/* category selector tabs */
+	ControlRef tabs;
 	int cat;
 	/* General */
 	TEHandle te_home;
@@ -348,7 +347,7 @@ struct prefs_win {
 static const Rect s_btn_defaults_rect     = { 358,  20, 382, 144 };
 static const Rect s_btn_cancel_rect       = { 358, 276, 382, 356 };
 static const Rect s_btn_ok_rect           = { 358, 372, 382, 460 };
-static const Rect s_pp_cat_rect           = {  48, 330,  70, 460 };
+static const Rect s_tabs_rect             = {  42,  12, 348, 468 };
 
 /* General panel */
 static const Rect s_te_home_rect          = {  88,  24, 110, 456 };
@@ -380,7 +379,6 @@ static const Rect s_btn_hist_rect         = { 230, 175, 254, 310 };
 static const Rect s_pp_fetch_rect         = {  88, 280, 110, 380 };
 static const Rect s_pp_perhost_rect       = { 152, 280, 174, 380 };
 
-#define PREFS_MENU_ID_CAT     260
 #define PREFS_MENU_ID_FONT    261
 #define PREFS_MENU_ID_MINFONT 262
 #define PREFS_MENU_ID_FETCH   263
@@ -497,6 +495,28 @@ static void prefs_popup_attach(ControlRef c, MenuHandle m)
 		kControlPopupButtonMenuHandleTag, sizeof(m), &m);
 }
 
+static ControlRef prefs_create_tabs(WindowRef win, const Rect *r,
+		const char **labels, int count, int initial_tab)
+{
+	ControlRef c;
+	int i;
+	if (initial_tab < 1) initial_tab = 1;
+	if (initial_tab > count) initial_tab = count;
+	c = NewControl(win, r, "\p", true, 0, 1, (short)count,
+		kControlTabLargeProc, 0);
+	if (c == NULL) return NULL;
+	for (i = 1; i <= count; i++) {
+		ControlTabInfoRec info;
+		info.version = kControlTabInfoVersionZero;
+		info.iconSuiteID = 0;
+		c_to_pstring(labels[i - 1], info.name);
+		SetControlData(c, (ControlPartCode)i, kControlTabInfoTag,
+			sizeof(info), (Ptr)&info);
+	}
+	SetControlValue(c, (short)initial_tab);
+	return c;
+}
+
 static ControlRef prefs_create_popup(WindowRef win, const Rect *r,
 		MenuHandle m, int count, int initial_item)
 {
@@ -548,19 +568,7 @@ static MenuHandle prefs_popup_menu(const struct prefs_popup_def *def, short id)
 	return m;
 }
 
-static MenuHandle prefs_cat_menu(void)
-{
-	MenuHandle m;
-	int i;
-	m = NewMenu(PREFS_MENU_ID_CAT, "\pShow:");
-	if (m == NULL) return NULL;
-	for (i = 0; i < PREFS_CAT_COUNT; i++) {
-		unsigned char pstr[256];
-		c_to_pstring(s_lbl_cat[i], pstr);
-		AppendMenu(m, pstr);
-	}
-	return m;
-}
+
 
 static void prefs_set_val(ControlRef c, int v)
 {
@@ -649,7 +657,9 @@ static void prefs_set_cat(struct prefs_win *pw, int cat)
 	if (cat < 0 || cat >= PREFS_CAT_COUNT) return;
 	if (cat == pw->cat) return;
 	pw->cat = cat;
-	prefs_popup_set_item(pw->pp_cat, pw->m_cat, cat + 1);
+	if (pw->tabs != NULL) {
+		SetControlValue(pw->tabs, (short)(cat + 1));
+	}
 	prefs_panel_vis(pw);
 	SetRect(&r, 0, PREFS_PANEL_TOP, PREFS_W_W, PREFS_PANEL_BOT);
 	InvalWindowRect(pw->win, &r);
@@ -814,7 +824,8 @@ static void prefs_load_values(struct prefs_win *pw)
 	prefs_popup_set_item(pw->pp_fetch,   pw->m_fetch,   prefs_popup_item(&s_popup_fetch, nsoption_int(max_fetchers)));
 	prefs_popup_set_item(pw->pp_perhost, pw->m_perhost, prefs_popup_item(&s_popup_perhost, nsoption_int(max_fetchers_per_host)));
 
-	prefs_popup_set_item(pw->pp_cat, pw->m_cat, pw->cat + 1);
+	if (pw->tabs != NULL)
+		SetControlValue(pw->tabs, (short)(pw->cat + 1));
 }
 
 /* Reset UI controls to factory defaults without modifying live nsoptions */
@@ -900,12 +911,6 @@ static void prefs_paint(struct prefs_win *pw)
 
 	GetForeColor(&saved);
 
-	/* Category label */
-	RGBForeColor(&black_c);
-	TextFont(1); TextFace(normal); TextSize(12);
-	MoveTo(290, 64);
-	DrawString("\pShow:");
-
 	/* Bottom separator line */
 	RGBForeColor(&sep_c);
 	MoveTo(0, PREFS_PANEL_BOT + 2);
@@ -920,6 +925,10 @@ static void prefs_paint(struct prefs_win *pw)
 		FrameRoundRect(&ok_ring, 16, 16);
 		PenSize(1, 1);
 	}
+
+	/* Draw controls: category tabs frame & visible panel controls */
+	RGBForeColor(&saved);
+	DrawControls(pw->win);
 
 	/* Category content labels and descriptions */
 	switch (pw->cat) {
@@ -1015,14 +1024,9 @@ static void prefs_paint(struct prefs_win *pw)
 		break;
 	}
 
-	RGBForeColor(&saved);
-	DrawControls(pw->win);
-
 	/* Draw popup button labels directly to guarantee crisp 12pt Geneva text */
 	TextFont(1); TextFace(normal); TextSize(12);
 	RGBForeColor(&black_c);
-	MoveTo(338, 64);
-	DrawText(s_lbl_cat[pw->cat], 0, (short)strlen(s_lbl_cat[pw->cat]));
 
 	if (pw->cat == PREFS_CAT_APPEAR) {
 		int fi = prefs_popup_item(&s_popup_font, nsoption_int(font_size)) - 1;
@@ -1090,25 +1094,7 @@ static void prefs_do_popup(ControlRef c, MenuHandle m, Point lp)
 	}
 }
 
-static void prefs_do_popup_cat(struct prefs_win *pw, Point lp)
-{
-	short cur;
-	Rect cr;
-	Point gpt;
-	long chosen;
-	(void)lp;
-	if (pw->pp_cat == NULL || pw->m_cat == NULL) return;
-	cur = GetControlValue(pw->pp_cat);
-	GetControlBounds(pw->pp_cat, &cr);
-	gpt.h = cr.left;
-	gpt.v = cr.top;
-	LocalToGlobal(&gpt);
-	chosen = PopUpMenuSelect(pw->m_cat, gpt.v, gpt.h, cur);
-	if (chosen != 0) {
-		SetControlValue(pw->pp_cat, (short)(chosen & 0xFFFF));
-		prefs_set_cat(pw, (int)(chosen & 0xFFFF) - 1);
-	}
-}
+
 
 static void prefs_check_toggle(ControlRef c, Point lp)
 {
@@ -1191,9 +1177,15 @@ static int prefs_click(struct prefs_win *pw, Point lp)
 		return 0;
 	}
 
-	/* Category popup */
-	if (PtInRect(lp, &s_pp_cat_rect)) {
-		prefs_do_popup_cat(pw, lp);
+	/* Category tabs (header row y: 42..68) */
+	if (PtInRect(lp, &s_tabs_rect) && lp.v < 70) {
+		part = TrackControl(pw->tabs, lp, NULL);
+		if (part != 0) {
+			short new_cat = GetControlValue(pw->tabs);
+			if (new_cat >= 1 && new_cat <= PREFS_CAT_COUNT) {
+				prefs_set_cat(pw, new_cat - 1);
+			}
+		}
 		return 0;
 	}
 
@@ -1295,6 +1287,18 @@ static int prefs_key(struct prefs_win *pw, const EventRecord *ev)
 	char ch = (char)(ev->message & charCodeMask);
 	if (ev->modifiers & cmdKey) {
 		if (ch == '.' || ch == 'w' || ch == 'W') return 1;
+		if (ch == 0x1C) {  /* Cmd-Left Arrow: previous tab */
+			int c = pw->cat - 1;
+			if (c < 0) c = PREFS_CAT_COUNT - 1;
+			prefs_set_cat(pw, c);
+			return 0;
+		}
+		if (ch == 0x1D) {  /* Cmd-Right Arrow: next tab */
+			int c = pw->cat + 1;
+			if (c >= PREFS_CAT_COUNT) c = 0;
+			prefs_set_cat(pw, c);
+			return 0;
+		}
 		return 0;
 	}
 	if (ch == 0x1B) return 1;  /* Esc = cancel */
@@ -1349,9 +1353,8 @@ void macos9_prefs_show(void)
 	pw.btn_cancel   = prefs_create_button(pw.win, &s_btn_cancel_rect, "Cancel");
 	pw.btn_ok       = prefs_create_button(pw.win, &s_btn_ok_rect, "OK");
 
-	/* Category picker */
-	pw.m_cat = prefs_cat_menu();
-	pw.pp_cat = prefs_create_popup(pw.win, &s_pp_cat_rect, pw.m_cat,
+	/* Category tabs (created before panel controls to establish container frame) */
+	pw.tabs = prefs_create_tabs(pw.win, &s_tabs_rect, s_lbl_cat,
 		PREFS_CAT_COUNT, pw.cat + 1);
 
 	/* General panel controls */
@@ -1480,7 +1483,7 @@ void macos9_prefs_show(void)
 	prefs_disp_ctrl(pw.btn_defaults);
 	prefs_disp_ctrl(pw.btn_cancel);
 	prefs_disp_ctrl(pw.btn_ok);
-	prefs_disp_ctrl(pw.pp_cat);
+	prefs_disp_ctrl(pw.tabs);
 	prefs_disp_ctrl(pw.btn_home_current);
 	prefs_disp_ctrl(pw.btn_home_default);
 	prefs_disp_ctrl(pw.ck_images);
@@ -1500,7 +1503,6 @@ void macos9_prefs_show(void)
 	prefs_disp_ctrl(pw.pp_perhost);
 
 	/* Dispose menus */
-	prefs_disp_menu(pw.m_cat);
 	prefs_disp_menu(pw.m_font);
 	prefs_disp_menu(pw.m_minfont);
 	prefs_disp_menu(pw.m_fetch);
