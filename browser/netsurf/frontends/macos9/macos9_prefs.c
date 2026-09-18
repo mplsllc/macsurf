@@ -232,7 +232,7 @@ const char *macos9_home_url(void)
 void macos9_prefs_apply_live(void)
 {
 	struct gui_window *g;
-	for (g = macos9_window_list_head(); g != NULL; g = g->next) {
+	for (g = macos9_window_list_head(); g != NULL; g = g->next_global) {
 		macos9_window_request_reformat(g);
 		macos9_window_invalidate_all(g);
 	}

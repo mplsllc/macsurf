@@ -6200,6 +6200,23 @@ static int qjs_geometry_scope_allowed(JSContext *ctx)
 	const char *url;
 	const char *path;
 
+	/* fixes1180 (#267) - enable geometry during user event tasks.
+	 *
+	 * Interactive widgets (XenForo menus, nav dropdowns, etc.) mutate the
+	 * DOM inside a click handler, then immediately measure the freshly
+	 * inserted element -- the standard measure/mutate idiom.  With geometry
+	 * globally off they get `undefined` for every metric and compute
+	 * `left:NaNpx`, positioning menus off-screen.
+	 *
+	 * Allowing geometry only during MACSURF_JS_TASK_EVENT captures exactly
+	 * these interactive bursts while leaving load-time scripts on the cheap
+	 * "refuse and return undefined" path.  The cost is one sync reconvert
+	 * per event (hardware-measured ~150ms on 68kMLA for the forum thread),
+	 * bounded by the 120s cumulative budget in macos9_reconvert.c.
+	 * Settle-once limits each CLICK to a single flush regardless of how many
+	 * geometry reads the event handler fires. */
+	if (g_qjs_task_kind == MACSURF_JS_TASK_EVENT) return 1;
+
 	if (c == NULL || c->llcache == NULL) return 0;
 	url = nsurl_access(content_get_url(c));
 	if (url == NULL) return 0;
@@ -10208,6 +10225,33 @@ static void qjs_dom_install(JSContext *ctx)
 			"Object.defineProperty(d,'head',{configurable:true,"
 			"get:function(){var n=d.__getHead();if(n)return n;"
 			"if(!_fbHead)_fbHead=mkfb('head');return _fbHead;}});"
+			/* fixes1180 (#267) - document.clientWidth/clientHeight.
+			 *
+			 * XF.viewport(m) where m=document calls a.clientWidth on the
+			 * document object.  Document is not an HTMLElement, so the
+			 * property is absent from its prototype chain and returns
+			 * undefined.  XF.viewport then computes {width:undefined,
+			 * right:undefined, ...} and every positioning formula yields
+			 * NaNpx.
+			 *
+			 * document.clientWidth is not standard (it lives on Element,
+			 * not Document) but some engines answer it as the viewport
+			 * width for scroll-root semantics.  The values innerWidth/
+			 * innerHeight are always correct: the viewport dimensions are
+			 * known at navigation time, not computed from layout. */
+			"if(!('clientWidth' in d)){"
+			"Object.defineProperty(d,'clientWidth',{configurable:true,"
+			"get:function(){return (typeof innerWidth==='number'"
+			"&&innerWidth)||980;}});"
+			"Object.defineProperty(d,'clientHeight',{configurable:true,"
+			"get:function(){return (typeof innerHeight==='number'"
+			"&&innerHeight)||600;}});"
+			"Object.defineProperty(d,'scrollLeft',{configurable:true,"
+			"get:function(){return (typeof scrollX==='number'&&scrollX)||0;},"
+			"set:function(){}}); "
+			"Object.defineProperty(d,'scrollTop',{configurable:true,"
+			"get:function(){return (typeof scrollY==='number'&&scrollY)||0;},"
+			"set:function(){}});}"
 			/* (XF-probe round, FormData crash) -- document must answer
 			 * "defaultView" (and the IE-era parentWindow) with the global
 			 * object.  editor-compiled.js (Froala v4, the 68kmla reply box)

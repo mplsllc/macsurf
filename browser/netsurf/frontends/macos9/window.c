@@ -29,6 +29,7 @@
 #endif
 
 static struct gui_window *window_list = NULL;
+static struct macos9_window *scaffold_list = NULL;
 static struct gui_window *macos9_window_create(struct browser_window *bw, struct gui_window *ex, gui_window_create_flags f);
 
 /* fixes294 - Phase 0 favicon plumbing.
@@ -190,8 +191,25 @@ static ControlRef macos9_hovered_btn = NULL;
 static GWorldPtr macos9_active_favicon_gworld = NULL;
 static Rect macos9_active_favicon_src_rect;
 
-struct gui_window *macos9_find_window(WindowRef w) { struct gui_window *g; for(g=window_list;g;g=g->next) if(g->window==w) return g; return NULL; }
+struct gui_window *macos9_find_window(WindowRef w) {
+	struct macos9_window *mw;
+	for (mw = scaffold_list; mw != NULL; mw = mw->next) {
+		if (mw->window == w) return mw->active_tab;
+	}
+	return NULL;
+}
+struct macos9_window *macos9_find_scaffold(WindowRef w) {
+	struct macos9_window *mw;
+	for (mw = scaffold_list; mw != NULL; mw = mw->next) {
+		if (mw->window == w) return mw;
+	}
+	return NULL;
+}
 struct gui_window *macos9_window_list_head(void) { return window_list; }
+struct macos9_window *macos9_scaffold_list_head(void) { return scaffold_list; }
+struct gui_window *macos9_scaffold_active_tab(struct macos9_window *mw) {
+	return mw ? mw->active_tab : NULL;
+}
 
 /* fixes612 - expose the front window's content viewport (device px) so the
  * core html_get_dimensions() media-query path has a real width even when the
@@ -203,9 +221,9 @@ void macos9_frontend_viewport(int *w, int *h)
 {
 	struct gui_window *g = window_list;
 	int vw = 0, vh = 0;
-	if (g != NULL) {
-		vw = g->content_rect.right - g->content_rect.left;
-		vh = g->content_rect.bottom - g->content_rect.top;
+	if (g != NULL && g->mw != NULL) {
+		vw = g->mw->content_rect.right - g->mw->content_rect.left;
+		vh = g->mw->content_rect.bottom - g->mw->content_rect.top;
 	}
 	if (w != NULL) *w = vw;
 	if (h != NULL) *h = vh;
@@ -341,6 +359,7 @@ void macos9_window_draw_toolbar_bg(struct gui_window *g)
 	RGBColor saved_fg;
 	GWorldPtr saved_port;
 	GDHandle saved_gdh;
+	short tab_top;
 
 	if (g == NULL || g->window == NULL) return;
 
@@ -349,8 +368,10 @@ void macos9_window_draw_toolbar_bg(struct gui_window *g)
 	GetForeColor(&saved_fg);
 
 	GetWindowBounds(g->window, 33, &w_bounds);
+	/* When multiple tabs are present, skip the tab strip area */
+	tab_top = (g->mw != NULL && g->mw->tab_count > 1) ? MACOS9_TAB_STRIP_H : 0;
 	bar.left = 0;
-	bar.top = 0;
+	bar.top = tab_top;
 	bar.right = (short)(w_bounds.right - w_bounds.left);
 	bar.bottom = (short)(g->content_rect.top);
 	macos9_tb_fill_gradient(&bar);
@@ -364,7 +385,7 @@ void macos9_window_draw_toolbar_bg(struct gui_window *g)
 		Rect line;
 		line.left = 0; line.right = bar.right;
 		/* top highlight */
-		line.top = 0; line.bottom = 1;
+		line.top = tab_top; line.bottom = (short)(tab_top + 1);
 		RGBForeColor(&hi); PaintRect(&line);
 		/* bottom shadow + separator */
 		line.top = (short)(bar.bottom - 2); line.bottom = (short)(bar.bottom - 1);
@@ -392,25 +413,20 @@ static void compute_favicon_rect(const Rect *u, Rect *o)
 }
 
 void macos9_window_layout(struct gui_window *g) {
-	Rect c; short w, h, ux, ur, cb, ht; if(!g||!g->window) return;
+	Rect c; short w, h, ux, ur, cb, ht; short tab_top;
+	if(!g||!g->window) return;
+	tab_top = (g->mw && g->mw->tab_count > 1) ? MACOS9_TAB_STRIP_H : 0;
 	GetWindowBounds(g->window, 33, &c); w=(short)(c.right-c.left); h=(short)(c.bottom-c.top);
-	/* fixes303/fixes723/fixes724 - dense "tool belt", 5 buttons (Back,
-	 * Forward, Stop, Refresh, Home). 36 wide at a 38-pixel pitch (2px gap),
-	 * so x=4,42,80,118,156 and the home button's right edge is 192. The URL
-	 * field sits 2px past it (x=194) aligned to the button band (y=6..42).
-	 * The 1px separator at y=47 (drawn by macos9_window_draw_toolbar_bg from
-	 * content_rect.top-1) closes the 48px toolbar. */
 	ux=(short)(4 + 4*38 + 36 + 2);
-	/* fixes726/fixes727 - reserve a 40px Netscape-style throbber slot on the
-	 * far right of the toolbar (8px gap from the URL field). Bigger than the
-	 * 36px buttons so it reads clearly; spans y=4..44 within the 48px bar. */
 	ur=(short)(w - 4 - MACOS9_LOADER_SIZE - 8);
-	if (ur < ux + 40) ur = (short)(ux + 40);   /* keep URL field usable on tiny windows */
-	SetRect(&g->url_rect, ux, 6, ur, 42);
-	SetRect(&g->loader_rect, (short)(w - 4 - MACOS9_LOADER_SIZE), 4,
-		(short)(w - 4), (short)(4 + MACOS9_LOADER_SIZE));
-	ht=(short)(h-15); cb=(short)(ht-16); SetRect(&g->content_rect, 0, 48, (short)(w-15), cb); SetRect(&g->status_rect, 0, cb, (short)(w-15), ht);
-	if(g->vscroll) { MoveControl(g->vscroll, (short)(w-15), 47); SizeControl(g->vscroll, 16, (short)(cb-46)); }
+	if (ur < ux + 40) ur = (short)(ux + 40);
+	SetRect(&g->url_rect, ux, (short)(tab_top + 6), ur, (short)(tab_top + 42));
+	SetRect(&g->loader_rect, (short)(w - 4 - MACOS9_LOADER_SIZE), (short)(tab_top + 4),
+		(short)(w - 4), (short)(tab_top + 4 + MACOS9_LOADER_SIZE));
+	ht=(short)(h-15); cb=(short)(ht-16);
+	SetRect(&g->content_rect, 0, (short)(tab_top + 48), (short)(w-15), cb);
+	SetRect(&g->status_rect, 0, cb, (short)(w-15), ht);
+	if(g->vscroll) { MoveControl(g->vscroll, (short)(w-15), (short)(tab_top + 47)); SizeControl(g->vscroll, 16, (short)(cb - tab_top - 46)); }
 	if(g->hscroll) { MoveControl(g->hscroll, -1, ht); SizeControl(g->hscroll, (short)(w-13), 16); }
 }
 
@@ -1261,7 +1277,7 @@ void macos9_window_resize(struct gui_window *g) {
 void macos9_windows_te_idle(void) {
 #ifdef __MACOS9__
 	struct gui_window *g; GrafPtr op; GetPort(&op);
-	for(g=window_list; g; g=g->next) { if(g->url_field_active && g->url_te) { SetPortWindowPort(g->window); TEIdle(g->url_te); } }
+	for(g=window_list; g; g=g->next_global) { if(g->url_field_active && g->url_te) { SetPortWindowPort(g->window); TEIdle(g->url_te); } }
 	SetPort(op);
 #endif
 }
@@ -1310,7 +1326,7 @@ void macos9_windows_process_deferred(void) {
 	/* reformat deferral - unchanged from the pre-366m baseline (RESIZE
 	 * sets needs_reformat; NetSurf's scheduler coalesces the actual
 	 * reformats). Must NOT be throttled (366m looped). */
-	for(g=window_list;g;g=g->next) if(g->needs_reformat && g->bw && !g->reformat_in_progress) {
+	for(g=window_list;g;g=g->next_global) if(g->needs_reformat && g->bw && !g->reformat_in_progress) {
 		g->reformat_in_progress=1; g->needs_reformat=0; browser_window_schedule_reformat(g->bw); g->reformat_in_progress=0;
 	}
 #ifdef __MACOS9__
@@ -1342,7 +1358,58 @@ struct gui_window *macos9_create_initial_window(void) {
 }
 
 static struct gui_window *macos9_window_create(struct browser_window *bw, struct gui_window *ex, gui_window_create_flags f) {
-	struct gui_window *g=(struct gui_window *)calloc(1,sizeof(*g)); Rect b; short x; if(!g) return NULL;
+	struct gui_window *g=(struct gui_window *)calloc(1,sizeof(*g));
+	struct macos9_window *mw=NULL;
+	Rect b; short x;
+	if(!g) return NULL;
+
+	/* Handle GW_CREATE_TAB: attach to existing scaffold */
+	if ((f & GW_CREATE_TAB) && ex != NULL && ex->mw != NULL) {
+		mw = ex->mw;
+		g->mw = mw;
+		/* Copy window handle and chrome refs from existing tab */
+		g->window = mw->window;
+		g->back_btn = mw->back_btn;
+		g->forward_btn = mw->forward_btn;
+		g->stop_btn = mw->stop_btn;
+		g->reload_btn = mw->reload_btn;
+		g->home_btn = mw->home_btn;
+		g->vscroll = mw->vscroll;
+		g->hscroll = mw->hscroll;
+		g->url_te = mw->url_te;
+		g->url_rect = mw->url_rect;
+		g->loader_rect = mw->loader_rect;
+		g->content_rect = mw->content_rect;
+		g->status_rect = mw->status_rect;
+		g->toolbar_rect = mw->toolbar_rect;
+		g->bw = bw;
+		g->url_field_active = 0;
+		/* Link into scaffold's tab list */
+		g->next = mw->tabs;
+		mw->tabs = g;
+		mw->tab_count++;
+		/* Link into global gui_window list */
+		g->next_global = window_list;
+		window_list = g;
+		/* Switch to the new tab */
+		mw->active_tab = g;
+		/* Show tab strip if now >1 tab */
+		if (mw->tab_count > 1) {
+			macos9_window_layout(g);
+			macos9_window_invalidate_all(g);
+		}
+		return g;
+	}
+
+	/* Create new scaffold + first tab */
+	mw = (struct macos9_window *)calloc(1, sizeof(*mw));
+	if (!mw) { free(g); return NULL; }
+	g->mw = mw;
+	mw->tab_count = 1;
+	mw->tabs = g;
+	mw->active_tab = g;
+	mw->next = scaffold_list;
+	scaffold_list = mw;
 	/* fixes124: open at desktop-class default size (1024x768)
 	 * so real-window-width media queries naturally match the
 	 * desktop branch on modern responsive sites. Clamped to
@@ -1403,9 +1470,11 @@ static struct gui_window *macos9_window_create(struct browser_window *bw, struct
 		bot = (short)(top + want_h);
 		SetRect(&b, left, top, right, bot);
 	}
-	g->bw=bw; if(CreateNewWindow(6, 0x1F, &b, &g->window)!=0) { free(g); return NULL; }
+	g->bw=bw; if(CreateNewWindow(6, 0x1F, &b, &g->window)!=0) { free(mw); free(g); return NULL; }
+	/* Set scaffold's canonical window ref too */
+	mw->window = g->window;
 	SetWRefCon(g->window,(long)g); SetPortWindowPort(g->window); SetWTitle(g->window,(const unsigned char*)"\pMacSurf");
-	g->next=window_list; window_list=g; 
+	g->next_global=window_list; window_list=g;
 	/* fixes300/fixes723 - 36x36 square buttons (was 32x32, ~12.5% bigger).
 	 * Vertically centered inside the 48-tall toolbar: top=6, bottom=42,
 	 * height=36. 2px gap → 38px pitch → x=4,42,80,118, home's right edge
@@ -1507,26 +1576,70 @@ static struct gui_window *macos9_window_create(struct browser_window *bw, struct
 	InvalWindowRect(g->window,&b);
 #endif
 	g->url_field_active=1; macos9_window_update_scrollbars(g); macos9_window_update_button_states(g);
+	/* Sync scaffold's canonical fields from the first tab (must be after
+	 * TENew and control creation so the scaffold gets real handles) */
+	mw->back_btn = g->back_btn;
+	mw->forward_btn = g->forward_btn;
+	mw->stop_btn = g->stop_btn;
+	mw->reload_btn = g->reload_btn;
+	mw->home_btn = g->home_btn;
+	mw->vscroll = g->vscroll;
+	mw->hscroll = g->hscroll;
+	mw->url_te = g->url_te;
+	mw->url_rect = g->url_rect;
+	mw->loader_rect = g->loader_rect;
+	mw->content_rect = g->content_rect;
+	mw->status_rect = g->status_rect;
+	mw->toolbar_rect = g->toolbar_rect;
 	return g;
 }
 
-void macos9_window_destroy(struct gui_window *g) { struct gui_window **p; for(p=&window_list;*p;p=&(*p)->next) if(*p==g) { *p=g->next; break; }
-	/* fixes523 - kill the reload-icon animation before freeing g.  The
-	 * tick (macos9_reload_anim_tick) reschedules itself every 200ms keyed
-	 * on this gui_window* and is gated only by the global
-	 * macos9_reload_animating flag.  If the window is torn down mid-load
-	 * (navigate away / content abort / close) before GW_EVENT_STOP_THROBBER
-	 * fires, a still-queued tick would fire against this freed g, deref
-	 * g->window / g->reload_btn (freed-struct read, the r4=1 signature),
-	 * and reschedule itself - driving repaint/re-entry against dead
-	 * content.  Clear the flag and drop EVERY scheduled callback owned by
-	 * g (cancel-by-owner, fixes517) so nothing can fire against it. */
+void macos9_window_destroy(struct gui_window *g) {
+	struct gui_window **p;
+	/* Unlink from global gui_window list */
+	for(p=&window_list;*p;p=&(*p)->next_global) if(*p==g) { *p=g->next_global; break; }
+	/* Unlink from scaffold's tab list */
+	if (g->mw != NULL) {
+		struct gui_window **tp;
+		for(tp=&g->mw->tabs; *tp; tp=&(*tp)->next) {
+			if(*tp==g) { *tp=g->next; break; }
+		}
+		g->mw->tab_count--;
+		if (g->mw->active_tab == g) {
+			g->mw->active_tab = g->mw->tabs;
+			if (g->mw->active_tab != NULL) {
+				macos9_window_layout(g->mw->active_tab);
+				macos9_window_invalidate_all(g->mw->active_tab);
+			}
+		}
+		/* If last tab in scaffold, destroy the scaffold too */
+		if (g->mw->tab_count <= 0) {
+			struct macos9_window *mw = g->mw;
+			/* Unlink scaffold from scaffold list */
+			{
+				struct macos9_window **sp;
+				for(sp=&scaffold_list; *sp; sp=&(*sp)->next) {
+					if(*sp==mw) { *sp=mw->next; break; }
+				}
+			}
+			macos9_reload_animating = 0;
+			macos9_schedule_cancel_owner(g);
+#ifdef __MACOS9__
+			if(g->content_gworld) { DisposeGWorld(g->content_gworld); g->content_gworld = NULL; }
+#endif
+			if(g->window) DisposeWindow(g->window);
+			free(mw);
+			free(g);
+			return;
+		}
+	}
 	macos9_reload_animating = 0;
 	macos9_schedule_cancel_owner(g);
 #ifdef __MACOS9__
 	if(g->content_gworld) { DisposeGWorld(g->content_gworld); g->content_gworld = NULL; }
 #endif
-	if(g->window) DisposeWindow(g->window); free(g); }
+	free(g);
+}
 /* fixes100 - honour NetSurf's per-update dirty rect.
  *
  * Pre-fixes100 this function logged the supplied rect and then
@@ -1598,7 +1711,7 @@ static void macos9_reload_anim_tick(void *p)
 	if (!macos9_reload_animating) return;
 	if (macos9_quitting) { macos9_reload_animating = 0; return; }
 	alive = 0;
-	for (w = window_list; w != NULL; w = w->next) {
+	for (w = window_list; w != NULL; w = w->next_global) {
 		if (w == g) { alive = 1; break; }
 	}
 	if (!alive || g == NULL) { macos9_reload_animating = 0; return; }
@@ -1703,6 +1816,13 @@ static void macos9__set_title_impl(struct gui_window *g, const char *t) {
 	p[0] = (unsigned char)out_l;
 	memcpy(p + 1, mac_buf, out_l);
 	SetWTitle(g->window, p);
+	/* Store title for tab strip display */
+	{
+		size_t tl = out_l;
+		if (tl > 255) tl = 255;
+		memcpy(g->title, mac_buf, tl);
+		g->title[tl] = '\0';
+	}
 	/* fixes698 (#47) - record the visit in the persistent history store.
 	 * This is the point where both the committed URL (from the browser
 	 * window) and the human page title are known; macos9_history_record
@@ -2755,6 +2875,261 @@ static void macos9_window_file_gadget_open(struct gui_window *gw,
 	(void)gw; (void)hl; (void)gadget;
 }
 #endif
+
+/* ---- Tab management ---------------------------------------------------- */
+
+/* Create a new tab in an existing scaffold.  The browser_window is already
+ * created by the caller (browser_window_create with BW_CREATE_TAB).  This
+ * function allocates the gui_window, links it into the scaffold, and
+ * returns it.  Does NOT switch to the new tab unless BG_CREATE_FOREGROUND. */
+struct gui_window *macos9_tab_create(struct macos9_window *mw,
+		struct browser_window *bw)
+{
+	struct gui_window *g;
+	if (mw == NULL || bw == NULL) return NULL;
+	g = (struct gui_window *)calloc(1, sizeof(*g));
+	if (g == NULL) return NULL;
+	g->mw = mw;
+	g->bw = bw;
+	/* Inherit scaffold's chrome refs */
+	g->window = mw->window;
+	g->back_btn = mw->back_btn;
+	g->forward_btn = mw->forward_btn;
+	g->stop_btn = mw->stop_btn;
+	g->reload_btn = mw->reload_btn;
+	g->home_btn = mw->home_btn;
+	g->vscroll = mw->vscroll;
+	g->hscroll = mw->hscroll;
+	g->url_te = mw->url_te;
+	g->url_rect = mw->url_rect;
+	g->loader_rect = mw->loader_rect;
+	g->content_rect = mw->content_rect;
+	g->status_rect = mw->status_rect;
+	g->toolbar_rect = mw->toolbar_rect;
+	/* Link into scaffold's tab list */
+	g->next = mw->tabs;
+	mw->tabs = g;
+	mw->tab_count++;
+	/* Link into global gui_window list */
+	g->next_global = window_list;
+	window_list = g;
+	/* Set WRefCon to point to the active tab (always the front one) */
+	SetWRefCon(g->window, (long)g);
+	MS_LOG("tab_create: new tab in scaffold %p, count=%d", (void *)mw, mw->tab_count);
+	return g;
+}
+
+/* Switch the active tab in a scaffold. */
+void macos9_tab_switch(struct macos9_window *mw, struct gui_window *new_tab)
+{
+	struct gui_window *old_tab;
+	if (mw == NULL || new_tab == NULL) return;
+	if (mw->active_tab == new_tab) return;  /* already active */
+	old_tab = mw->active_tab;
+	mw->active_tab = new_tab;
+	/* Update WRefCon so event dispatch finds the new active tab */
+	SetWRefCon(mw->window, (long)new_tab);
+	/* Synchronize shared chrome with the new tab's state */
+	if (new_tab->bw != NULL) {
+		struct nsurl *u = browser_window_access_url(new_tab->bw);
+		if (u != NULL) {
+			const char *s = nsurl_access(u);
+			if (s != NULL) {
+				TESetText(s, (long)strlen(s), mw->url_te);
+				TECalText(mw->url_te);
+			}
+		}
+		/* Restore the new tab's title */
+		if (new_tab->title[0] != '\0') {
+			Str255 p;
+			size_t len = strlen(new_tab->title);
+			if (len > 255) len = 255;
+			p[0] = (unsigned char)len;
+			memcpy(p + 1, new_tab->title, len);
+			SetWTitle(mw->window, p);
+		}
+	}
+	/* Show/hide tab strip */
+	macos9_window_layout(new_tab);
+	macos9_window_invalidate_all(new_tab);
+	macos9_window_update_button_states(new_tab);
+	macos9_window_update_scrollbars(new_tab);
+}
+
+/* Destroy a scaffold and all its tabs. */
+void macos9_scaffold_destroy(struct macos9_window *mw)
+{
+	struct gui_window *g, *next;
+	if (mw == NULL) return;
+	/* Destroy all tabs */
+	g = mw->tabs;
+	while (g != NULL) {
+		next = g->next;
+		macos9_schedule_cancel_owner(g);
+		if (g->content_gworld) {
+			DisposeGWorld(g->content_gworld);
+			g->content_gworld = NULL;
+		}
+		/* Unlink from global list */
+		{
+			struct gui_window **p;
+			for (p = &window_list; *p; p = &(*p)->next_global) {
+				if (*p == g) { *p = g->next_global; break; }
+			}
+		}
+		free(g);
+		g = next;
+	}
+	/* Unlink scaffold from scaffold list */
+	{
+		struct macos9_window **sp;
+		for (sp = &scaffold_list; *sp; sp = &(*sp)->next) {
+			if (*sp == mw) { *sp = mw->next; break; }
+		}
+	}
+	macos9_reload_animating = 0;
+	if (mw->window) DisposeWindow(mw->window);
+	free(mw);
+}
+
+/* Draw the tab strip at the top of a scaffold's window. */
+void macos9_tab_strip_draw(struct macos9_window *mw)
+{
+#ifdef __MACOS9__
+	struct gui_window *t;
+	short x, tab_w;
+	Rect strip;
+	RGBColor fill, border, active_bg, inactive_bg, text;
+	int idx = 0;
+	if (mw == NULL || mw->window == NULL) return;
+	if (mw->tab_count <= 1) return;  /* no strip for single tab */
+
+	GetWindowBounds(mw->window, 33, &strip);
+	strip.bottom = (short)(strip.top + MACOS9_TAB_STRIP_H);
+	strip.top = (short)(strip.top);
+
+	/* Draw strip background */
+	fill.red = 0xD6D6; fill.green = 0xD6D6; fill.blue = 0xD6D6;
+	border.red = 0x9999; border.green = 0x9999; border.blue = 0x9999;
+	active_bg.red = 0xFFFF; active_bg.green = 0xFFFF; active_bg.blue = 0xFFFF;
+	inactive_bg.red = 0xCDCD; inactive_bg.green = 0xCDCD; inactive_bg.blue = 0xCDCD;
+	text.red = 0x1400; text.green = 0x1400; text.blue = 0x1400;
+
+	SetPortWindowPort(mw->window);
+	RGBForeColor(&fill);
+	PaintRect(&strip);
+
+	/* Draw each tab */
+	tab_w = (short)((strip.right - strip.left) / (mw->tab_count + 1));
+	if (tab_w < 60) tab_w = 60;
+	x = strip.left;
+	for (t = mw->tabs; t != NULL; t = t->next) {
+		Rect tab_r;
+		int is_active = (t == mw->active_tab);
+		RGBColor *bg = is_active ? &active_bg : &inactive_bg;
+		char label[64];
+		short label_len;
+
+		tab_r.left = x;
+		tab_r.top = strip.top;
+		tab_r.right = (short)(x + tab_w);
+		tab_r.bottom = strip.bottom;
+
+		/* Draw tab background */
+		RGBForeColor(bg);
+		PaintRect(&tab_r);
+
+		/* Draw tab label */
+		if (t->title[0] != '\0') {
+			label_len = (short)strlen(t->title);
+			if (label_len > 60) label_len = 60;
+			memcpy(label, t->title, (size_t)label_len);
+		} else {
+			label[0] = '\t'; label_len = 1;  /* tab character for untitled */
+			label_len = 0;
+		}
+		if (label_len > 0) {
+			RGBForeColor(&text);
+			TextFont(kFontIDGeneva); TextSize(10);
+			TextFace(is_active ? bold : 0);
+			/* Clip label to tab width */
+			{
+				RgnHandle clip = NewRgn();
+				Rect clip_r = tab_r;
+				InsetRect(&clip_r, 4, 2);
+				clip_r.right = (short)(clip_r.right - 2);
+				if (clip != NULL) {
+					GetClip(clip);
+					ClipRect(&clip_r);
+				}
+				MoveTo((short)(tab_r.left + 6), (short)(tab_r.bottom - 5));
+				DrawText(label, 0, label_len);
+				if (clip != NULL) { SetClip(clip); DisposeRgn(clip); }
+			}
+		}
+
+		/* Draw separator */
+		RGBForeColor(&border);
+		MoveTo((short)(tab_r.right - 1), tab_r.top);
+		LineTo((short)(tab_r.right - 1), tab_r.bottom);
+
+		x = tab_r.right;
+		idx++;
+	}
+
+	/* Fill remaining space */
+	if (x < strip.right) {
+		Rect rest;
+		rest.left = x; rest.top = strip.top;
+		rest.right = strip.right; rest.bottom = strip.bottom;
+		RGBForeColor(&fill);
+		PaintRect(&rest);
+	}
+
+	/* Bottom border */
+	{
+		RGBColor sep = {0x8888, 0x8888, 0x8888};
+		RGBForeColor(&sep);
+		MoveTo(strip.left, (short)(strip.bottom - 1));
+		LineTo(strip.right, (short)(strip.bottom - 1));
+	}
+
+	/* Reset text state */
+	TextFace(0);
+	{
+		RGBColor blk = {0, 0, 0};
+		RGBColor wht = {0xFFFF, 0xFFFF, 0xFFFF};
+		RGBForeColor(&blk); RGBBackColor(&wht);
+	}
+#else
+	(void)mw;
+#endif
+}
+
+/* Hit-test the tab strip.  Returns the gui_window of the clicked tab,
+ * or NULL if the click missed the strip. */
+struct gui_window *macos9_tab_strip_hittest(struct macos9_window *mw, Point p)
+{
+	struct gui_window *t;
+	short x, tab_w;
+	Rect strip;
+	int idx = 0;
+	if (mw == NULL || mw->tab_count <= 1) return NULL;
+
+	GetWindowBounds(mw->window, 33, &strip);
+	strip.bottom = (short)(strip.top + MACOS9_TAB_STRIP_H);
+	if (!PtInRect(p, &strip)) return NULL;
+
+	tab_w = (short)((strip.right - strip.left) / (mw->tab_count + 1));
+	if (tab_w < 60) tab_w = 60;
+	x = strip.left;
+	for (t = mw->tabs; t != NULL; t = t->next) {
+		if (p.h >= x && p.h < x + tab_w) return t;
+		x += tab_w;
+		idx++;
+	}
+	return NULL;
+}
 
 static struct gui_window_table wt = {
 	macos9_window_create, macos9_window_destroy, macos9_gw_invalidate, macos9_gw_get_scroll,
