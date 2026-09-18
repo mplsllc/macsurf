@@ -356,9 +356,9 @@ static const Rect s_btn_home_default_rect = { 124, 164, 146, 284 };
 static const Rect s_te_ww_rect            = { 192,  76, 214, 140 };
 static const Rect s_te_wh_rect            = { 192, 216, 214, 280 };
 
-/* Web Content panel */
+/* Web Content panel - aligned to 8px grid: label baseline at top+12 (8px checkbox + 4px gap) */
 static const Rect s_ck_images_rect        = {  80,  24, 100, 456 };
-static const Rect s_ck_anim_rect          = { 124,  44, 144, 456 };
+static const Rect s_ck_anim_rect          = { 124,  24, 144, 456 };
 static const Rect s_ck_css_rect           = { 168,  24, 188, 456 };
 static const Rect s_ck_js_rect            = { 212,  24, 232, 456 };
 static const Rect s_ck_popups_rect        = { 256,  24, 276, 456 };
@@ -955,19 +955,23 @@ static void prefs_paint(struct prefs_win *pw)
 	case PREFS_CAT_CONTENT:
 		RGBForeColor(&black_c);
 		TextFont(1); TextFace(normal); TextSize(12);
-		/* Checkbox labels - drawn manually to avoid white cutout */
-		MoveTo((short)(s_ck_images_rect.left + 22), (short)(s_ck_images_rect.top + 15));
+		/* Checkbox labels - drawn manually to avoid white cutout.
+		 * Checkbox is 20px tall (top to bottom). Center vertically:
+		 * baseline at rect_top + 14 (8px checkbox + 2px gap + 4px baseline offset for Geneva 12). */
+		#define CK_LABEL_V(top) ((short)((top) + 14))
+		MoveTo((short)(s_ck_images_rect.left + 22), CK_LABEL_V(s_ck_images_rect.top));
 		DrawString("\pLoad images");
-		MoveTo((short)(s_ck_anim_rect.left + 22), (short)(s_ck_anim_rect.top + 15));
+		MoveTo((short)(s_ck_anim_rect.left + 22), CK_LABEL_V(s_ck_anim_rect.top));
 		DrawString("\pAnimate images");
-		MoveTo((short)(s_ck_css_rect.left + 22), (short)(s_ck_css_rect.top + 15));
+		MoveTo((short)(s_ck_css_rect.left + 22), CK_LABEL_V(s_ck_css_rect.top));
 		DrawString("\pUse website styles (CSS)");
-		MoveTo((short)(s_ck_js_rect.left + 22), (short)(s_ck_js_rect.top + 15));
+		MoveTo((short)(s_ck_js_rect.left + 22), CK_LABEL_V(s_ck_js_rect.top));
 		DrawString("\pEnable JavaScript");
-		MoveTo((short)(s_ck_popups_rect.left + 22), (short)(s_ck_popups_rect.top + 15));
+		MoveTo((short)(s_ck_popups_rect.left + 22), CK_LABEL_V(s_ck_popups_rect.top));
 		DrawString("\pBlock pop-up windows");
-		MoveTo((short)(s_ck_ads_rect.left + 22), (short)(s_ck_ads_rect.top + 15));
+		MoveTo((short)(s_ck_ads_rect.left + 22), CK_LABEL_V(s_ck_ads_rect.top));
 		DrawString("\pBlock advertisements");
+		#undef CK_LABEL_V
 
 		RGBForeColor(&gray_c);
 		TextFont(3); TextFace(normal); TextSize(9);
@@ -1002,13 +1006,16 @@ static void prefs_paint(struct prefs_win *pw)
 	case PREFS_CAT_PRIVACY:
 		RGBForeColor(&black_c);
 		TextFont(1); TextFace(normal); TextSize(12);
-		/* Checkbox labels - drawn manually to avoid white cutout */
-		MoveTo((short)(s_ck_cookies_rect.left + 22), (short)(s_ck_cookies_rect.top + 15));
+		/* Checkbox labels - drawn manually to avoid white cutout.
+		 * Center vertically: baseline at rect_top + 14. */
+		#define CK_LABEL_V(top) ((short)((top) + 14))
+		MoveTo((short)(s_ck_cookies_rect.left + 22), CK_LABEL_V(s_ck_cookies_rect.top));
 		DrawString("\pStore and send cookies");
-		MoveTo((short)(s_ck_ref_rect.left + 22), (short)(s_ck_ref_rect.top + 15));
+		MoveTo((short)(s_ck_ref_rect.left + 22), CK_LABEL_V(s_ck_ref_rect.top));
 		DrawString("\pSend Referer header");
-		MoveTo((short)(s_ck_dnt_rect.left + 22), (short)(s_ck_dnt_rect.top + 15));
+		MoveTo((short)(s_ck_dnt_rect.left + 22), CK_LABEL_V(s_ck_dnt_rect.top));
 		DrawString("\pSend Do Not Track request");
+		#undef CK_LABEL_V
 
 		RGBForeColor(&gray_c);
 		TextFont(3); TextFace(normal); TextSize(9);

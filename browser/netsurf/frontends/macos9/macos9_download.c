@@ -428,10 +428,11 @@ static void dl_draw_btn(const Rect *r, const unsigned char *pstr, int pressed)
 	RGBForeColor(&blk);
 	FrameRoundRect(r, 6, 6);
 
-	/* label */
+	/* label - vertically centered in button */
 	TextFont(1); TextFace(normal); TextSize(10);
 	tw = StringWidth(pstr);
 	tx = (short)(r->left + (r->right - r->left - tw) / 2);
+	/* Geneva 10: baseline at center + 3 (approx half font height) */
 	ty = (short)(r->top + (r->bottom - r->top) / 2 + 3);
 	if (pressed) { tx++; ty++; }
 	MoveTo(tx, ty);
@@ -594,8 +595,8 @@ static void dl_mgr_paint(void)
 	/* Draw native top controls */
 	DrawControls(g_dl_mgr_win);
 
-	/* List Container */
-	SetRect(&list, 12, 72, 510, 308);
+	/* List Container - 5 rows * 48px = 240px */
+	SetRect(&list, 12, 72, 510, 312);
 	list_fr = list;
 	InsetRect(&list_fr, -1, -1);
 	RGBForeColor(&blk);
@@ -630,26 +631,28 @@ static void dl_mgr_paint(void)
 		for (nd = g_dl_list; nd != NULL && cur < g_dl_scroll_top; nd = nd->dl_next)
 			cur++;
 
+		/* Row height = 48px (6 * 8px grid) */
+#define DL_ROW_H 48
 		for (; nd != NULL && shown < 5; nd = nd->dl_next, shown++) {
-			short y = (short)(list.top + shown * 46);
+			short y = (short)(list.top + shown * DL_ROW_H);
 			Rect r_row, r_dot, r_bar;
 			Rect col_fn, col_det;
 			RGBColor dot_col;
 			char b_cur[32], b_tot[32], r_str[32], eta_str[32], det[160];
 
 			/* Row background */
-			SetRect(&r_row, list.left, y, list.right, (short)(y + 46));
+			SetRect(&r_row, list.left, y, list.right, (short)(y + DL_ROW_H));
 			RGBForeColor(shown % 2 == 0 ? &wht : &row_alt);
 			PaintRect(&r_row);
 
-			/* Row separator */
+			/* Row separator at bottom of row */
 			RGBForeColor(&sep);
-			MoveTo(list.left, (short)(y + 45));
-			LineTo(list.right, (short)(y + 45));
+			MoveTo(list.left, (short)(y + DL_ROW_H - 1));
+			LineTo(list.right, (short)(y + DL_ROW_H - 1));
 
-			/* Status dot */
-			SetRect(&r_dot, (short)(list.left + 8), (short)(y + 8),
-				(short)(list.left + 16), (short)(y + 16));
+			/* Status dot - 8px circle centered vertically in top half (y+4 to y+12) */
+			SetRect(&r_dot, (short)(list.left + 8), (short)(y + 4),
+				(short)(list.left + 16), (short)(y + 12));
 			if (nd->dl_state == 0) {
 				dot_col.red = 0x2020; dot_col.green = 0x7070; dot_col.blue = 0xEEEE;
 			} else if (nd->dl_state == 1) {
@@ -660,28 +663,28 @@ static void dl_mgr_paint(void)
 			RGBForeColor(&dot_col);
 			PaintOval(&r_dot);
 
-			/* Filename */
+			/* Filename - baseline at y+16 (8px from top + 8px for Geneva 12 baseline) */
 			TextFont(1); TextFace(bold); TextSize(12);
 			RGBForeColor(&blk);
-			SetRect(&col_fn, (short)(list.left + 22), (short)y,
-				(short)(list.right - 145), (short)(y + 20));
+			SetRect(&col_fn, (short)(list.left + 24), (short)y,
+				(short)(list.right - 145), (short)(y + 24));
 			ClipRect(&col_fn);
-			MoveTo((short)(list.left + 22), (short)(y + 16));
+			MoveTo((short)(list.left + 24), (short)(y + 16));
 			DrawText(nd->filename, 0, (short)strlen(nd->filename));
 			ClipRect(&list);
 
-			/* Action buttons on the right */
+			/* Action buttons on the right - 24px tall, centered vertically */
 			if (nd->dl_state == 0) {
 				Rect r_cancel;
-				SetRect(&r_cancel, (short)(list.right - 68), (short)(y + 11),
-					(short)(list.right - 8), (short)(y + 35));
+				SetRect(&r_cancel, (short)(list.right - 68), (short)(y + 12),
+					(short)(list.right - 8), (short)(y + 36));
 				dl_draw_btn(&r_cancel, "\pCancel", 0);
 			} else if (nd->dl_state == 1) {
 				Rect r_reveal, r_open;
-				SetRect(&r_reveal, (short)(list.right - 134), (short)(y + 11),
-					(short)(list.right - 72), (short)(y + 35));
-				SetRect(&r_open, (short)(list.right - 68), (short)(y + 11),
-					(short)(list.right - 8), (short)(y + 35));
+				SetRect(&r_reveal, (short)(list.right - 134), (short)(y + 12),
+					(short)(list.right - 72), (short)(y + 36));
+				SetRect(&r_open, (short)(list.right - 68), (short)(y + 12),
+					(short)(list.right - 8), (short)(y + 36));
 				dl_draw_btn(&r_reveal, "\pReveal", 0);
 				dl_draw_btn(&r_open, "\pOpen", 0);
 			} else {
@@ -694,12 +697,12 @@ static void dl_mgr_paint(void)
 				TextFace(normal);
 			}
 
-			/* Progress Bar */
-			SetRect(&r_bar, (short)(list.left + 22), (short)(y + 23),
-				(short)(list.left + 182), (short)(y + 36));
+			/* Progress Bar - 12px tall, positioned at y+28 to y+40 (8px from bottom) */
+			SetRect(&r_bar, (short)(list.left + 24), (short)(y + 28),
+				(short)(list.left + 184), (short)(y + 40));
 			dl_draw_progress_bar(&r_bar, nd->bytes_written, nd->total_length, nd->dl_state);
 
-			/* Progress details text */
+			/* Progress details text - below progress bar at y+44 (baseline) */
 			dl_format_bytes(nd->bytes_written, b_cur);
 			if (nd->dl_state == 1) {
 				sprintf(det, "%s - Completed", b_cur);
@@ -718,10 +721,10 @@ static void dl_mgr_paint(void)
 
 			RGBForeColor(&blk);
 			TextFont(1); TextFace(normal); TextSize(10);
-			SetRect(&col_det, (short)(list.left + 190), (short)(y + 22),
-				(short)(list.right - 142), (short)(y + 38));
+			SetRect(&col_det, (short)(list.left + 192), (short)(y + 40),
+				(short)(list.right - 142), (short)(y + 48));
 			ClipRect(&col_det);
-			MoveTo((short)(list.left + 190), (short)(y + 33));
+			MoveTo((short)(list.left + 192), (short)(y + 44));
 			DrawText(det, 0, (short)strlen(det));
 			ClipRect(&list);
 		}
@@ -907,7 +910,7 @@ void macos9_download_mgr_click(short part, Point where)
 		SetRect(&list, 12, 72, 510, 308);
 		if (p.h >= list.left && p.h <= list.right &&
 		    p.v >= list.top && p.v <= list.bottom) {
-			int row_idx = (p.v - list.top) / 46;
+			int row_idx = (p.v - list.top) / DL_ROW_H;
 			int target_idx = g_dl_scroll_top + row_idx;
 			struct gui_download_window *nd = g_dl_list;
 			int cur = 0;
@@ -916,21 +919,21 @@ void macos9_download_mgr_click(short part, Point where)
 				cur++;
 			}
 			if (nd != NULL) {
-				short y = (short)(list.top + row_idx * 46);
+				short y = (short)(list.top + row_idx * DL_ROW_H);
 				if (nd->dl_state == 0) {
 					Rect r_cancel;
-					SetRect(&r_cancel, (short)(list.right - 68), (short)(y + 11),
-						(short)(list.right - 8), (short)(y + 35));
+					SetRect(&r_cancel, (short)(list.right - 68), (short)(y + 12),
+						(short)(list.right - 8), (short)(y + 36));
 					if (PtInRect(p, &r_cancel)) {
 						dl_draw_btn(&r_cancel, "\pCancel", 1);
 						dl_cancel(nd);
 					}
 				} else if (nd->dl_state == 1) {
 					Rect r_reveal, r_open;
-					SetRect(&r_reveal, (short)(list.right - 134), (short)(y + 11),
-						(short)(list.right - 72), (short)(y + 35));
-					SetRect(&r_open, (short)(list.right - 68), (short)(y + 11),
-						(short)(list.right - 8), (short)(y + 35));
+					SetRect(&r_reveal, (short)(list.right - 134), (short)(y + 12),
+						(short)(list.right - 72), (short)(y + 36));
+					SetRect(&r_open, (short)(list.right - 68), (short)(y + 12),
+						(short)(list.right - 8), (short)(y + 36));
 					if (PtInRect(p, &r_reveal)) {
 						dl_draw_btn(&r_reveal, "\pReveal", 1);
 						dl_mgr_open_folder();
