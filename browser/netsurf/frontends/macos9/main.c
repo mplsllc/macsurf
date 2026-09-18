@@ -1110,44 +1110,44 @@ void macos9_handle_mouse_down(const EventRecord *event) {
 					Point p = event->where;
 					ControlRef ctrl;
 					short cpart;
+					struct gui_window *tab;
 					gw = macos9_find_window(win);
 					if (gw) {
 						macsurf_debug_log_writef("LIFE GWOK p=%d,%d content=%d,%d,%d,%d url=%d,%d,%d,%d", (int)p.h, (int)p.v, (int)gw->content_rect.left, (int)gw->content_rect.top, (int)gw->content_rect.right, (int)gw->content_rect.bottom, (int)gw->url_rect.left, (int)gw->url_rect.top, (int)gw->url_rect.right, (int)gw->url_rect.bottom);
 						SetPortWindowPort(win);
 						GlobalToLocal(&p);
-/* Tab strip hit-test: if the click is in the
-					 * tab strip area (top MACOS9_TAB_STRIP_H pixels),
-					 * handle close button, + button, or tab switch. */
-					if (gw->mw != NULL && gw->mw->tab_count > 1) {
-						extern struct gui_window *macos9_tab_strip_hittest(struct macos9_window *mw, Point p);
-						extern struct gui_window *macos9_tab_close_at_point(struct macos9_window *mw, Point p);
-						extern int macos9_tab_plus_hit(struct macos9_window *mw, Point p);
-						/* Check close button first */
-						struct gui_window *close_tab = macos9_tab_close_at_point(gw->mw, p);
-						if (close_tab != NULL) {
-							/* Close the tab directly without activating it first */
-							if (close_tab->bw != NULL) {
-								browser_window_destroy(close_tab->bw);
-							} else {
-								macos9_window_destroy(close_tab);
+						/* Tab strip hit-test: if the click is in the
+						 * tab strip area (top MACOS9_TAB_STRIP_H pixels),
+						 * handle close button, + button, or tab switch. */
+						if (gw->mw != NULL && gw->mw->tab_count > 1) {
+							extern struct gui_window *macos9_tab_strip_hittest(struct macos9_window *mw, Point p);
+							extern struct gui_window *macos9_tab_close_at_point(struct macos9_window *mw, Point p);
+							extern int macos9_tab_plus_hit(struct macos9_window *mw, Point p);
+							/* Check close button first */
+							struct gui_window *close_tab = macos9_tab_close_at_point(gw->mw, p);
+							if (close_tab != NULL) {
+								/* Close the tab via the core; it invokes
+								 * macos9_window_destroy callback. */
+								if (close_tab->bw != NULL) {
+									browser_window_destroy(close_tab->bw);
+								}
+								break;
 							}
-							break;
+							/* Check + button */
+							if (macos9_tab_plus_hit(gw->mw, p)) {
+								macos9_new_tab(gw);
+								break;
+							}
+							/* Check tab body */
+							tab = macos9_tab_strip_hittest(gw->mw, p);
+							if (tab != NULL) {
+								macos9_tab_switch(gw->mw, tab);
+								break;
+							}
+							if (p.v >= 0 && p.v < MACOS9_TAB_STRIP_H) {
+								break;
+							}
 						}
-						/* Check + button */
-						if (macos9_tab_plus_hit(gw->mw, p)) {
-							macos9_new_tab(gw);
-							break;
-						}
-						/* Check tab body */
-						struct gui_window *tab = macos9_tab_strip_hittest(gw->mw, p);
-						if (tab != NULL) {
-							macos9_tab_switch(gw->mw, tab);
-							break;
-						}
-						if (p.v >= 0 && p.v < MACOS9_TAB_STRIP_H) {
-							break;
-						}
-					}
 						/* fixes298b - user-pane buttons aren't visible to
 						 * FindControl (the default user-pane hit-test
 						 * returns kControlNoPart, and Carbon interprets
@@ -1353,6 +1353,7 @@ void macos9_handle_key_down(const EventRecord *event) {
 	WindowRef win = FrontWindow();
 	struct gui_window *gw = win ? macos9_find_window(win) : NULL;
 	char ch = (char)(event->message & charCodeMask);
+	long sel;
 	if (event->modifiers & cmdKey) {
 		/* Explicit Cmd-T handling: intercept before MenuKey() so it works
 		 * reliably on Mac OS 9 regardless of CarbonLib/MenuKey quirks.
@@ -1362,7 +1363,6 @@ void macos9_handle_key_down(const EventRecord *event) {
 			macos9_new_tab(gw);
 			return;
 		}
-		long sel;
 		/* fixes621: Cmd -/+/0 page zoom. NetSurf's scale sets the
 		 * layout viewport to (window / scale), so zooming OUT lays the
 		 * page out at a WIDER effective width -- the desktop layout --

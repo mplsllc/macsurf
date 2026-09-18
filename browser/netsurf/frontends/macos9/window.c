@@ -28,6 +28,8 @@
 #include <TextEdit.h>
 #endif
 
+extern void macos9_http_mark_next_as_document(void);
+
 static struct gui_window *window_list = NULL;
 static struct macos9_window *scaffold_list = NULL;
 static struct gui_window *macos9_window_create(struct browser_window *bw, struct gui_window *ex, gui_window_create_flags f);
@@ -1742,6 +1744,12 @@ void macos9_window_destroy(struct gui_window *g) {
 		struct gui_window **tp;
 		int was_active = (mw->active_tab == g);
 
+		/* Clear hover_tab if the closing tab is the hovered one,
+		 * before freeing the gui_window. */
+		if (mw->hover_tab == g) {
+			mw->hover_tab = NULL;
+		}
+
 		for(tp=&mw->tabs; *tp; tp=&(*tp)->next) {
 			if(*tp==g) { *tp=g->next; break; }
 		}
@@ -3044,87 +3052,39 @@ static void macos9_window_file_gadget_open(struct gui_window *gw,
 
 /* Shared New Tab helper: creates a new tab in the given scaffold (or a new
  * window if no scaffold). Called from File > New Tab, Cmd-T, and the + button.
- * Returns the new gui_window or NULL on failure. */
-struct gui_window *macos9_new_tab(struct gui_window *current)
+ * Returns nserror. */
+nserror macos9_new_tab(struct gui_window *current)
 {
-	struct browser_window *nbw = NULL;
-	nsurl *home = NULL;
-	struct gui_window *result = NULL;
+	struct browser_window *nbw;
+	nsurl *home;
+
+	nbw = NULL;
+	home = NULL;
 
 	if (nsurl_create(macos9_home_url(), &home) != NSERROR_OK) {
-		return NULL;
+		return NSERROR_NOMEM;
 	}
 
-	extern void macos9_http_mark_next_as_document(void);
 	macos9_http_mark_next_as_document();
 	macsurf_profile_reset();
 	macsurf_profile_stamp("nav: New Tab");
 
 	if (current != NULL && current->mw != NULL) {
-		/* Create new tab in existing scaffold */
+		/* Create new tab in existing scaffold; the frontend create
+		 * callback (macos9_window_create with GW_CREATE_TAB) attaches
+		 * the gui_window to the scaffold. */
 		browser_window_create(
 			BW_CREATE_HISTORY | BW_CREATE_FOREGROUND | BW_CREATE_TAB,
 			home, NULL, current->bw, &nbw);
-		if (nbw != NULL) {
-			result = macos9_tab_create(current->mw, nbw);
-		}
 	} else {
 		/* No existing window/scaffold: create new window */
-		struct browser_window *bwb = NULL;
+		struct browser_window *bwb;
+		bwb = NULL;
 		browser_window_create(BW_CREATE_HISTORY | BW_CREATE_FOREGROUND,
 			home, NULL, NULL, &bwb);
-		if (bwb != NULL) {
-			result = macos9_window_list_head();
-		}
 	}
 	nsurl_unref(home);
-	return result;
-}
-
-/* Create a new tab in an existing scaffold. */
-struct gui_window *macos9_tab_create(struct macos9_window *mw,
-		struct browser_window *bw)
-{
-	struct gui_window *g;
-	struct gui_window *last;
-	if (mw == NULL || bw == NULL) return NULL;
-	g = (struct gui_window *)calloc(1, sizeof(*g));
-	if (g == NULL) return NULL;
-	g->mw = mw;
-	g->bw = bw;
-	/* Inherit scaffold's chrome refs */
-	g->window = mw->window;
-	g->back_btn = mw->back_btn;
-	g->forward_btn = mw->forward_btn;
-	g->stop_btn = mw->stop_btn;
-	g->reload_btn = mw->reload_btn;
-	g->home_btn = mw->home_btn;
-	g->vscroll = mw->vscroll;
-	g->hscroll = mw->hscroll;
-	g->url_te = mw->url_te;
-	g->url_rect = mw->url_rect;
-	g->loader_rect = mw->loader_rect;
-	g->content_rect = mw->content_rect;
-	g->status_rect = mw->status_rect;
-	g->toolbar_rect = mw->toolbar_rect;
-	strcpy(g->title, "Untitled");
-	/* Append to scaffold's tab list */
-	g->next = NULL;
-	if (mw->tabs == NULL) {
-		mw->tabs = g;
-	} else {
-		last = mw->tabs;
-		while (last->next != NULL) last = last->next;
-		last->next = g;
-	}
-	mw->tab_count++;
-	/* Link into global gui_window list */
-	g->next_global = window_list;
-	window_list = g;
-	/* Switch to the new tab */
-	macos9_tab_switch(mw, g);
-	macsurf_debug_log_writef("tab_create: new tab in scaffold %p, count=%d", (void *)mw, mw->tab_count);
-	return g;
+	return NSERROR_OK;
 }
 
 /* Switch the active tab in a scaffold. */
@@ -3347,12 +3307,15 @@ void macos9_tab_strip_draw(struct macos9_window *mw)
 		/* Draw close button (X) on hover */
 		if (is_hovered) {
 			RGBForeColor(&close_text);
-			TextFont(kFontIDGeneva); TextSize(10); TextFace(0);
 			{
-				short cx = (short)(tab_r.right - 14);
-				short cy = (short)(tab_r.bottom - 6);
-				MoveTo(cx, cy);
-				DrawText("\p\327", 0, 1);  /* × character (MacRoman 0xD7) */
+				short left = (short)(tab_r.right - 14);
+				short right = (short)(tab_r.right - 6);
+				short top = (short)(tab_r.top + 4);
+				short bottom = (short)(tab_r.bottom - 4);
+				MoveTo(left, top);
+				LineTo(right, bottom);
+				MoveTo(right, top);
+				LineTo(left, bottom);
 			}
 		}
 
@@ -3384,16 +3347,18 @@ void macos9_tab_strip_draw(struct macos9_window *mw)
 			FrameRect(&plus_r);
 		}
 
-		/* Draw + sign centered */
+		/* Draw + sign centered using lines */
 		{
 			RGBColor plus_text = {0x3333, 0x3333, 0x3333};
 			RGBForeColor(&plus_text);
-			TextFont(kFontIDGeneva); TextSize(12); TextFace(bold);
 			{
-				short cx = (short)(plus_r.left + (plus_r.right - plus_r.left) / 2 - 3);
-				short cy = (short)(plus_r.bottom - 5);
-				MoveTo(cx, cy);
-				DrawText("\p+", 0, 1);
+				short center_h = (short)(plus_r.left + (plus_r.right - plus_r.left) / 2);
+				short center_v = (short)(plus_r.top + (plus_r.bottom - plus_r.top) / 2);
+				short half = 4;  /* half-size of the + */
+				MoveTo((short)(center_h - half), center_v);
+				LineTo((short)(center_h + half), center_v);
+				MoveTo(center_h, (short)(center_v - half));
+				LineTo(center_h, (short)(center_v + half));
 			}
 		}
 	}
@@ -3434,9 +3399,14 @@ struct gui_window *macos9_tab_strip_hittest(struct macos9_window *mw, Point p)
 	struct gui_window *t;
 	short x, tab_w, win_w;
 	Rect strip;
-	short plus_w = 22;
-	short gap = 4;
-	int idx = 0;
+	short plus_w, gap;
+	int idx;
+	short avail_w;
+	short tab_right;
+
+	plus_w = 22;
+	gap = 4;
+	idx = 0;
 	if (mw == NULL || mw->tab_count <= 1) return NULL;
 
 	GetWindowBounds(mw->window, 33, &strip);
@@ -3445,20 +3415,18 @@ struct gui_window *macos9_tab_strip_hittest(struct macos9_window *mw, Point p)
 	if (!PtInRect(p, &strip)) return NULL;
 
 	/* Calculate tab width same as draw function */
-	{
-		short avail_w = (short)(win_w - plus_w - gap);
-		if (avail_w < 60) avail_w = 60;
+	avail_w = (short)(win_w - plus_w - gap);
+	if (avail_w < 60) avail_w = 60;
+	tab_w = (short)(avail_w / mw->tab_count);
+	if (tab_w > 180) tab_w = 180;
+	if (tab_w < 60) tab_w = 60;
+	if ((short)(tab_w * mw->tab_count) > avail_w) {
 		tab_w = (short)(avail_w / mw->tab_count);
-		if (tab_w > 180) tab_w = 180;
 		if (tab_w < 60) tab_w = 60;
-		if ((short)(tab_w * mw->tab_count) > avail_w) {
-			tab_w = (short)(avail_w / mw->tab_count);
-			if (tab_w < 60) tab_w = 60;
-		}
 	}
 	x = 0;
 	for (t = mw->tabs; t != NULL; t = t->next) {
-		short tab_right = (short)(x + tab_w);
+		tab_right = (short)(x + tab_w);
 		/* Check if click is in tab body (not in close X area) */
 		if (p.h >= x && p.h < tab_right) {
 			/* If hovering this tab, the close X occupies right ~16px */
@@ -3480,8 +3448,12 @@ struct gui_window *macos9_tab_close_at_point(struct macos9_window *mw, Point p)
 	struct gui_window *t;
 	short x, tab_w, win_w;
 	Rect strip;
-	short plus_w = 22;
-	short gap = 4;
+	short plus_w, gap;
+	short avail_w;
+	short tab_right;
+
+	plus_w = 22;
+	gap = 4;
 	if (mw == NULL || mw->tab_count <= 1) return NULL;
 
 	GetWindowBounds(mw->window, 33, &strip);
@@ -3490,20 +3462,18 @@ struct gui_window *macos9_tab_close_at_point(struct macos9_window *mw, Point p)
 	if (!PtInRect(p, &strip)) return NULL;
 
 	/* Calculate tab width same as draw function */
-	{
-		short avail_w = (short)(win_w - plus_w - gap);
-		if (avail_w < 60) avail_w = 60;
+	avail_w = (short)(win_w - plus_w - gap);
+	if (avail_w < 60) avail_w = 60;
+	tab_w = (short)(avail_w / mw->tab_count);
+	if (tab_w > 180) tab_w = 180;
+	if (tab_w < 60) tab_w = 60;
+	if ((short)(tab_w * mw->tab_count) > avail_w) {
 		tab_w = (short)(avail_w / mw->tab_count);
-		if (tab_w > 180) tab_w = 180;
 		if (tab_w < 60) tab_w = 60;
-		if ((short)(tab_w * mw->tab_count) > avail_w) {
-			tab_w = (short)(avail_w / mw->tab_count);
-			if (tab_w < 60) tab_w = 60;
-		}
 	}
 	x = 0;
 	for (t = mw->tabs; t != NULL; t = t->next) {
-		short tab_right = (short)(x + tab_w);
+		tab_right = (short)(x + tab_w);
 		/* Close X is in right ~16px of tab, only when hovered */
 		if (t == mw->hover_tab && p.h >= tab_right - 16 && p.h < tab_right) {
 			return t;
@@ -3522,11 +3492,15 @@ void macos9_tab_strip_update_hover(struct macos9_window *mw)
 	struct gui_window *t;
 	short x, tab_w, win_w;
 	Rect strip;
-	short plus_w = 22;
-	short gap = 4;
-	struct gui_window *new_hover = NULL;
+	short plus_w, gap;
+	struct gui_window *new_hover;
 	Point p;
+	short avail_w;
+	short tab_right;
 
+	plus_w = 22;
+	gap = 4;
+	new_hover = NULL;
 	if (mw == NULL || mw->window == NULL || mw->tab_count <= 1) {
 		if (mw && mw->hover_tab != NULL) {
 			mw->hover_tab = NULL;
@@ -3547,20 +3521,18 @@ void macos9_tab_strip_update_hover(struct macos9_window *mw)
 		new_hover = NULL;
 	} else {
 		/* Calculate tab width same as draw function */
-		{
-			short avail_w = (short)(win_w - plus_w - gap);
-			if (avail_w < 60) avail_w = 60;
+		avail_w = (short)(win_w - plus_w - gap);
+		if (avail_w < 60) avail_w = 60;
+		tab_w = (short)(avail_w / mw->tab_count);
+		if (tab_w > 180) tab_w = 180;
+		if (tab_w < 60) tab_w = 60;
+		if ((short)(tab_w * mw->tab_count) > avail_w) {
 			tab_w = (short)(avail_w / mw->tab_count);
-			if (tab_w > 180) tab_w = 180;
 			if (tab_w < 60) tab_w = 60;
-			if ((short)(tab_w * mw->tab_count) > avail_w) {
-				tab_w = (short)(avail_w / mw->tab_count);
-				if (tab_w < 60) tab_w = 60;
-			}
 		}
 		x = 0;
 		for (t = mw->tabs; t != NULL; t = t->next) {
-			short tab_right = (short)(x + tab_w);
+			tab_right = (short)(x + tab_w);
 			if (p.h >= x && p.h < tab_right) {
 				new_hover = t;
 				break;
@@ -3571,12 +3543,15 @@ void macos9_tab_strip_update_hover(struct macos9_window *mw)
 
 	/* If hover changed, invalidate old and new tab rects */
 	if (new_hover != mw->hover_tab) {
-		struct gui_window *old_hover = mw->hover_tab;
+		struct gui_window *old_hover;
+		short ox, nx;
+
+		old_hover = mw->hover_tab;
 		mw->hover_tab = new_hover;
 
 		/* Invalidate old hover tab rect */
 		if (old_hover != NULL) {
-			short ox = 0;
+			ox = 0;
 			for (t = mw->tabs; t != NULL; t = t->next) {
 				if (t == old_hover) break;
 				ox = (short)(ox + tab_w);
@@ -3593,7 +3568,7 @@ void macos9_tab_strip_update_hover(struct macos9_window *mw)
 
 		/* Invalidate new hover tab rect */
 		if (new_hover != NULL) {
-			short nx = 0;
+			nx = 0;
 			for (t = mw->tabs; t != NULL; t = t->next) {
 				if (t == new_hover) break;
 				nx = (short)(nx + tab_w);
@@ -3612,11 +3587,19 @@ void macos9_tab_strip_update_hover(struct macos9_window *mw)
 	(void)mw;
 #endif
 }
+
+/* Hit-test for + new tab button. Returns 1 if the + button was hit. */
+int macos9_tab_plus_hit(struct macos9_window *mw, Point p)
 {
 	short x, tab_w, win_w;
 	Rect strip;
-	short plus_w = 22;
-	short gap = 4;
+	short plus_w, gap;
+	short avail_w;
+	struct gui_window *t;
+	Rect plus_r;
+
+	plus_w = 22;
+	gap = 4;
 	if (mw == NULL || mw->tab_count <= 1) return 0;
 
 	GetWindowBounds(mw->window, 33, &strip);
@@ -3625,34 +3608,26 @@ void macos9_tab_strip_update_hover(struct macos9_window *mw)
 	if (!PtInRect(p, &strip)) return 0;
 
 	/* Calculate tab width same as draw function */
-	{
-		short avail_w = (short)(win_w - plus_w - gap);
-		if (avail_w < 60) avail_w = 60;
+	avail_w = (short)(win_w - plus_w - gap);
+	if (avail_w < 60) avail_w = 60;
+	tab_w = (short)(avail_w / mw->tab_count);
+	if (tab_w > 180) tab_w = 180;
+	if (tab_w < 60) tab_w = 60;
+	if ((short)(tab_w * mw->tab_count) > avail_w) {
 		tab_w = (short)(avail_w / mw->tab_count);
-		if (tab_w > 180) tab_w = 180;
 		if (tab_w < 60) tab_w = 60;
-		if ((short)(tab_w * mw->tab_count) > avail_w) {
-			tab_w = (short)(avail_w / mw->tab_count);
-			if (tab_w < 60) tab_w = 60;
-		}
 	}
 	x = 0;
 	/* Find end of tabs */
-	{
-		struct gui_window *t;
-		for (t = mw->tabs; t != NULL; t = t->next) {
-			x = (short)(x + tab_w);
-		}
+	for (t = mw->tabs; t != NULL; t = t->next) {
+		x = (short)(x + tab_w);
 	}
 	/* + button rect */
-	{
-		Rect plus_r;
-		plus_r.left = (short)(x + gap);
-		plus_r.top = strip.top;
-		plus_r.right = (short)(plus_r.left + plus_w);
-		plus_r.bottom = strip.bottom;
-		if (PtInRect(p, &plus_r)) return 1;
-	}
+	plus_r.left = (short)(x + gap);
+	plus_r.top = strip.top;
+	plus_r.right = (short)(plus_r.left + plus_w);
+	plus_r.bottom = strip.bottom;
+	if (PtInRect(p, &plus_r)) return 1;
 	return 0;
 }
 

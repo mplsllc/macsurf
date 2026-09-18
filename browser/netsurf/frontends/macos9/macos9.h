@@ -399,8 +399,6 @@ void macos9_scaffold_destroy(struct macos9_window *mw);
 void macos9_windows_te_idle(void);
 void macos9_windows_process_deferred(void);
 struct gui_window *macos9_create_initial_window(void);
-struct gui_window *macos9_tab_create(struct macos9_window *mw,
-		struct browser_window *bw);
 void macos9_tab_switch(struct macos9_window *mw, struct gui_window *new_tab);
 extern struct gui_window *initial_win;
 void macos9_handle_mouse_down(const EventRecord *event);
@@ -484,9 +482,7 @@ const char *macos9_home_url(void);
 void macos9_prefs_apply_live(void);
 
 /* Tab management functions. */
-struct gui_window *macos9_new_tab(struct gui_window *current);
-struct gui_window *macos9_tab_create(struct macos9_window *mw,
-		struct browser_window *bw);
+nserror macos9_new_tab(struct gui_window *current);
 void macos9_tab_switch(struct macos9_window *mw, struct gui_window *new_tab);
 void macos9_scaffold_destroy(struct macos9_window *mw);
 void macos9_tab_strip_draw(struct macos9_window *mw);
