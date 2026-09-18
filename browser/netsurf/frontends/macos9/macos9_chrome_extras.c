@@ -2013,8 +2013,8 @@ void macos9_history_window_show(struct gui_window *g)
 	vis = (list.bottom - list.top - 4) / row_h;
 
 	/* Footer row - wider buttons to prevent text cutoff */
-	SetRect(&r_visit, 450, 386, 550, 410);
-	SetRect(&r_done,  558, 386, 626, 410);
+	SetRect(&r_visit, 440, 386, 550, 410);   /* 110px - "Visit Page" */
+	SetRect(&r_done,  560, 386, 636, 410);   /* 76px - "Done" */
 
 	/* Native Controls */
 	btn_clr   = chrome_create_pushbutton(win, &r_clr,   "Clear History...");
@@ -2022,11 +2022,11 @@ void macos9_history_window_show(struct gui_window *g)
 	btn_visit = chrome_create_pushbutton(win, &r_visit, "Visit Page");
 	btn_done  = chrome_create_pushbutton(win, &r_done,  "Done");
 
-	/* Disable default button ring on Done button */
+	/* Disable default button ring on Done button (black outline) */
 	{
-		Boolean bDefault = false;
-		SetControlData(btn_done, kControlNoPart,
-			kControlPushButtonDefaultTag, sizeof(bDefault), (Ptr)&bDefault);
+		SInt16 def_state = 0;  /* kControlPushButtonDefaultStateOff */
+		SetControlData(btn_done, kControlEntireControl,
+			104 /* kControlPushButtonDefaultStateTag */, sizeof(def_state), &def_state);
 	}
 
 	nrows = hw_build_rows(rows, cap, today_day, filter);
@@ -2351,16 +2351,6 @@ void macos9_history_window_show(struct gui_window *g)
 			/* Draw all native push buttons and scrollbar */
 			DrawControls(win);
 
-			/* Default ring around [Done] */
-			{
-				Rect ring = r_done;
-				InsetRect(&ring, -4, -4);
-				PenSize(3, 3);
-				RGBForeColor(&blk);
-				FrameRoundRect(&ring, 16, 16);
-				PenSize(1, 1);
-			}
-
 			/* Search label and framed edit field */
 			RGBForeColor(&blk);
 			TextFont(1); TextFace(normal); TextSize(12);
@@ -2473,13 +2463,13 @@ void macos9_history_window_show(struct gui_window *g)
 			SetClip(saveclip);
 			DisposeRgn(saveclip);
 
-			/* Bottom status / preview */
+			/* Bottom status / preview - positioned above footer buttons (y=386) */
 			RGBForeColor(&blk);
 			TextFont(1); TextFace(normal); TextSize(10);
 			if (sel >= 0 && sel < nrows && !rows[sel].is_header) {
 				int hi = rows[sel].hidx;
 				if (hi >= 0 && hi < macsurf_hist_n) {
-					MoveTo(20, 402);
+					MoveTo(20, 380);
 					DrawText(macsurf_hist[hi].url, 0,
 						(short)strlen(macsurf_hist[hi].url));
 				}
@@ -3240,10 +3230,10 @@ void macos9_bookmark_window_show(struct gui_window *g)
 
 	/* Footer row - wider buttons to prevent text cutoff */
 	SetRect(&r_move,   12, 386,  82, 410);
-	SetRect(&r_imp,    88, 386, 198, 410);
-	SetRect(&r_exp,   204, 386, 314, 410);
-	SetRect(&r_visit, 450, 386, 550, 410);
-	SetRect(&r_done,  558, 386, 626, 410);
+	SetRect(&r_imp,    88, 386, 202, 410);   /* 114px - "Import..." */
+	SetRect(&r_exp,   208, 386, 322, 410);   /* 114px - "Export..." */
+	SetRect(&r_visit, 440, 386, 550, 410);   /* 110px - "Visit Page" */
+	SetRect(&r_done,  560, 386, 636, 410);   /* 76px - "Done" */
 
 	/* Native Controls */
 	btn_new_bmk = chrome_create_pushbutton(win, &r_new_bmk, "+ Bookmark");
@@ -3256,11 +3246,11 @@ void macos9_bookmark_window_show(struct gui_window *g)
 	btn_visit   = chrome_create_pushbutton(win, &r_visit,   "Visit Page");
 	btn_done    = chrome_create_pushbutton(win, &r_done,    "Done");
 
-	/* Disable default button ring on Done button */
+	/* Disable default button ring on Done button (black outline) */
 	{
-		Boolean bDefault = false;
-		SetControlData(btn_done, kControlNoPart,
-			kControlPushButtonDefaultTag, sizeof(bDefault), (Ptr)&bDefault);
+		SInt16 def_state = 0;  /* kControlPushButtonDefaultStateOff */
+		SetControlData(btn_done, kControlEntireControl,
+			104 /* kControlPushButtonDefaultStateTag */, sizeof(def_state), &def_state);
 	}
 
 	nrows = bw_build_rows(rows, cap, filter);
@@ -3666,16 +3656,6 @@ void macos9_bookmark_window_show(struct gui_window *g)
 			/* Draw all native push buttons and scrollbar */
 			DrawControls(win);
 
-			/* Default ring around [Done] */
-			{
-				Rect ring = r_done;
-				InsetRect(&ring, -4, -4);
-				PenSize(3, 3);
-				RGBForeColor(&blk);
-				FrameRoundRect(&ring, 16, 16);
-				PenSize(1, 1);
-			}
-
 			/* Search label and framed edit field */
 			RGBForeColor(&blk);
 			TextFont(1); TextFace(normal); TextSize(12);
@@ -3763,13 +3743,13 @@ void macos9_bookmark_window_show(struct gui_window *g)
 			SetClip(saveclip);
 			DisposeRgn(saveclip);
 
-			/* Bottom status / preview */
+			/* Bottom status / preview - positioned above footer buttons (y=386) */
 			RGBForeColor(&blk);
 			TextFont(1); TextFace(normal); TextSize(10);
 			if (sel >= 0 && sel < nrows && !rows[sel].is_folder) {
 				int bi = rows[sel].bidx;
 				if (bi >= 0 && bi < macsurf_bookmark_count) {
-					MoveTo(248, 402);
+					MoveTo(248, 380);
 					DrawText(macsurf_bookmarks[bi].url, 0,
 						(short)strlen(macsurf_bookmarks[bi].url));
 				}
