@@ -3042,6 +3042,45 @@ static void macos9_window_file_gadget_open(struct gui_window *gw,
 
 /* ---- Tab management ---------------------------------------------------- */
 
+/* Shared New Tab helper: creates a new tab in the given scaffold (or a new
+ * window if no scaffold). Called from File > New Tab, Cmd-T, and the + button.
+ * Returns the new gui_window or NULL on failure. */
+struct gui_window *macos9_new_tab(struct gui_window *current)
+{
+	struct browser_window *nbw = NULL;
+	nsurl *home = NULL;
+	struct gui_window *result = NULL;
+
+	if (nsurl_create(macos9_home_url(), &home) != NSERROR_OK) {
+		return NULL;
+	}
+
+	extern void macos9_http_mark_next_as_document(void);
+	macos9_http_mark_next_as_document();
+	macsurf_profile_reset();
+	macsurf_profile_stamp("nav: New Tab");
+
+	if (current != NULL && current->mw != NULL) {
+		/* Create new tab in existing scaffold */
+		browser_window_create(
+			BW_CREATE_HISTORY | BW_CREATE_FOREGROUND | BW_CREATE_TAB,
+			home, NULL, current->bw, &nbw);
+		if (nbw != NULL) {
+			result = macos9_tab_create(current->mw, nbw);
+		}
+	} else {
+		/* No existing window/scaffold: create new window */
+		struct browser_window *bwb = NULL;
+		browser_window_create(BW_CREATE_HISTORY | BW_CREATE_FOREGROUND,
+			home, NULL, NULL, &bwb);
+		if (bwb != NULL) {
+			result = macos9_window_list_head();
+		}
+	}
+	nsurl_unref(home);
+	return result;
+}
+
 /* Create a new tab in an existing scaffold. */
 struct gui_window *macos9_tab_create(struct macos9_window *mw,
 		struct browser_window *bw)
@@ -3214,8 +3253,10 @@ void macos9_tab_strip_draw(struct macos9_window *mw)
 	struct gui_window *t;
 	short x, tab_w, win_w;
 	Rect strip;
-	RGBColor fill, border, active_bg, inactive_bg, text;
+	RGBColor fill, border, active_bg, inactive_bg, text, close_text;
 	int idx = 0;
+	short plus_w = 22;  /* width of the + button */
+	short gap = 4;      /* gap between last tab and + button */
 	if (mw == NULL || mw->window == NULL) return;
 	if (mw->tab_count <= 1) return;  /* no strip for single tab */
 
@@ -3229,19 +3270,30 @@ void macos9_tab_strip_draw(struct macos9_window *mw)
 	active_bg.red = 0xFFFF; active_bg.green = 0xFFFF; active_bg.blue = 0xFFFF;
 	inactive_bg.red = 0xCDCD; inactive_bg.green = 0xCDCD; inactive_bg.blue = 0xCDCD;
 	text.red = 0x1400; text.green = 0x1400; text.blue = 0x1400;
+	close_text.red = 0x4444; close_text.green = 0x4444; close_text.blue = 0x4444;
 
 	SetPortWindowPort(mw->window);
 	RGBForeColor(&fill);
 	PaintRect(&strip);
 
-	/* Draw each tab */
-	tab_w = (short)(win_w / mw->tab_count);
-	if (tab_w > 180) tab_w = 180;
-	if (tab_w < 60) tab_w = 60;
+	/* Calculate tab width: reserve space for + button and gap */
+	{
+		short avail_w = (short)(win_w - plus_w - gap);
+		if (avail_w < 60) avail_w = 60;
+		tab_w = (short)(avail_w / mw->tab_count);
+		if (tab_w > 180) tab_w = 180;
+		if (tab_w < 60) tab_w = 60;
+		/* Ensure tabs don't exceed available space */
+		if ((short)(tab_w * mw->tab_count) > avail_w) {
+			tab_w = (short)(avail_w / mw->tab_count);
+			if (tab_w < 60) tab_w = 60;
+		}
+	}
 	x = 0;
 	for (t = mw->tabs; t != NULL; t = t->next) {
 		Rect tab_r;
 		int is_active = (t == mw->active_tab);
+		int is_hovered = (t == mw->hover_tab);
 		RGBColor *bg = is_active ? &active_bg : &inactive_bg;
 		char label[64];
 		short label_len = 0;
@@ -3270,19 +3322,37 @@ void macos9_tab_strip_draw(struct macos9_window *mw)
 			RGBForeColor(&text);
 			TextFont(kFontIDGeneva); TextSize(10);
 			TextFace(is_active ? bold : 0);
-			/* Clip label to tab width */
+			/* Clip label to tab width, leaving room for close button on hover */
 			{
 				RgnHandle clip = NewRgn();
 				Rect clip_r = tab_r;
 				InsetRect(&clip_r, 4, 2);
-				clip_r.right = (short)(clip_r.right - 2);
+				/* Reserve space for close X on the right when hovered */
+				if (is_hovered) {
+					clip_r.right = (short)(clip_r.right - 18);
+				} else {
+					clip_r.right = (short)(clip_r.right - 2);
+				}
 				if (clip != NULL) {
 					GetClip(clip);
 					ClipRect(&clip_r);
 				}
+				/* Center text vertically in 24px tab: baseline at bottom - 6 */
 				MoveTo((short)(tab_r.left + 6), (short)(tab_r.bottom - 6));
 				DrawText(label, 0, label_len);
 				if (clip != NULL) { SetClip(clip); DisposeRgn(clip); }
+			}
+		}
+
+		/* Draw close button (X) on hover */
+		if (is_hovered) {
+			RGBForeColor(&close_text);
+			TextFont(kFontIDGeneva); TextSize(10); TextFace(0);
+			{
+				short cx = (short)(tab_r.right - 14);
+				short cy = (short)(tab_r.bottom - 6);
+				MoveTo(cx, cy);
+				DrawText("\p\327", 0, 1);  /* × character (MacRoman 0xD7) */
 			}
 		}
 
@@ -3295,10 +3365,43 @@ void macos9_tab_strip_draw(struct macos9_window *mw)
 		idx++;
 	}
 
+	/* Draw + button after the last tab */
+	{
+		Rect plus_r;
+		plus_r.left = x + gap;
+		plus_r.top = strip.top;
+		plus_r.right = (short)(plus_r.left + plus_w);
+		plus_r.bottom = strip.bottom;
+		if (plus_r.right > strip.right) plus_r.right = strip.right;
+
+		/* + button background (slightly lighter than strip) */
+		{
+			RGBColor plus_bg = {0xE0E0, 0xE0E0, 0xE0E0};
+			RGBColor plus_border = {0xAAAA, 0xAAAA, 0xAAAA};
+			RGBForeColor(&plus_bg);
+			PaintRect(&plus_r);
+			RGBForeColor(&plus_border);
+			FrameRect(&plus_r);
+		}
+
+		/* Draw + sign centered */
+		{
+			RGBColor plus_text = {0x3333, 0x3333, 0x3333};
+			RGBForeColor(&plus_text);
+			TextFont(kFontIDGeneva); TextSize(12); TextFace(bold);
+			{
+				short cx = (short)(plus_r.left + (plus_r.right - plus_r.left) / 2 - 3);
+				short cy = (short)(plus_r.bottom - 5);
+				MoveTo(cx, cy);
+				DrawText("\p+", 0, 1);
+			}
+		}
+	}
+
 	/* Fill remaining space */
-	if (x < strip.right) {
+	if (x + gap + plus_w < strip.right) {
 		Rect rest;
-		rest.left = x; rest.top = strip.top;
+		rest.left = (short)(x + gap + plus_w); rest.top = strip.top;
 		rest.right = strip.right; rest.bottom = strip.bottom;
 		RGBForeColor(&fill);
 		PaintRect(&rest);
@@ -3324,13 +3427,15 @@ void macos9_tab_strip_draw(struct macos9_window *mw)
 #endif
 }
 
-/* Hit-test the tab strip.  Returns the gui_window of the clicked tab,
- * or NULL if the click missed the strip. */
+/* Hit-test the tab strip for tab body clicks.  Returns the gui_window of
+ * the clicked tab, or NULL if the click missed the strip or hit the close/+. */
 struct gui_window *macos9_tab_strip_hittest(struct macos9_window *mw, Point p)
 {
 	struct gui_window *t;
 	short x, tab_w, win_w;
 	Rect strip;
+	short plus_w = 22;
+	short gap = 4;
 	int idx = 0;
 	if (mw == NULL || mw->tab_count <= 1) return NULL;
 
@@ -3339,16 +3444,216 @@ struct gui_window *macos9_tab_strip_hittest(struct macos9_window *mw, Point p)
 	SetRect(&strip, 0, 0, win_w, MACOS9_TAB_STRIP_H);
 	if (!PtInRect(p, &strip)) return NULL;
 
-	tab_w = (short)(win_w / mw->tab_count);
-	if (tab_w > 180) tab_w = 180;
-	if (tab_w < 60) tab_w = 60;
+	/* Calculate tab width same as draw function */
+	{
+		short avail_w = (short)(win_w - plus_w - gap);
+		if (avail_w < 60) avail_w = 60;
+		tab_w = (short)(avail_w / mw->tab_count);
+		if (tab_w > 180) tab_w = 180;
+		if (tab_w < 60) tab_w = 60;
+		if ((short)(tab_w * mw->tab_count) > avail_w) {
+			tab_w = (short)(avail_w / mw->tab_count);
+			if (tab_w < 60) tab_w = 60;
+		}
+	}
 	x = 0;
 	for (t = mw->tabs; t != NULL; t = t->next) {
-		if (p.h >= x && p.h < x + tab_w) return t;
-		x += tab_w;
+		short tab_right = (short)(x + tab_w);
+		/* Check if click is in tab body (not in close X area) */
+		if (p.h >= x && p.h < tab_right) {
+			/* If hovering this tab, the close X occupies right ~16px */
+			if (t == mw->hover_tab && p.h >= tab_right - 16) {
+				return NULL;  /* Hit close area, not tab body */
+			}
+			return t;
+		}
+		x = tab_right;
 		idx++;
 	}
 	return NULL;
+}
+
+/* Hit-test for close button (X) on tabs. Returns the gui_window whose
+ * close button was hit, or NULL. */
+struct gui_window *macos9_tab_close_at_point(struct macos9_window *mw, Point p)
+{
+	struct gui_window *t;
+	short x, tab_w, win_w;
+	Rect strip;
+	short plus_w = 22;
+	short gap = 4;
+	if (mw == NULL || mw->tab_count <= 1) return NULL;
+
+	GetWindowBounds(mw->window, 33, &strip);
+	win_w = (short)(strip.right - strip.left);
+	SetRect(&strip, 0, 0, win_w, MACOS9_TAB_STRIP_H);
+	if (!PtInRect(p, &strip)) return NULL;
+
+	/* Calculate tab width same as draw function */
+	{
+		short avail_w = (short)(win_w - plus_w - gap);
+		if (avail_w < 60) avail_w = 60;
+		tab_w = (short)(avail_w / mw->tab_count);
+		if (tab_w > 180) tab_w = 180;
+		if (tab_w < 60) tab_w = 60;
+		if ((short)(tab_w * mw->tab_count) > avail_w) {
+			tab_w = (short)(avail_w / mw->tab_count);
+			if (tab_w < 60) tab_w = 60;
+		}
+	}
+	x = 0;
+	for (t = mw->tabs; t != NULL; t = t->next) {
+		short tab_right = (short)(x + tab_w);
+		/* Close X is in right ~16px of tab, only when hovered */
+		if (t == mw->hover_tab && p.h >= tab_right - 16 && p.h < tab_right) {
+			return t;
+		}
+		x = tab_right;
+	}
+	return NULL;
+}
+
+/* Update tab strip hover state. Call from event loop to track mouse
+ * position over tabs for close button display. Only invalidates the
+ * affected tab rects when hover changes. */
+void macos9_tab_strip_update_hover(struct macos9_window *mw)
+{
+#ifdef __MACOS9__
+	struct gui_window *t;
+	short x, tab_w, win_w;
+	Rect strip;
+	short plus_w = 22;
+	short gap = 4;
+	struct gui_window *new_hover = NULL;
+	Point p;
+
+	if (mw == NULL || mw->window == NULL || mw->tab_count <= 1) {
+		if (mw && mw->hover_tab != NULL) {
+			mw->hover_tab = NULL;
+			/* Invalidate entire strip to clear any close button */
+			SetRect(&strip, 0, 0, (short)(mw->content_rect.right + 15), MACOS9_TAB_STRIP_H);
+			InvalWindowRect(mw->window, &strip);
+		}
+		return;
+	}
+
+	GetWindowBounds(mw->window, 33, &strip);
+	win_w = (short)(strip.right - strip.left);
+	SetRect(&strip, 0, 0, win_w, MACOS9_TAB_STRIP_H);
+
+	/* Get mouse position in window coordinates */
+	GetMouse(&p);
+	if (!PtInRect(p, &strip)) {
+		new_hover = NULL;
+	} else {
+		/* Calculate tab width same as draw function */
+		{
+			short avail_w = (short)(win_w - plus_w - gap);
+			if (avail_w < 60) avail_w = 60;
+			tab_w = (short)(avail_w / mw->tab_count);
+			if (tab_w > 180) tab_w = 180;
+			if (tab_w < 60) tab_w = 60;
+			if ((short)(tab_w * mw->tab_count) > avail_w) {
+				tab_w = (short)(avail_w / mw->tab_count);
+				if (tab_w < 60) tab_w = 60;
+			}
+		}
+		x = 0;
+		for (t = mw->tabs; t != NULL; t = t->next) {
+			short tab_right = (short)(x + tab_w);
+			if (p.h >= x && p.h < tab_right) {
+				new_hover = t;
+				break;
+			}
+			x = tab_right;
+		}
+	}
+
+	/* If hover changed, invalidate old and new tab rects */
+	if (new_hover != mw->hover_tab) {
+		struct gui_window *old_hover = mw->hover_tab;
+		mw->hover_tab = new_hover;
+
+		/* Invalidate old hover tab rect */
+		if (old_hover != NULL) {
+			short ox = 0;
+			for (t = mw->tabs; t != NULL; t = t->next) {
+				if (t == old_hover) break;
+				ox = (short)(ox + tab_w);
+			}
+			if (t == old_hover) {
+				Rect old_r;
+				old_r.left = ox;
+				old_r.top = 0;
+				old_r.right = (short)(ox + tab_w);
+				old_r.bottom = MACOS9_TAB_STRIP_H;
+				InvalWindowRect(mw->window, &old_r);
+			}
+		}
+
+		/* Invalidate new hover tab rect */
+		if (new_hover != NULL) {
+			short nx = 0;
+			for (t = mw->tabs; t != NULL; t = t->next) {
+				if (t == new_hover) break;
+				nx = (short)(nx + tab_w);
+			}
+			if (t == new_hover) {
+				Rect new_r;
+				new_r.left = nx;
+				new_r.top = 0;
+				new_r.right = (short)(nx + tab_w);
+				new_r.bottom = MACOS9_TAB_STRIP_H;
+				InvalWindowRect(mw->window, &new_r);
+			}
+		}
+	}
+#else
+	(void)mw;
+#endif
+}
+{
+	short x, tab_w, win_w;
+	Rect strip;
+	short plus_w = 22;
+	short gap = 4;
+	if (mw == NULL || mw->tab_count <= 1) return 0;
+
+	GetWindowBounds(mw->window, 33, &strip);
+	win_w = (short)(strip.right - strip.left);
+	SetRect(&strip, 0, 0, win_w, MACOS9_TAB_STRIP_H);
+	if (!PtInRect(p, &strip)) return 0;
+
+	/* Calculate tab width same as draw function */
+	{
+		short avail_w = (short)(win_w - plus_w - gap);
+		if (avail_w < 60) avail_w = 60;
+		tab_w = (short)(avail_w / mw->tab_count);
+		if (tab_w > 180) tab_w = 180;
+		if (tab_w < 60) tab_w = 60;
+		if ((short)(tab_w * mw->tab_count) > avail_w) {
+			tab_w = (short)(avail_w / mw->tab_count);
+			if (tab_w < 60) tab_w = 60;
+		}
+	}
+	x = 0;
+	/* Find end of tabs */
+	{
+		struct gui_window *t;
+		for (t = mw->tabs; t != NULL; t = t->next) {
+			x = (short)(x + tab_w);
+		}
+	}
+	/* + button rect */
+	{
+		Rect plus_r;
+		plus_r.left = (short)(x + gap);
+		plus_r.top = strip.top;
+		plus_r.right = (short)(plus_r.left + plus_w);
+		plus_r.bottom = strip.bottom;
+		if (PtInRect(p, &plus_r)) return 1;
+	}
+	return 0;
 }
 
 static struct gui_window_table wt = {

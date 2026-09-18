@@ -453,39 +453,7 @@ static void macos9_handle_menu(short menu_id, short item) {
 			 * If no window exists, create one (same as File > New). */
 			WindowRef wfront = FrontWindow();
 			struct gui_window *gcur = wfront ? macos9_find_window(wfront) : NULL;
-			if (gcur != NULL && gcur->mw != NULL) {
-				/* Create a new browser_window attached to the existing
-				 * scaffold's bw context (open://about:blank first). */
-				struct browser_window *nbw = NULL;
-				nsurl *home = NULL;
-				if (nsurl_create(macos9_home_url(), &home) == NSERROR_OK) {
-					extern void macos9_http_mark_next_as_document(void);
-					macos9_http_mark_next_as_document();
-					macsurf_profile_reset();
-					macsurf_profile_stamp("nav: Cmd-T new tab");
-					/* Pass GW_CREATE_TAB flag: the frontend create()
-					 * will attach to gcur->mw instead of making a
-					 * new native window. BW_CREATE_TAB triggers
-					 * the same in the core. */
-					browser_window_create(
-						BW_CREATE_HISTORY | BW_CREATE_FOREGROUND | BW_CREATE_TAB,
-						home, NULL, gcur->bw, &nbw);
-					nsurl_unref(home);
-				}
-			} else {
-				/* No existing window: fall through to New Window */
-				nsurl *home = NULL;
-				if (nsurl_create(macos9_home_url(), &home) == NSERROR_OK) {
-					extern void macos9_http_mark_next_as_document(void);
-					struct browser_window *bwb = NULL;
-					macos9_http_mark_next_as_document();
-					macsurf_profile_reset();
-					macsurf_profile_stamp("nav: Cmd-T (no win) New home");
-					browser_window_create(BW_CREATE_HISTORY | BW_CREATE_FOREGROUND,
-						home, NULL, NULL, &bwb);
-					nsurl_unref(home);
-				}
-			}
+			macos9_new_tab(gcur);
 		} break;
 		case ITEM_FILE_LOCATION: {
 			/* fixes109 - Cmd+L focuses the URL bar and selects all so
@@ -1147,20 +1115,39 @@ void macos9_handle_mouse_down(const EventRecord *event) {
 						macsurf_debug_log_writef("LIFE GWOK p=%d,%d content=%d,%d,%d,%d url=%d,%d,%d,%d", (int)p.h, (int)p.v, (int)gw->content_rect.left, (int)gw->content_rect.top, (int)gw->content_rect.right, (int)gw->content_rect.bottom, (int)gw->url_rect.left, (int)gw->url_rect.top, (int)gw->url_rect.right, (int)gw->url_rect.bottom);
 						SetPortWindowPort(win);
 						GlobalToLocal(&p);
-						/* Tab strip hit-test: if the click is in the
-						 * tab strip area (top MACOS9_TAB_STRIP_H pixels),
-						 * switch to the clicked tab and skip the rest. */
-						if (gw->mw != NULL && gw->mw->tab_count > 1) {
-							extern struct gui_window *macos9_tab_strip_hittest(struct macos9_window *mw, Point p);
-							struct gui_window *tab = macos9_tab_strip_hittest(gw->mw, p);
-							if (tab != NULL) {
-								macos9_tab_switch(gw->mw, tab);
-								break;
+/* Tab strip hit-test: if the click is in the
+					 * tab strip area (top MACOS9_TAB_STRIP_H pixels),
+					 * handle close button, + button, or tab switch. */
+					if (gw->mw != NULL && gw->mw->tab_count > 1) {
+						extern struct gui_window *macos9_tab_strip_hittest(struct macos9_window *mw, Point p);
+						extern struct gui_window *macos9_tab_close_at_point(struct macos9_window *mw, Point p);
+						extern int macos9_tab_plus_hit(struct macos9_window *mw, Point p);
+						/* Check close button first */
+						struct gui_window *close_tab = macos9_tab_close_at_point(gw->mw, p);
+						if (close_tab != NULL) {
+							/* Close the tab directly without activating it first */
+							if (close_tab->bw != NULL) {
+								browser_window_destroy(close_tab->bw);
+							} else {
+								macos9_window_destroy(close_tab);
 							}
-							if (p.v >= 0 && p.v < MACOS9_TAB_STRIP_H) {
-								break;
-							}
+							break;
 						}
+						/* Check + button */
+						if (macos9_tab_plus_hit(gw->mw, p)) {
+							macos9_new_tab(gw);
+							break;
+						}
+						/* Check tab body */
+						struct gui_window *tab = macos9_tab_strip_hittest(gw->mw, p);
+						if (tab != NULL) {
+							macos9_tab_switch(gw->mw, tab);
+							break;
+						}
+						if (p.v >= 0 && p.v < MACOS9_TAB_STRIP_H) {
+							break;
+						}
+					}
 						/* fixes298b - user-pane buttons aren't visible to
 						 * FindControl (the default user-pane hit-test
 						 * returns kControlNoPart, and Carbon interprets
@@ -1367,6 +1354,14 @@ void macos9_handle_key_down(const EventRecord *event) {
 	struct gui_window *gw = win ? macos9_find_window(win) : NULL;
 	char ch = (char)(event->message & charCodeMask);
 	if (event->modifiers & cmdKey) {
+		/* Explicit Cmd-T handling: intercept before MenuKey() so it works
+		 * reliably on Mac OS 9 regardless of CarbonLib/MenuKey quirks.
+		 * Must come before URL field / page key handling so Cmd-T in the
+		 * URL bar creates a tab, not a 't' character. */
+		if ((ch == 't' || ch == 'T') && gw != NULL) {
+			macos9_new_tab(gw);
+			return;
+		}
 		long sel;
 		/* fixes621: Cmd -/+/0 page zoom. NetSurf's scale sets the
 		 * layout viewport to (window / scale), so zooming OUT lays the
@@ -1594,7 +1589,12 @@ void macos9_poll(void) {
 		 * front window's toolbar (cheap; only repaints on a hover change). */
 		{ WindowRef hfw = FrontWindow();
 		  struct gui_window *hfg = hfw ? macos9_find_window(hfw) : NULL;
-		  if (hfg != NULL) macos9_window_update_hover(hfg); }
+		  if (hfg != NULL) {
+			  macos9_window_update_hover(hfg);
+			  if (hfg->mw != NULL && hfg->mw->tab_count > 1) {
+				  macos9_tab_strip_update_hover(hfg->mw);
+			  }
+		  } }
 		/* fixes640 - emit the PERFACC phase summary ONCE, at the real
 		 * load-complete edge (browser_window_stop_available true->false),
 		 * so the post-first-paint reflow/settle passes are included (they

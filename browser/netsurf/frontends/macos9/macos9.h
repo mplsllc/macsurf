@@ -99,7 +99,7 @@ struct rect;
 /* 4. Implementation Structs */
 
 /* Tab-strip layout constants. */
-#define MACOS9_TAB_STRIP_H 20  /* height of the tab bar in pixels */
+#define MACOS9_TAB_STRIP_H 24  /* height of the tab bar in pixels */
 
 /* macos9_window: one native Mac browser window (scaffold).
  * Owns the WindowRef, toolbar controls, URL bar, scrollbars, and layout
@@ -127,6 +127,8 @@ struct macos9_window {
 	struct gui_window *tabs;        /* linked list of tabs (gui_window) */
 	struct gui_window *active_tab;  /* currently visible tab */
 	int tab_count;
+	/* Tab strip hover state for close button */
+	struct gui_window *hover_tab;   /* tab the mouse is currently over */
 	struct macos9_window *next;     /* scaffold list linkage */
 };
 
@@ -482,12 +484,16 @@ const char *macos9_home_url(void);
 void macos9_prefs_apply_live(void);
 
 /* Tab management functions. */
+struct gui_window *macos9_new_tab(struct gui_window *current);
 struct gui_window *macos9_tab_create(struct macos9_window *mw,
 		struct browser_window *bw);
 void macos9_tab_switch(struct macos9_window *mw, struct gui_window *new_tab);
 void macos9_scaffold_destroy(struct macos9_window *mw);
 void macos9_tab_strip_draw(struct macos9_window *mw);
+void macos9_tab_strip_update_hover(struct macos9_window *mw);
 struct gui_window *macos9_tab_strip_hittest(struct macos9_window *mw, Point p);
+struct gui_window *macos9_tab_close_at_point(struct macos9_window *mw, Point p);
+int macos9_tab_plus_hit(struct macos9_window *mw, Point p);
 
 /* MACSURF_HOME_URL canonical definition is in macsurf_config.h.
  * Old frogfind default removed per fixes301. */
