@@ -290,11 +290,16 @@ static int qjs_thread_is_live_for_dispatch(struct jsthread *thread,
 {
 	struct qjs_thread_owner *towner;
 	struct qjs_realm_owner *rowner;
-	if (thread == NULL || thread->ctx == NULL || thread->heap == NULL)
+	if (thread == NULL)
 		return 0;
-	/* Thread must be registered. */
+	/* Thread must be registered in g_qjs_threads BEFORE any dereference.
+	 * This check only compares the pointer value against the registry,
+	 * so it is safe even if 'thread' points to freed memory. */
 	towner = qjs_thread_owner(thread);
 	if (towner == NULL)
+		return 0;
+	/* Now safe to dereference: thread is a live registered object. */
+	if (thread->ctx == NULL || thread->heap == NULL)
 		return 0;
 	/* Context must be live at this address with matching generation. */
 	if (qjs_ctx_gen(thread->ctx) == 0)
