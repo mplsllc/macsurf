@@ -1509,9 +1509,17 @@ OSErr macos9_downloads_dir_get(short *vRef, long *dirID)
 		FSSpec spec;
 		OSErr err = macos9_path_to_fsspec(custom_path, &spec);
 		if (err == noErr) {
-			*vRef = spec.vRefNum;
-			*dirID = spec.parID;
-			return noErr;
+			CInfoPBRec pb;
+			memset(&pb, 0, sizeof pb);
+			pb.dirInfo.ioNamePtr = spec.name;
+			pb.dirInfo.ioVRefNum = spec.vRefNum;
+			pb.dirInfo.ioDrDirID = spec.parID;
+			pb.dirInfo.ioFDirIndex = 0;
+			if (PBGetCatInfoSync(&pb) == noErr && (pb.dirInfo.ioFlAttrib & 0x10)) {
+				*vRef = spec.vRefNum;
+				*dirID = pb.dirInfo.ioDrDirID;
+				return noErr;
+			}
 		}
 	}
 	return macsurfdata_dir_get("Downloads", vRef, dirID);

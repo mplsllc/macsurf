@@ -74,6 +74,7 @@ static int         g_dl_scroll_top = 0;
 static unsigned long g_last_click_time = 0;
 static int         g_last_click_row = -1;
 static void dl_mgr_progress(void);   /* fwd: dl_cancel calls it */
+static void dl_mgr_paint(void);
 static void dl_mgr_change_folder(void);
 
 /* Map a NetSurf MIME string to a Mac type/creator pair. Best-effort -
@@ -226,43 +227,269 @@ static void c_to_pstring(const char *src, unsigned char *dest)
 	memcpy(dest + 1, src, len);
 }
 
-static void dl_open_spec(const FSSpec *spec)
-{
-	AEAddressDesc target;
-	AppleEvent ae, reply;
-	AEDescList docList;
-	OSType finderCreator = 'FNDR';
-	OSErr err;
+extern void macos9_prefs_save(void);
+extern int macos9_fsspec_to_path(const FSSpec *spec, char *out, long cap);
 
-	macsurf_debug_log_writef("LIFE dl_open_spec: vRef=%d parID=%ld name=%s",
-		spec->vRefNum, spec->parID, spec->name);
+static void bring_finder_to_front(void)
+{
+#ifdef __MACOS9__
+	ProcessSerialNumber psn;
+	psn.highLongOfPSN = 0;
+	psn.lowLongOfPSN = kNoProcess;
+	while (GetNextProcess(&psn) == noErr) {
+		ProcessInfoRec pinfo;
+		memset(&pinfo, 0, sizeof pinfo);
+		pinfo.processInfoLength = sizeof(ProcessInfoRec);
+		if (GetProcessInformation(&psn, &pinfo) == noErr) {
+			if (pinfo.processSignature == 'MACS' || pinfo.processType == 'FNDR') {
+				SetFrontProcess(&psn);
+				break;
+			}
+		}
+	}
+#endif
+}
+
+int macos9_finder_open_folder(short vRef, long dirID)
+{
+#ifdef __MACOS9__
+	CInfoPBRec pb;
+	Str255 name;
+	FSSpec folderSpec;
+	AEAddressDesc target;
+	AppleEvent ae;
+	AEDescList docList;
+	OSType finderCreator = 'MACS';
+	OSErr err;
+	AliasHandle alias = NULL;
+
+	memset(&pb, 0, sizeof pb);
+	pb.dirInfo.ioNamePtr = name;
+	pb.dirInfo.ioVRefNum = vRef;
+	pb.dirInfo.ioDrDirID = dirID;
+	pb.dirInfo.ioFDirIndex = -1;
+	if (PBGetCatInfoSync(&pb) != noErr) {
+		macsurf_debug_log_writef("LIFE finder_open_folder: PBGetCatInfoSync err vRef=%d dirID=%ld",
+			(int)vRef, dirID);
+		return -1;
+	}
+
+	err = FSMakeFSSpec(vRef, pb.dirInfo.ioDrParID, name, &folderSpec);
+	if (err != noErr) {
+		/* Volume root fallback */
+		err = FSMakeFSSpec(vRef, dirID, "\p", &folderSpec);
+		if (err != noErr) {
+			macsurf_debug_log_writef("LIFE finder_open_folder: FSMakeFSSpec err=%d", (int)err);
+			return -1;
+		}
+	}
+
+	macsurf_debug_log_writef("LIFE finder_open_folder: target vRef=%d parID=%ld",
+		(int)folderSpec.vRefNum, folderSpec.parID);
 
 	err = AECreateDesc(typeApplSignature, &finderCreator, sizeof(OSType), &target);
 	if (err != noErr) {
-		macsurf_debug_log_writef("LIFE dl_open_spec: AECreateDesc err=%d", err);
-		return;
+		macsurf_debug_log_writef("LIFE finder_open_folder: AECreateDesc err=%d", (int)err);
+		return err;
 	}
 
 	err = AECreateAppleEvent(kCoreEventClass, kAEOpenDocuments,
 		&target, kAutoGenerateReturnID, kAnyTransactionID, &ae);
 	AEDisposeDesc(&target);
 	if (err != noErr) {
-		macsurf_debug_log_writef("LIFE dl_open_spec: AECreateAppleEvent err=%d", err);
-		return;
+		macsurf_debug_log_writef("LIFE finder_open_folder: AECreateAppleEvent err=%d", (int)err);
+		return err;
 	}
 
 	err = AECreateList(NULL, 0, false, &docList);
 	if (err == noErr) {
-		AEPutPtr(&docList, 1, typeFSS, spec, sizeof(FSSpec));
+		if (NewAlias(NULL, &folderSpec, &alias) == noErr && alias != NULL) {
+			HLock((Handle)alias);
+			AEPutPtr(&docList, 1, typeAlias, *alias, GetHandleSize((Handle)alias));
+			HUnlock((Handle)alias);
+			DisposeHandle((Handle)alias);
+		} else {
+			AEPutPtr(&docList, 1, typeFSS, &folderSpec, sizeof(FSSpec));
+		}
 		AEPutParamDesc(&ae, keyDirectObject, &docList);
 		AEDisposeDesc(&docList);
 	}
 
-	/* Try without kAENoReply to see if we get a reply */
-	err = AESend(&ae, &reply, kAENeverInteract,
+	err = AESend(&ae, NULL, kAENoReply | kAECanSwitchLayer | kAEAlwaysInteract,
 		kAENormalPriority, kAEDefaultTimeout, NULL, NULL);
-	macsurf_debug_log_writef("LIFE dl_open_spec: AESend err=%d", err);
+	macsurf_debug_log_writef("LIFE finder_open_folder: AESend err=%d", (int)err);
 	AEDisposeDesc(&ae);
+
+	bring_finder_to_front();
+	return (err == noErr) ? 0 : -1;
+#else
+	(void)vRef; (void)dirID;
+	return -1;
+#endif
+}
+
+int macos9_finder_open_file(const FSSpec *spec)
+{
+#ifdef __MACOS9__
+	AEAddressDesc target;
+	AppleEvent ae;
+	AEDescList docList;
+	OSType finderCreator = 'MACS';
+	OSErr err;
+	AliasHandle alias = NULL;
+
+	if (spec == NULL) return -1;
+
+	macsurf_debug_log_writef("LIFE finder_open_file: vRef=%d parID=%ld",
+		(int)spec->vRefNum, spec->parID);
+
+	err = AECreateDesc(typeApplSignature, &finderCreator, sizeof(OSType), &target);
+	if (err != noErr) {
+		macsurf_debug_log_writef("LIFE finder_open_file: AECreateDesc err=%d", (int)err);
+		return err;
+	}
+
+	err = AECreateAppleEvent(kCoreEventClass, kAEOpenDocuments,
+		&target, kAutoGenerateReturnID, kAnyTransactionID, &ae);
+	AEDisposeDesc(&target);
+	if (err != noErr) {
+		macsurf_debug_log_writef("LIFE finder_open_file: AECreateAppleEvent err=%d", (int)err);
+		return err;
+	}
+
+	err = AECreateList(NULL, 0, false, &docList);
+	if (err == noErr) {
+		if (NewAlias(NULL, spec, &alias) == noErr && alias != NULL) {
+			HLock((Handle)alias);
+			AEPutPtr(&docList, 1, typeAlias, *alias, GetHandleSize((Handle)alias));
+			HUnlock((Handle)alias);
+			DisposeHandle((Handle)alias);
+		} else {
+			AEPutPtr(&docList, 1, typeFSS, spec, sizeof(FSSpec));
+		}
+		AEPutParamDesc(&ae, keyDirectObject, &docList);
+		AEDisposeDesc(&docList);
+	}
+
+	err = AESend(&ae, NULL, kAENoReply | kAECanSwitchLayer | kAEAlwaysInteract,
+		kAENormalPriority, kAEDefaultTimeout, NULL, NULL);
+	macsurf_debug_log_writef("LIFE finder_open_file: AESend err=%d", (int)err);
+	AEDisposeDesc(&ae);
+	return (err == noErr) ? 0 : -1;
+#else
+	(void)spec;
+	return -1;
+#endif
+}
+
+int macos9_finder_reveal_file(const FSSpec *spec)
+{
+#ifdef __MACOS9__
+	AppleEvent ae;
+	AEAddressDesc target;
+	AEDesc aeDesc;
+	AliasHandle fileAlias = NULL;
+	OSType finderCreator = 'MACS';
+	OSErr err;
+
+	if (spec == NULL) return -1;
+
+	macsurf_debug_log_writef("LIFE finder_reveal_file: vRef=%d parID=%ld",
+		(int)spec->vRefNum, spec->parID);
+
+	err = AECreateDesc(typeApplSignature, &finderCreator, sizeof(OSType), &target);
+	if (err != noErr) return macos9_finder_open_folder(spec->vRefNum, spec->parID);
+
+	/* Finder reveal event is 'misc' / 'mvis' */
+	err = AECreateAppleEvent('misc', 'mvis',
+		&target, kAutoGenerateReturnID, kAnyTransactionID, &ae);
+	AEDisposeDesc(&target);
+	if (err != noErr) {
+		return macos9_finder_open_folder(spec->vRefNum, spec->parID);
+	}
+
+	if (NewAlias(NULL, spec, &fileAlias) != noErr || fileAlias == NULL) {
+		AEDisposeDesc(&ae);
+		return macos9_finder_open_folder(spec->vRefNum, spec->parID);
+	}
+
+	HLock((Handle)fileAlias);
+	AECreateDesc(typeAlias, (Ptr)*fileAlias, GetHandleSize((Handle)fileAlias), &aeDesc);
+	HUnlock((Handle)fileAlias);
+	DisposeHandle((Handle)fileAlias);
+	AEPutParamDesc(&ae, keyDirectObject, &aeDesc);
+	AEDisposeDesc(&aeDesc);
+
+	err = AESend(&ae, NULL, kAENoReply | kAECanSwitchLayer | kAEAlwaysInteract,
+		kAENormalPriority, kAEDefaultTimeout, NULL, NULL);
+	macsurf_debug_log_writef("LIFE finder_reveal_file: AESend err=%d", (int)err);
+	AEDisposeDesc(&ae);
+
+	bring_finder_to_front();
+	return (err == noErr) ? 0 : -1;
+#else
+	(void)spec;
+	return -1;
+#endif
+}
+
+int macos9_choose_folder(char *out_path, size_t cap, FSSpec *out_spec)
+{
+#ifdef __MACOS9__
+	NavDialogOptions options;
+	NavReplyRecord reply;
+	OSErr err;
+	OSErr aeerr;
+	FSSpec spec;
+	AEKeyword kw;
+	DescType dt;
+	Size sz;
+
+	if (NavGetDefaultDialogOptions(&options) != noErr) return -1;
+	c_to_pstring("Select a folder for downloaded files:", options.message);
+
+	err = NavChooseFolder(NULL, &reply, &options, NULL, NULL, NULL);
+	macsurf_debug_log_writef("LIFE choose_folder: NavChooseFolder err=%d valid=%d",
+		(int)err, (int)(err == noErr ? reply.validRecord : 0));
+	if (err != noErr || !reply.validRecord) {
+		if (err == noErr) NavDisposeReply(&reply);
+		return 1; /* cancelled by user */
+	}
+
+	/* Try typeFSS first (Classic OS 8/9), fallback to typeFSRef -> FSSpec (OS X) */
+	aeerr = AEGetNthPtr(&reply.selection, 1, typeFSS, &kw, &dt,
+			&spec, sizeof spec, &sz);
+	if (aeerr != noErr) {
+		FSRef ref;
+		OSErr e2 = AEGetNthPtr(&reply.selection, 1, typeFSRef, &kw, &dt,
+				&ref, sizeof ref, &sz);
+		if (e2 == noErr)
+			e2 = FSGetCatalogInfo(&ref, kFSCatInfoNone, NULL, NULL,
+					&spec, NULL);
+		aeerr = e2;
+	}
+	NavDisposeReply(&reply);
+
+	if (aeerr != noErr) {
+		macsurf_debug_log_writef("LIFE choose_folder: selection extract err=%d", (int)aeerr);
+		return -1;
+	}
+
+	if (out_path != NULL && cap > 0) {
+		if (macos9_fsspec_to_path(&spec, out_path, (long)cap) != 0) {
+			macsurf_debug_log_writef("LIFE choose_folder: fsspec_to_path failed");
+			return -1;
+		}
+		macsurf_debug_log_writef("LIFE choose_folder: path=%s", out_path);
+	}
+	if (out_spec != NULL) {
+		*out_spec = spec;
+	}
+	return 0;
+#else
+	(void)out_path; (void)cap; (void)out_spec;
+	return -1;
+#endif
 }
 
 static void dl_mgr_open_folder(void)
@@ -270,23 +497,7 @@ static void dl_mgr_open_folder(void)
 	short vRef = 0;
 	long dirID = 0;
 	if (macos9_downloads_dir_get(&vRef, &dirID) == noErr) {
-		FSSpec folderSpec;
-		CInfoPBRec pb;
-		Str255 name;
-		
-		/* Get the directory name first */
-		memset(&pb, 0, sizeof pb);
-		pb.dirInfo.ioNamePtr = name;
-		pb.dirInfo.ioVRefNum = vRef;
-		pb.dirInfo.ioDrDirID = dirID;
-		pb.dirInfo.ioFDirIndex = -1;
-		if (PBGetCatInfoSync(&pb) == noErr) {
-			if (FSMakeFSSpec(vRef, dirID, name, &folderSpec) == noErr) {
-				macsurf_debug_log_writef("LIFE dl_mgr_open_folder: vRef=%d dirID=%ld name=%s",
-					vRef, dirID, name);
-				dl_open_spec(&folderSpec);
-			}
-		}
+		macos9_finder_open_folder(vRef, dirID);
 	}
 }
 
@@ -310,50 +521,14 @@ static void dl_mgr_clear_finished(void)
 
 static void dl_mgr_change_folder(void)
 {
-	NavDialogOptions options;
-	NavReplyRecord reply;
-	AEKeyword key;
-	FSRef fsref;
-	FSSpec spec;
-	OSErr err;
 	char path[1024];
-
-	/* Initialize Navigation Services dialog options for folder selection */
-	if (NavGetDefaultDialogOptions(&options) != noErr) return;
-
-	/* kNavChooseFolderDialog = 0x00000004 (Navigation Services 2.0+) */
-	options.dialogOptionFlags = 0x00000004;  /* folder picker mode */
-
-	err = NavGetFile(NULL, &reply, &options, NULL, NULL, NULL, NULL, NULL);
-	macsurf_debug_log_writef("LIFE dl_change_folder: NavGetFile err=%d valid=%d",
-		err, reply.validRecord);
-	if (err != noErr) return;
-	if (!reply.validRecord) { NavDisposeReply(&reply); return; }
-
-	err = AEGetNthPtr(&reply.selection, 1, typeFSRef, &key, NULL,
-		&fsref, sizeof(fsref), NULL);
-	if (err != noErr) {
-		NavDisposeReply(&reply);
-		return;
-	}
-
-	err = FSGetCatalogInfo(&fsref, kFSCatInfoNone, NULL, NULL, &spec, NULL);
-	if (err != noErr) {
-		NavDisposeReply(&reply);
-		return;
-	}
-
-	/* Convert FSSpec to full path for storage */
-	err = macos9_fsspec_to_path(&spec, path, (long)sizeof path);
-	macsurf_debug_log_writef("LIFE dl_change_folder: path=%s err=%d", path, err);
-	if (err == 0) {
+	int res = macos9_choose_folder(path, sizeof(path), NULL);
+	macsurf_debug_log_writef("LIFE dl_mgr_change_folder: res=%d path=%s", res, path);
+	if (res == 0) {
 		nsoption_set_charp(download_folder_path, strdup(path));
+		macos9_prefs_save();
+		dl_mgr_paint();
 	}
-
-	NavDisposeReply(&reply);
-
-	/* Refresh the download manager to show new folder */
-	dl_mgr_progress();
 }
 
 static void dl_format_bytes(unsigned long b, char *buf)
@@ -738,7 +913,34 @@ static void dl_mgr_paint(void)
 	RGBForeColor(&blk);
 	TextFont(1); TextFace(normal); TextSize(10);
 	MoveTo(14, 326);
-	DrawString("\pFolder: MacSurf Downloads");
+	{
+		short vRef = 0;
+		long dirID = 0;
+		Str255 name;
+		CInfoPBRec pb;
+		char f_label[128];
+		Str255 pf_label;
+		if (macos9_downloads_dir_get(&vRef, &dirID) == noErr) {
+			memset(&pb, 0, sizeof pb);
+			pb.dirInfo.ioNamePtr = name;
+			pb.dirInfo.ioVRefNum = vRef;
+			pb.dirInfo.ioDrDirID = dirID;
+			pb.dirInfo.ioFDirIndex = -1;
+			if (PBGetCatInfoSync(&pb) == noErr && name[0] > 0) {
+				char cname[64];
+				size_t nl = name[0] > 63 ? 63 : name[0];
+				memcpy(cname, name + 1, nl);
+				cname[nl] = '\0';
+				sprintf(f_label, "Folder: %s", cname);
+			} else {
+				strcpy(f_label, "Folder: Downloads");
+			}
+		} else {
+			strcpy(f_label, "Folder: Downloads");
+		}
+		c_to_pstring(f_label, pf_label);
+		DrawString(pf_label);
+	}
 
 	if (g_dl_count > 0) {
 		char sum_str[64];
@@ -908,7 +1110,7 @@ void macos9_download_mgr_click(short part, Point where)
 		}
 
 		/* 2. Check list row action clicks */
-		SetRect(&list, 12, 72, 510, 308);
+		SetRect(&list, 12, 72, 510, 312);
 		if (p.h >= list.left && p.h <= list.right &&
 		    p.v >= list.top && p.v <= list.bottom) {
 			int row_idx = (p.v - list.top) / DL_ROW_H;
@@ -938,17 +1140,17 @@ void macos9_download_mgr_click(short part, Point where)
 						(short)(list.right - 2), (short)(y + 36));
 					if (PtInRect(p, &r_reveal)) {
 						dl_draw_btn(&r_reveal, "\pReveal", 1);
-						dl_mgr_open_folder();
+						macos9_finder_reveal_file(&nd->fsspec);
 						dl_mgr_paint();
 					} else if (PtInRect(p, &r_open)) {
 						dl_draw_btn(&r_open, "\pOpen", 1);
-						dl_open_spec(&nd->fsspec);
+						macos9_finder_open_file(&nd->fsspec);
 						dl_mgr_paint();
 					} else {
 						/* Double click anywhere on row opens the file */
 						unsigned long now = TickCount();
 						if (g_last_click_row == target_idx && (now - g_last_click_time) <= GetDblTime()) {
-							dl_open_spec(&nd->fsspec);
+							macos9_finder_open_file(&nd->fsspec);
 						}
 						g_last_click_row = target_idx;
 						g_last_click_time = now;

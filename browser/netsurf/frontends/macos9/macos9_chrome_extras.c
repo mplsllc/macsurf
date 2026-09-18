@@ -2004,7 +2004,7 @@ void macos9_history_window_show(struct gui_window *g)
 
 	/* Toolbar row */
 	SetRect(&r_clr,      12, 40, 140, 64);
-	SetRect(&r_del,     146, 40, 210, 64);
+	SetRect(&r_del,     148, 40, 220, 64);
 	SetRect(&search_rect, 412, 42, 626, 62);
 
 	/* List & Scrollbar */
@@ -2463,23 +2463,13 @@ void macos9_history_window_show(struct gui_window *g)
 			SetClip(saveclip);
 			DisposeRgn(saveclip);
 
-			/* Bottom status / preview - positioned above footer buttons (y=386) */
-			RGBForeColor(&blk);
-			TextFont(1); TextFace(normal); TextSize(10);
-			if (sel >= 0 && sel < nrows && !rows[sel].is_header) {
-				int hi = rows[sel].hidx;
-				if (hi >= 0 && hi < macsurf_hist_n) {
-					MoveTo(20, 380);
-					DrawText(macsurf_hist[hi].url, 0,
-						(short)strlen(macsurf_hist[hi].url));
-				}
-			} else if (nrows == 0) {
+			if (nrows == 0) {
 				MoveTo(list.left + 20, list.top + 30);
 				TextFont(1); TextFace(normal); TextSize(12);
 				if (filter[0] != '\0')
 					DrawString("\pNo history entries match search query.");
 				else
-					DrawString("\pHistory is empty. Pages you visit will appear here.");
+					DrawString("\pHistory is empty.");
 			}
 			dirty = 0;
 		}
@@ -3216,22 +3206,22 @@ void macos9_bookmark_window_show(struct gui_window *g)
 
 	SetRect(&content, 0, 0, 640, 420);
 
-	/* Toolbar row */
-	SetRect(&r_new_bmk,  12, 40, 108, 64);
-	SetRect(&r_new_fld, 114, 40, 194, 64);
-	SetRect(&r_del,     200, 40, 258, 64);
-	SetRect(&r_rename,  264, 40, 344, 64);
-	SetRect(&search_rect, 412, 42, 626, 62);
+	/* Toolbar row - widened Delete and Rename buttons with 8px gaps to prevent text clipping */
+	SetRect(&r_new_bmk,   12, 40, 112, 64);  /* 100px - "+ Bookmark" */
+	SetRect(&r_new_fld,  120, 40, 204, 64);  /* 84px - "+ Folder" */
+	SetRect(&r_del,      212, 40, 284, 64);  /* 72px - "Delete" */
+	SetRect(&r_rename,   292, 40, 388, 64);  /* 96px - "Rename..." */
+	SetRect(&search_rect, 460, 42, 626, 62);
 
 	/* List & Scrollbar */
 	SetRect(&list, 12, 72, 608, 376);
 	SetRect(&sb_rect, 608, 72, 626, 376);
 	vis = (list.bottom - list.top - 4) / row_h;
 
-	/* Footer row - wider buttons to prevent text cutoff */
-	SetRect(&r_move,   12, 386,  82, 410);
-	SetRect(&r_imp,    88, 386, 202, 410);   /* 114px - "Import..." */
-	SetRect(&r_exp,   208, 386, 322, 410);   /* 114px - "Export..." */
+	/* Footer row - 8px grid compliant */
+	SetRect(&r_move,   12, 386,  88, 410);   /* 76px - "Move..." */
+	SetRect(&r_imp,    96, 386, 200, 410);   /* 104px - "Import..." */
+	SetRect(&r_exp,   208, 386, 312, 410);   /* 104px - "Export..." */
 	SetRect(&r_visit, 440, 386, 550, 410);   /* 110px - "Visit Page" */
 	SetRect(&r_done,  560, 386, 636, 410);   /* 76px - "Done" */
 
@@ -3659,7 +3649,7 @@ void macos9_bookmark_window_show(struct gui_window *g)
 			/* Search label and framed edit field */
 			RGBForeColor(&blk);
 			TextFont(1); TextFace(normal); TextSize(12);
-			MoveTo(356, 56);
+			MoveTo(404, 56);
 			DrawString("\pSearch:");
 
 			sf = search_rect;
@@ -3743,17 +3733,7 @@ void macos9_bookmark_window_show(struct gui_window *g)
 			SetClip(saveclip);
 			DisposeRgn(saveclip);
 
-			/* Bottom status / preview - positioned above footer buttons (y=386) */
-			RGBForeColor(&blk);
-			TextFont(1); TextFace(normal); TextSize(10);
-			if (sel >= 0 && sel < nrows && !rows[sel].is_folder) {
-				int bi = rows[sel].bidx;
-				if (bi >= 0 && bi < macsurf_bookmark_count) {
-					MoveTo(248, 380);
-					DrawText(macsurf_bookmarks[bi].url, 0,
-						(short)strlen(macsurf_bookmarks[bi].url));
-				}
-			} else if (nrows == 0) {
+			if (nrows == 0) {
 				MoveTo(list.left + 20, list.top + 30);
 				TextFont(1); TextFace(normal); TextSize(12);
 				if (filter[0] != '\0')

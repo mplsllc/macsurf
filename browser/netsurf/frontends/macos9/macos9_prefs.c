@@ -356,22 +356,35 @@ static const Rect s_btn_home_default_rect = { 124, 164, 146, 284 };
 static const Rect s_te_ww_rect            = { 192,  76, 214, 140 };
 static const Rect s_te_wh_rect            = { 192, 216, 214, 280 };
 
-/* Web Content panel - aligned to 8px grid: label baseline at top+12 (8px checkbox + 4px gap) */
-static const Rect s_ck_images_rect        = {  80,  24, 100, 456 };
-static const Rect s_ck_anim_rect          = { 124,  24, 144, 456 };
-static const Rect s_ck_css_rect           = { 168,  24, 188, 456 };
-static const Rect s_ck_js_rect            = { 212,  24, 232, 456 };
-static const Rect s_ck_popups_rect        = { 256,  24, 276, 456 };
-static const Rect s_ck_ads_rect           = { 300,  24, 320, 456 };
+/* Web Content panel native checkbox glyph bounds (20x20 px at left edge) */
+static const Rect s_ck_images_ctrl_rect   = {  80,  24, 100,  44 };
+static const Rect s_ck_anim_ctrl_rect     = { 124,  24, 144,  44 };
+static const Rect s_ck_css_ctrl_rect      = { 168,  24, 188,  44 };
+static const Rect s_ck_js_ctrl_rect       = { 212,  24, 232,  44 };
+static const Rect s_ck_popups_ctrl_rect   = { 256,  24, 276,  44 };
+static const Rect s_ck_ads_ctrl_rect      = { 300,  24, 320,  44 };
+
+/* Web Content logical hit-test row bounds (full clickable width: 24..456) */
+static const Rect s_ck_images_row_rect    = {  80,  24, 100, 456 };
+static const Rect s_ck_anim_row_rect      = { 124,  24, 144, 456 };
+static const Rect s_ck_css_row_rect       = { 168,  24, 188, 456 };
+static const Rect s_ck_js_row_rect        = { 212,  24, 232, 456 };
+static const Rect s_ck_popups_row_rect    = { 256,  24, 276, 456 };
+static const Rect s_ck_ads_row_rect       = { 300,  24, 320, 456 };
 
 /* Appearance panel */
 static const Rect s_pp_font_rect          = {  88, 160, 110, 280 };
 static const Rect s_pp_minfont_rect       = { 152, 160, 174, 280 };
 
-/* Privacy panel */
-static const Rect s_ck_cookies_rect       = {  74,  24,  94, 456 };
-static const Rect s_ck_ref_rect           = { 122,  24, 142, 456 };
-static const Rect s_ck_dnt_rect           = { 170,  24, 190, 456 };
+/* Privacy panel native checkbox glyph bounds (20x20 px at left edge) */
+static const Rect s_ck_cookies_ctrl_rect  = {  74,  24,  94,  44 };
+static const Rect s_ck_ref_ctrl_rect      = { 122,  24, 142,  44 };
+static const Rect s_ck_dnt_ctrl_rect      = { 170,  24, 190,  44 };
+
+/* Privacy panel logical hit-test row bounds (full clickable width: 24..456) */
+static const Rect s_ck_cookies_row_rect   = {  74,  24,  94, 456 };
+static const Rect s_ck_ref_row_rect       = { 122,  24, 142, 456 };
+static const Rect s_ck_dnt_row_rect       = { 170,  24, 190, 456 };
 static const Rect s_btn_cache_rect        = { 230,  24, 254, 160 };
 static const Rect s_btn_hist_rect         = { 230, 175, 254, 310 };
 
@@ -473,6 +486,7 @@ static ControlRef prefs_create_checkbox(WindowRef win, const Rect *r,
 	 * white background cutout on platinum window background. */
 	ControlRef c = NewControl(win, r, "\p", 1, (short)(initial ? 1 : 0), 0, 1,
 		kControlCheckBoxProc, 0);
+	if (c != NULL) AutoEmbedControl(c, win);
 	(void)title; /* Label drawn in prefs_paint */
 	return c;
 }
@@ -485,6 +499,7 @@ static ControlRef prefs_create_button(WindowRef win, const Rect *r,
 	c_to_pstring(title, pstr);
 	c = NewControl(win, r, pstr, 1, 0, 0, 0,
 		kControlPushButtonProc, 0);
+	if (c != NULL) AutoEmbedControl(c, win);
 	return c;
 }
 
@@ -513,6 +528,7 @@ static ControlRef prefs_create_tabs(WindowRef win, const Rect *r,
 			sizeof(info), (Ptr)&info);
 	}
 	SetControlValue(c, (short)initial_tab);
+	AutoEmbedControl(c, win);
 	return c;
 }
 
@@ -530,11 +546,14 @@ static ControlRef prefs_create_popup(WindowRef win, const Rect *r,
 	}
 	c = NewControl(win, r, "\p", 1, (short)initial_item, m_id, 0,
 		popupMenuProc, 0);
-	if (c != NULL && m != NULL) {
-		SetControlPopupMenuHandle(c, m);
-		SetControlPopupMenuID(c, m_id);
-		SetControlMinimum(c, 1);
-		SetControlMaximum(c, (short)count);
+	if (c != NULL) {
+		if (m != NULL) {
+			SetControlPopupMenuHandle(c, m);
+			SetControlPopupMenuID(c, m_id);
+			SetControlMinimum(c, 1);
+			SetControlMaximum(c, (short)count);
+		}
+		AutoEmbedControl(c, win);
 	}
 	return c;
 }
@@ -659,6 +678,7 @@ static void prefs_set_cat(struct prefs_win *pw, int cat)
 	if (pw->tabs != NULL) {
 		SetControlValue(pw->tabs, (short)(cat + 1));
 	}
+	SetPortWindowPort(pw->win);
 	prefs_panel_vis(pw);
 	SetRect(&r, 0, PREFS_PANEL_TOP, PREFS_W_W, PREFS_PANEL_BOT);
 	InvalWindowRect(pw->win, &r);
@@ -959,17 +979,17 @@ static void prefs_paint(struct prefs_win *pw)
 		 * Checkbox is 20px tall (top to bottom). Center vertically:
 		 * baseline at rect_top + 14 (8px checkbox + 2px gap + 4px baseline offset for Geneva 12). */
 		#define CK_LABEL_V(top) ((short)((top) + 14))
-		MoveTo((short)(s_ck_images_rect.left + 22), CK_LABEL_V(s_ck_images_rect.top));
+		MoveTo((short)(s_ck_images_ctrl_rect.left + 22), CK_LABEL_V(s_ck_images_ctrl_rect.top));
 		DrawString("\pLoad images");
-		MoveTo((short)(s_ck_anim_rect.left + 22), CK_LABEL_V(s_ck_anim_rect.top));
+		MoveTo((short)(s_ck_anim_ctrl_rect.left + 22), CK_LABEL_V(s_ck_anim_ctrl_rect.top));
 		DrawString("\pAnimate images");
-		MoveTo((short)(s_ck_css_rect.left + 22), CK_LABEL_V(s_ck_css_rect.top));
+		MoveTo((short)(s_ck_css_ctrl_rect.left + 22), CK_LABEL_V(s_ck_css_ctrl_rect.top));
 		DrawString("\pUse website styles (CSS)");
-		MoveTo((short)(s_ck_js_rect.left + 22), CK_LABEL_V(s_ck_js_rect.top));
+		MoveTo((short)(s_ck_js_ctrl_rect.left + 22), CK_LABEL_V(s_ck_js_ctrl_rect.top));
 		DrawString("\pEnable JavaScript");
-		MoveTo((short)(s_ck_popups_rect.left + 22), CK_LABEL_V(s_ck_popups_rect.top));
+		MoveTo((short)(s_ck_popups_ctrl_rect.left + 22), CK_LABEL_V(s_ck_popups_ctrl_rect.top));
 		DrawString("\pBlock pop-up windows");
-		MoveTo((short)(s_ck_ads_rect.left + 22), CK_LABEL_V(s_ck_ads_rect.top));
+		MoveTo((short)(s_ck_ads_ctrl_rect.left + 22), CK_LABEL_V(s_ck_ads_ctrl_rect.top));
 		DrawString("\pBlock advertisements");
 		#undef CK_LABEL_V
 
@@ -1009,11 +1029,11 @@ static void prefs_paint(struct prefs_win *pw)
 		/* Checkbox labels - drawn manually to avoid white cutout.
 		 * Center vertically: baseline at rect_top + 14. */
 		#define CK_LABEL_V(top) ((short)((top) + 14))
-		MoveTo((short)(s_ck_cookies_rect.left + 22), CK_LABEL_V(s_ck_cookies_rect.top));
+		MoveTo((short)(s_ck_cookies_ctrl_rect.left + 22), CK_LABEL_V(s_ck_cookies_ctrl_rect.top));
 		DrawString("\pStore and send cookies");
-		MoveTo((short)(s_ck_ref_rect.left + 22), CK_LABEL_V(s_ck_ref_rect.top));
+		MoveTo((short)(s_ck_ref_ctrl_rect.left + 22), CK_LABEL_V(s_ck_ref_ctrl_rect.top));
 		DrawString("\pSend Referer header");
-		MoveTo((short)(s_ck_dnt_rect.left + 22), CK_LABEL_V(s_ck_dnt_rect.top));
+		MoveTo((short)(s_ck_dnt_ctrl_rect.left + 22), CK_LABEL_V(s_ck_dnt_ctrl_rect.top));
 		DrawString("\pSend Do Not Track request");
 		#undef CK_LABEL_V
 
@@ -1128,16 +1148,17 @@ static void prefs_do_popup(ControlRef c, MenuHandle m, Point lp)
 
 
 
-static void prefs_check_toggle(ControlRef c, Point lp)
+static void prefs_check_toggle(ControlRef c, Point lp, const Rect *ctrl_rect)
 {
-	short part;
+	short cur;
 	if (c == NULL) return;
-	part = TrackControl(c, lp, NULL);
-	if (part != 0) {
-		short cur = GetControlValue(c);
-		SetControlValue(c, cur ? 0 : 1);
-		Draw1Control(c);
+	if (ctrl_rect != NULL && PtInRect(lp, ctrl_rect)) {
+		short part = TrackControl(c, lp, NULL);
+		if (part == 0) return;
 	}
+	cur = GetControlValue(c);
+	SetControlValue(c, cur ? 0 : 1);
+	Draw1Control(c);
 }
 
 static void prefs_te_focus(struct prefs_win *pw, TEHandle te, Point lp)
@@ -1246,23 +1267,23 @@ static int prefs_click(struct prefs_win *pw, Point lp)
 		break;
 
 	case PREFS_CAT_CONTENT:
-		if (PtInRect(lp, &s_ck_images_rect)) {
-			prefs_check_toggle(pw->ck_images, lp); return 0;
+		if (PtInRect(lp, &s_ck_images_row_rect)) {
+			prefs_check_toggle(pw->ck_images, lp, &s_ck_images_ctrl_rect); return 0;
 		}
-		if (PtInRect(lp, &s_ck_anim_rect)) {
-			prefs_check_toggle(pw->ck_anim, lp); return 0;
+		if (PtInRect(lp, &s_ck_anim_row_rect)) {
+			prefs_check_toggle(pw->ck_anim, lp, &s_ck_anim_ctrl_rect); return 0;
 		}
-		if (PtInRect(lp, &s_ck_css_rect)) {
-			prefs_check_toggle(pw->ck_css, lp); return 0;
+		if (PtInRect(lp, &s_ck_css_row_rect)) {
+			prefs_check_toggle(pw->ck_css, lp, &s_ck_css_ctrl_rect); return 0;
 		}
-		if (PtInRect(lp, &s_ck_js_rect)) {
-			prefs_check_toggle(pw->ck_js, lp); return 0;
+		if (PtInRect(lp, &s_ck_js_row_rect)) {
+			prefs_check_toggle(pw->ck_js, lp, &s_ck_js_ctrl_rect); return 0;
 		}
-		if (PtInRect(lp, &s_ck_popups_rect)) {
-			prefs_check_toggle(pw->ck_popups, lp); return 0;
+		if (PtInRect(lp, &s_ck_popups_row_rect)) {
+			prefs_check_toggle(pw->ck_popups, lp, &s_ck_popups_ctrl_rect); return 0;
 		}
-		if (PtInRect(lp, &s_ck_ads_rect)) {
-			prefs_check_toggle(pw->ck_ads, lp); return 0;
+		if (PtInRect(lp, &s_ck_ads_row_rect)) {
+			prefs_check_toggle(pw->ck_ads, lp, &s_ck_ads_ctrl_rect); return 0;
 		}
 		break;
 
@@ -1276,14 +1297,14 @@ static int prefs_click(struct prefs_win *pw, Point lp)
 		break;
 
 	case PREFS_CAT_PRIVACY:
-		if (PtInRect(lp, &s_ck_cookies_rect)) {
-			prefs_check_toggle(pw->ck_cookies, lp); return 0;
+		if (PtInRect(lp, &s_ck_cookies_row_rect)) {
+			prefs_check_toggle(pw->ck_cookies, lp, &s_ck_cookies_ctrl_rect); return 0;
 		}
-		if (PtInRect(lp, &s_ck_ref_rect)) {
-			prefs_check_toggle(pw->ck_ref, lp); return 0;
+		if (PtInRect(lp, &s_ck_ref_row_rect)) {
+			prefs_check_toggle(pw->ck_ref, lp, &s_ck_ref_ctrl_rect); return 0;
 		}
-		if (PtInRect(lp, &s_ck_dnt_rect)) {
-			prefs_check_toggle(pw->ck_dnt, lp); return 0;
+		if (PtInRect(lp, &s_ck_dnt_row_rect)) {
+			prefs_check_toggle(pw->ck_dnt, lp, &s_ck_dnt_ctrl_rect); return 0;
 		}
 		if (PtInRect(lp, &s_btn_cache_rect)) {
 			part = TrackControl(pw->btn_cache, lp, NULL);
@@ -1355,6 +1376,7 @@ void macos9_prefs_show(void)
 	EventRecord ev;
 	Rect wb;
 	Str255 pt;
+	ControlRef root = NULL;
 	int done = 0;
 
 	memset(&pw, 0, sizeof pw);
@@ -1375,6 +1397,8 @@ void macos9_prefs_show(void)
 	SetWTitle(pw.win, pt);
 	SetWRefCon(pw.win, 0);  /* dsMemWZErr guard */
 
+	CreateRootControl(pw.win, &root);
+
 	GetPort(&saved_port);
 	SetPortWindowPort(pw.win);
 	TextFont(1);
@@ -1394,17 +1418,17 @@ void macos9_prefs_show(void)
 	pw.btn_home_default = prefs_create_button(pw.win, &s_btn_home_default_rect, "Restore Default");
 
 	/* Web Content checkboxes */
-	pw.ck_images = prefs_create_checkbox(pw.win, &s_ck_images_rect, "Load images",
+	pw.ck_images = prefs_create_checkbox(pw.win, &s_ck_images_ctrl_rect, "Load images",
 		nsoption_bool(foreground_images) || nsoption_bool(background_images));
-	pw.ck_anim   = prefs_create_checkbox(pw.win, &s_ck_anim_rect, "Animate images",
+	pw.ck_anim   = prefs_create_checkbox(pw.win, &s_ck_anim_ctrl_rect, "Animate images",
 		nsoption_bool(animate_images));
-	pw.ck_css    = prefs_create_checkbox(pw.win, &s_ck_css_rect, "Use website styles (CSS)",
+	pw.ck_css    = prefs_create_checkbox(pw.win, &s_ck_css_ctrl_rect, "Use website styles (CSS)",
 		nsoption_bool(author_level_css));
-	pw.ck_js     = prefs_create_checkbox(pw.win, &s_ck_js_rect, "Enable JavaScript",
+	pw.ck_js     = prefs_create_checkbox(pw.win, &s_ck_js_ctrl_rect, "Enable JavaScript",
 		nsoption_bool(enable_javascript));
-	pw.ck_popups = prefs_create_checkbox(pw.win, &s_ck_popups_rect, "Block pop-up windows",
+	pw.ck_popups = prefs_create_checkbox(pw.win, &s_ck_popups_ctrl_rect, "Block pop-up windows",
 		nsoption_bool(disable_popups));
-	pw.ck_ads    = prefs_create_checkbox(pw.win, &s_ck_ads_rect, "Block advertisements",
+	pw.ck_ads    = prefs_create_checkbox(pw.win, &s_ck_ads_ctrl_rect, "Block advertisements",
 		nsoption_bool(block_advertisements));
 
 	/* Appearance popups */
@@ -1417,11 +1441,11 @@ void macos9_prefs_show(void)
 		s_popup_minfont.count, prefs_popup_item(&s_popup_minfont, nsoption_int(font_min_size)));
 
 	/* Privacy checkboxes & buttons */
-	pw.ck_cookies = prefs_create_checkbox(pw.win, &s_ck_cookies_rect, "Store and send cookies",
+	pw.ck_cookies = prefs_create_checkbox(pw.win, &s_ck_cookies_ctrl_rect, "Store and send cookies",
 		nsoption_bool(accept_cookies));
-	pw.ck_ref     = prefs_create_checkbox(pw.win, &s_ck_ref_rect, "Send Referer header",
+	pw.ck_ref     = prefs_create_checkbox(pw.win, &s_ck_ref_ctrl_rect, "Send Referer header",
 		nsoption_bool(send_referer));
-	pw.ck_dnt     = prefs_create_checkbox(pw.win, &s_ck_dnt_rect, "Send Do Not Track request",
+	pw.ck_dnt     = prefs_create_checkbox(pw.win, &s_ck_dnt_ctrl_rect, "Send Do Not Track request",
 		nsoption_bool(do_not_track));
 	pw.btn_cache  = prefs_create_button(pw.win, &s_btn_cache_rect, "Clear Cache...");
 	pw.btn_hist   = prefs_create_button(pw.win, &s_btn_hist_rect, "Clear History...");
@@ -1454,6 +1478,13 @@ void macos9_prefs_show(void)
 	ShowWindow(pw.win);
 	SelectWindow(pw.win);
 
+	SetPortWindowPort(pw.win);
+	{
+		Rect port_r;
+		GetWindowPortBounds(pw.win, &port_r);
+		InvalWindowRect(pw.win, &port_r);
+	}
+
 	if (pw.te_home != NULL) {
 		pw.active_te = pw.te_home;
 		TEActivate(pw.te_home);
@@ -1477,6 +1508,7 @@ void macos9_prefs_show(void)
 			} else if (part == inGoAway) {
 				if (TrackGoAway(pw.win, ev.where)) done = 1;
 			} else if (part == inContent) {
+				SetPortWindowPort(pw.win);
 				lp = ev.where;
 				GlobalToLocal(&lp);
 				if (prefs_click(&pw, lp)) done = 1;
@@ -1487,6 +1519,24 @@ void macos9_prefs_show(void)
 		case autoKey:
 			if (prefs_key(&pw, &ev)) done = 1;
 			break;
+		case activateEvt: {
+			WindowRef which = (WindowRef)(unsigned long)ev.message;
+			Boolean becoming_active = (ev.modifiers & activeFlag) != 0;
+			if (which == pw.win) {
+				SetPortWindowPort(pw.win);
+				if (becoming_active) {
+					if (pw.active_te != NULL) TEActivate(pw.active_te);
+				} else {
+					if (pw.active_te != NULL) TEDeactivate(pw.active_te);
+				}
+				{
+					Rect pb;
+					GetWindowPortBounds(pw.win, &pb);
+					InvalWindowRect(pw.win, &pb);
+				}
+			}
+			break;
+		}
 		case updateEvt:
 			if ((WindowRef)ev.message == pw.win) {
 				BeginUpdate(pw.win);

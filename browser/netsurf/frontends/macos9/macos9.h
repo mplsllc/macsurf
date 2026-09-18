@@ -297,6 +297,10 @@ OSErr macos9_downloads_dir_get(short *vRef, long *dirID);
  * Bookmarks, log all nest under one MacSurfData folder). subfolder NULL =
  * the MacSurfData folder itself. */
 OSErr macos9_data_dir_get(const char *subfolder, short *vRef, long *dirID);
+int macos9_choose_folder(char *out_path, size_t cap, FSSpec *out_spec);
+int macos9_finder_open_folder(short vRef, long dirID);
+int macos9_finder_open_file(const FSSpec *spec);
+int macos9_finder_reveal_file(const FSSpec *spec);
 #endif
 
 struct gui_window *macos9_find_window(WindowRef w);
