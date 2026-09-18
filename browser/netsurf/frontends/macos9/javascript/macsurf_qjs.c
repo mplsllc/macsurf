@@ -276,6 +276,39 @@ int js_realm_valid_for_content(struct jsthread *thread,
 	return (owner != NULL && owner->content == content) ? 1 : 0;
 }
 
+/* fixes1292/1293 - Validate that a jsthread is still live and owns the
+ * expected content/document before dispatching JS work to it.  The minimal
+ * NULL checks in js_fire_window_load are insufficient: a tab close or
+ * navigation can free the context while late subresource callbacks still
+ * reach html_proceed_to_done, passing a stale thread pointer with a
+ * non-NULL but freed ctx.  This function checks the authoritative
+ * g_qjs_threads list, the g_heap_list for ctx liveness/generation, and
+ * the realm owner record for content/document identity. */
+static int qjs_thread_is_live_for_dispatch(struct jsthread *thread,
+		struct content *expected_content,
+		dom_document *expected_document)
+{
+	struct qjs_thread_owner *towner;
+	struct qjs_realm_owner *rowner;
+	if (thread == NULL || thread->ctx == NULL || thread->heap == NULL)
+		return 0;
+	/* Thread must be registered. */
+	towner = qjs_thread_owner(thread);
+	if (towner == NULL)
+		return 0;
+	/* Context must be live at this address with matching generation. */
+	if (qjs_ctx_gen(thread->ctx) == 0)
+		return 0;
+	/* Realm owner must exist and match content. */
+	rowner = qjs_owner_for_ctx(thread->ctx);
+	if (rowner == NULL || rowner->content != expected_content)
+		return 0;
+	/* Realm owner must match document. */
+	if (expected_document != NULL && rowner->document != expected_document)
+		return 0;
+	return 1;
+}
+
 /* ------------------------------------------------------------------ */
 /* Interrupt handler - Cmd-. on OS 9                                   */
 /* ------------------------------------------------------------------ */
@@ -16195,6 +16228,18 @@ unsigned char js_fire_event(struct jsthread *thread, const char *type,
 {
 	(void)doc; (void)target;
 	if (thread == NULL || thread->ctx == NULL || type == NULL) return 0;
+	/* fixes1293 - Validate thread liveness before dispatching. */
+	{
+		struct content *c = (struct content *)thread->doc_priv;
+		if (!qjs_thread_is_live_for_dispatch(thread, c, doc)) {
+			macsurf_debug_log_writef(
+				"LIFE qjs: fire_event SKIPPED stale thread=%p ctx=%p "
+				"c=%p type=%s",
+				(void *)thread, (void *)thread->ctx,
+				(void *)c, type);
+			return 0;
+		}
+	}
 	/* Fire window.dispatchEvent(new Event(type)) */
 	{
 		/* fixes603 - buffer/guard mismatch overflow: bytes written are
@@ -16232,6 +16277,18 @@ void js_fire_mutation_batch(struct jsthread *thread)
 		"__msDeliverMutations();"
 		"}catch(e){}})();";
 	if (thread == NULL || thread->ctx == NULL) return;
+	/* fixes1293 - Validate thread liveness before dispatching. */
+	{
+		struct content *c = (struct content *)thread->doc_priv;
+		if (!qjs_thread_is_live_for_dispatch(thread, c, NULL)) {
+			macsurf_debug_log_writef(
+				"LIFE qjs: mutation_batch SKIPPED stale thread=%p ctx=%p "
+				"c=%p",
+				(void *)thread, (void *)thread->ctx,
+				(void *)c);
+			return;
+		}
+	}
 	qjs_page_dispatch_eval(thread, s_deliver_src,
 		MACSURF_JS_TASK_INTERNAL_NOTIFICATION);
 }
@@ -16283,6 +16340,18 @@ unsigned char js_fire_dom_ready(struct jsthread *thread, struct dom_document *do
 	if (thread == NULL || thread->ctx == NULL) {
 		return 0;
 	}
+	/* fixes1293 - Same stale-thread validation as js_fire_window_load. */
+	{
+		struct content *c = (struct content *)thread->doc_priv;
+		if (!qjs_thread_is_live_for_dispatch(thread, c, doc)) {
+			macsurf_debug_log_writef(
+				"LIFE qjs: dom_ready SKIPPED stale thread=%p ctx=%p "
+				"c=%p doc=%p",
+				(void *)thread, (void *)thread->ctx,
+				(void *)c, (void *)doc);
+			return 0;
+		}
+	}
 	qjs_page_dispatch_eval(thread, s_dom_ready_src,
 		MACSURF_JS_TASK_INTERNAL_NOTIFICATION);
 	/* fixes862 (#289 probe) - was "qjs: DOMContentLoaded+load fired to
@@ -16330,9 +16399,29 @@ unsigned char js_fire_window_load(struct jsthread *thread, struct dom_document *
 		"try{if(typeof window!=='undefined')"
 		"window.dispatchEvent(new Event('load'));}catch(e){}"
 		"}catch(e){}})();";
-	(void)doc;
+
 	if (thread == NULL || thread->ctx == NULL) {
 		return 0;
+	}
+	/* fixes1293 - Validate that the thread is still live and owns the
+	 * expected content/document.  A stale thread from a closed tab or
+	 * navigated page can have non-NULL but freed ctx, which would crash
+	 * QuickJS when JS_Eval tries to use it.  The validation checks:
+	 *   - thread is registered (in g_qjs_threads)
+	 *   - ctx is live with matching generation (in g_heap_list)
+	 *   - realm owner matches the thread's doc_priv (html_content)
+	 *   - realm owner matches the passed dom_document
+	 */
+	{
+		struct content *c = (struct content *)thread->doc_priv;
+		if (!qjs_thread_is_live_for_dispatch(thread, c, doc)) {
+			macsurf_debug_log_writef(
+				"LIFE qjs: window_load SKIPPED stale thread=%p ctx=%p "
+				"c=%p doc=%p",
+				(void *)thread, (void *)thread->ctx,
+				(void *)c, (void *)doc);
+			return 0;
+		}
 	}
 	qjs_page_dispatch_eval(thread, s_window_load_src,
 		MACSURF_JS_TASK_INTERNAL_NOTIFICATION);
@@ -16447,6 +16536,22 @@ unsigned char js_fire_script_load(struct jsthread *thread,
 	JSValue fn, el, args[2], ret;
 
 	if (thread == NULL || thread->ctx == NULL || node == NULL) return 0;
+	/* fixes1293 - Validate thread liveness before dispatching. */
+	{
+		struct content *c = (struct content *)thread->doc_priv;
+		dom_document *doc = NULL;
+		macsurf_dom_node_get_owner_document(node, &doc);
+		if (!qjs_thread_is_live_for_dispatch(thread, c, doc)) {
+			macsurf_debug_log_writef(
+				"LIFE qjs: script_load SKIPPED stale thread=%p ctx=%p "
+				"c=%p node=%p",
+				(void *)thread, (void *)thread->ctx,
+				(void *)c, (void *)node);
+			if (doc) macsurf_dom_node_unref((dom_node *)doc);
+			return 0;
+		}
+		if (doc) macsurf_dom_node_unref((dom_node *)doc);
+	}
 	ctx = thread->ctx;
 
 	/* #265 - firing a script onload/onerror handler is a C->JS event
