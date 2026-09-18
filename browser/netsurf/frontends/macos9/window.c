@@ -418,24 +418,49 @@ static void compute_favicon_rect(const Rect *u, Rect *o)
 
 static void set_url_te_geometry(TEHandle te, const Rect *view);
 
+#ifdef __MACOS9__
+static void move_control_if_needed(ControlRef c, short x, short y) {
+	Rect r;
+	if (!c) return;
+	GetControlBounds(c, &r);
+	if (r.left != x || r.top != y) {
+		MoveControl(c, x, y);
+	}
+}
+
+static void size_control_if_needed(ControlRef c, short w, short h) {
+	Rect r;
+	if (!c) return;
+	GetControlBounds(c, &r);
+	if ((r.right - r.left) != w || (r.bottom - r.top) != h) {
+		SizeControl(c, w, h);
+	}
+}
+#endif
+
 void macos9_window_layout_scaffold(struct macos9_window *mw) {
 	Rect c;
 	short w, h, ux, ur, cb, ht;
 	short tab_top;
 	struct gui_window *t;
+	Rect old_content;
+	Boolean geom_changed;
 
 	if (!mw || !mw->window) return;
+	old_content = mw->content_rect;
 	tab_top = (mw->tab_count > 1) ? MACOS9_TAB_STRIP_H : 0;
 	GetWindowBounds(mw->window, 33, &c);
 	w = (short)(c.right - c.left);
 	h = (short)(c.bottom - c.top);
 
+#ifdef __MACOS9__
 	/* 5 buttons: Back, Forward, Stop, Refresh, Home */
-	if (mw->back_btn)    MoveControl(mw->back_btn, 4, (short)(tab_top + 6));
-	if (mw->forward_btn) MoveControl(mw->forward_btn, 42, (short)(tab_top + 6));
-	if (mw->stop_btn)    MoveControl(mw->stop_btn, 80, (short)(tab_top + 6));
-	if (mw->reload_btn)  MoveControl(mw->reload_btn, 118, (short)(tab_top + 6));
-	if (mw->home_btn)    MoveControl(mw->home_btn, 156, (short)(tab_top + 6));
+	if (mw->back_btn)    move_control_if_needed(mw->back_btn, 4, (short)(tab_top + 6));
+	if (mw->forward_btn) move_control_if_needed(mw->forward_btn, 42, (short)(tab_top + 6));
+	if (mw->stop_btn)    move_control_if_needed(mw->stop_btn, 80, (short)(tab_top + 6));
+	if (mw->reload_btn)  move_control_if_needed(mw->reload_btn, 118, (short)(tab_top + 6));
+	if (mw->home_btn)    move_control_if_needed(mw->home_btn, 156, (short)(tab_top + 6));
+#endif
 
 	ux = (short)(4 + 4*38 + 36 + 2);
 	ur = (short)(w - 4 - MACOS9_LOADER_SIZE - 8);
@@ -460,14 +485,23 @@ void macos9_window_layout_scaffold(struct macos9_window *mw) {
 	SetRect(&mw->content_rect, 0, (short)(tab_top + 48), (short)(w - 15), cb);
 	SetRect(&mw->status_rect, 0, cb, (short)(w - 15), ht);
 
+#ifdef __MACOS9__
 	if (mw->vscroll) {
-		MoveControl(mw->vscroll, (short)(w - 15), (short)(tab_top + 47));
-		SizeControl(mw->vscroll, 16, (short)(cb - tab_top - 46));
+		move_control_if_needed(mw->vscroll, (short)(w - 15), (short)(tab_top + 47));
+		size_control_if_needed(mw->vscroll, 16, (short)(cb - tab_top - 46));
 	}
 	if (mw->hscroll) {
-		MoveControl(mw->hscroll, -1, ht);
-		SizeControl(mw->hscroll, (short)(w - 13), 16);
+		move_control_if_needed(mw->hscroll, -1, ht);
+		size_control_if_needed(mw->hscroll, (short)(w - 13), 16);
 	}
+#endif
+
+	geom_changed = (Boolean)(
+		old_content.left != mw->content_rect.left ||
+		old_content.top != mw->content_rect.top ||
+		old_content.right != mw->content_rect.right ||
+		old_content.bottom != mw->content_rect.bottom
+	);
 
 	/* Synchronize all tabs hosted by this scaffold */
 	for (t = mw->tabs; t != NULL; t = t->next) {
@@ -484,9 +518,11 @@ void macos9_window_layout_scaffold(struct macos9_window *mw) {
 		if (mw->vscroll) t->vscroll = mw->vscroll;
 		if (mw->hscroll) t->hscroll = mw->hscroll;
 		if (mw->url_te) t->url_te = mw->url_te;
-		t->needs_reformat = 1;
-		if (t->bw != NULL) {
-			browser_window_schedule_reformat(t->bw);
+		if (geom_changed) {
+			t->needs_reformat = 1;
+			if (t->bw != NULL) {
+				browser_window_schedule_reformat(t->bw);
+			}
 		}
 	}
 }
@@ -1770,12 +1806,14 @@ void macos9_window_destroy(struct gui_window *g) {
  * repaint (NEW_CONTENT, reformat, etc). */
 static nserror macos9_gw_invalidate(struct gui_window *g, const struct rect *r) {
 	if(!g||!g->window) return 0;
-	if (g->mw != NULL && g != g->mw->active_tab) return 0;
+	if (g->mw != NULL && g != g->mw->active_tab) {
+		macsurf_debug_log_writef("LIFE INVAL DROPPED: g=%p mw=%p act=%p",
+			(void*)g, (void*)g->mw, (void*)g->mw->active_tab);
+		return 0;
+	}
 	if (r != NULL) {
 		Rect ir;
 		int wx0, wy0, wx1, wy1;
-		macsurf_debug_log_writef("gw_invalidate: r=(%d,%d,%d,%d)",
-			r->x0, r->y0, r->x1, r->y1);
 		wx0 = r->x0 + g->content_rect.left - g->scroll_x;
 		wy0 = r->y0 + g->content_rect.top  - g->scroll_y;
 		wx1 = r->x1 + g->content_rect.left - g->scroll_x;
@@ -1791,7 +1829,6 @@ static nserror macos9_gw_invalidate(struct gui_window *g, const struct rect *r) 
 		ir.bottom = (short)wy1;
 		InvalWindowRect(g->window, &ir);
 	} else {
-		MS_LOG("gw_invalidate: r=NULL (full)");
 		InvalWindowRect(g->window, &g->content_rect);
 	}
 	return 0;
@@ -3118,7 +3155,19 @@ void macos9_tab_switch(struct macos9_window *mw, struct gui_window *new_tab)
 
 	macos9_window_update_button_states(new_tab);
 	macos9_window_update_scrollbars(new_tab);
+
+#ifdef __MACOS9__
+	if (mw->tab_count > 1) {
+		Rect tab_strip;
+		SetRect(&tab_strip, 0, 0, (short)(mw->content_rect.right + 15), MACOS9_TAB_STRIP_H);
+		InvalWindowRect(mw->window, &tab_strip);
+	}
+	InvalWindowRect(mw->window, &mw->url_rect);
+	InvalWindowRect(mw->window, &mw->content_rect);
+	InvalWindowRect(mw->window, &mw->status_rect);
+#else
 	macos9_window_invalidate_all(new_tab);
+#endif
 }
 
 /* Destroy a scaffold and all its tabs. */

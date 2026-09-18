@@ -761,7 +761,6 @@ void macos9_handle_update(const EventRecord *event) {
 	if (vr != NULL) {
 		GetPortVisibleRegion(GetWindowPort(win), vr);
 		GetRegionBounds(vr, &update_bounds);
-		DisposeRgn(vr); vr = NULL;
 	} else {
 		/* Last-resort fallback: assume whole content area is dirty. */
 		update_bounds = gw->content_rect;
@@ -817,21 +816,8 @@ void macos9_handle_update(const EventRecord *event) {
 			draw_status_bar(gw);
 		}
 	}
-	{ extern struct hlcache_handle *browser_window_get_content(struct browser_window *);
-	  struct hlcache_handle *cur = gw->bw ? browser_window_get_content(gw->bw) : NULL;
-	  macsurf_debug_log_writef("update: bw=%p current_content=%p ready=%d",
-	    gw->bw, cur,
-	    (gw->bw && browser_window_redraw_ready(gw->bw)) ? 1 : 0); }
 	if (gw->bw && browser_window_redraw_ready(gw->bw)) {
 		struct rect clip; struct redraw_context ctx;
-		macsurf_debug_log_writef(
-			"update: redraw_ready, bw=%p scroll=(%d,%d) crect=(%d,%d,%d,%d) ub=(%d,%d,%d,%d) gw=%d",
-			gw->bw, gw->scroll_x, gw->scroll_y,
-			(int)gw->content_rect.left, (int)gw->content_rect.top,
-			(int)gw->content_rect.right, (int)gw->content_rect.bottom,
-			(int)update_bounds.left, (int)update_bounds.top,
-			(int)update_bounds.right, (int)update_bounds.bottom,
-			(int)gworld_active);
 		/* Clip = update_bounds (the dirty bbox), in window coords.
 		 * NetSurf's box-tree walker prunes branches outside this. */
 		clip.x0 = update_bounds.left; clip.y0 = update_bounds.top;
@@ -927,12 +913,28 @@ void macos9_handle_update(const EventRecord *event) {
 		 * Bottom chrome = status bar.  Gradient bg paints first so
 		 * the URL bar and button icons sit on top of it. */
 		{
-			Boolean top_dirty = (Boolean)(update_bounds.top < gw->content_rect.top);
-			Boolean bot_dirty = (Boolean)(update_bounds.bottom > gw->content_rect.bottom);
-			if (top_dirty) {
+			Rect tab_strip_r, tb_r, status_r;
+			short tab_top = (gw->mw != NULL && gw->mw->tab_count > 1) ? MACOS9_TAB_STRIP_H : 0;
+			Boolean tab_dirty = (Boolean)0;
+			Boolean tb_dirty = (Boolean)0;
+			Boolean bot_dirty = (Boolean)0;
+
+			if (tab_top > 0) {
+				SetRect(&tab_strip_r, 0, 0, (short)(gw->content_rect.right + 15), tab_top);
+				tab_dirty = (vr != NULL) ? RectInRgn(&tab_strip_r, vr) : (update_bounds.top < tab_top);
+			}
+			SetRect(&tb_r, 0, tab_top, (short)(gw->content_rect.right + 15), (short)(gw->content_rect.top));
+			tb_dirty = (vr != NULL) ? RectInRgn(&tb_r, vr) : (update_bounds.top < gw->content_rect.top && update_bounds.bottom > tab_top);
+
+			SetRect(&status_r, 0, (short)(gw->content_rect.bottom), (short)(gw->content_rect.right + 15), (short)(gw->content_rect.bottom + 16));
+			bot_dirty = (vr != NULL) ? RectInRgn(&status_r, vr) : (update_bounds.bottom > gw->content_rect.bottom);
+
+			if (tab_dirty) {
 				if (gw->mw != NULL && gw->mw->tab_count > 1) {
 					macos9_tab_strip_draw(gw->mw);
 				}
+			}
+			if (tb_dirty) {
 				macos9_window_draw_toolbar_bg(gw);
 				draw_url_bar(gw);
 				DrawControls(win);
@@ -994,6 +996,7 @@ void macos9_handle_update(const EventRecord *event) {
 			if (savedClip != NULL) { SetClip(savedClip); DisposeRgn(savedClip); }
 		}
 	}
+	if (vr != NULL) { DisposeRgn(vr); vr = NULL; }
 	EndUpdate(win);
 	macos9_urlsug_draw(gw);   /* fixes763 - redraw dropdown atop fresh content */
 	/* fixes738 - viewport-gated image loading. After the content is
