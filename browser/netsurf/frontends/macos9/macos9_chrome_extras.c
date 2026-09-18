@@ -2012,8 +2012,8 @@ void macos9_history_window_show(struct gui_window *g)
 	SetRect(&sb_rect, 608, 72, 626, 376);
 	vis = (list.bottom - list.top - 4) / row_h;
 
-	/* Footer row */
-	SetRect(&r_visit, 464, 386, 550, 410);
+	/* Footer row - wider buttons to prevent text cutoff */
+	SetRect(&r_visit, 450, 386, 550, 410);
 	SetRect(&r_done,  558, 386, 626, 410);
 
 	/* Native Controls */
@@ -2021,6 +2021,13 @@ void macos9_history_window_show(struct gui_window *g)
 	btn_del   = chrome_create_pushbutton(win, &r_del,   "Delete");
 	btn_visit = chrome_create_pushbutton(win, &r_visit, "Visit Page");
 	btn_done  = chrome_create_pushbutton(win, &r_done,  "Done");
+
+	/* Disable default button ring on Done button */
+	{
+		Boolean bDefault = false;
+		SetControlData(btn_done, kControlNoPart,
+			kControlPushButtonDefaultTag, sizeof(bDefault), (Ptr)&bDefault);
+	}
 
 	nrows = hw_build_rows(rows, cap, today_day, filter);
 	sel = hw_next_entry(rows, nrows, 0);
@@ -3231,11 +3238,11 @@ void macos9_bookmark_window_show(struct gui_window *g)
 	SetRect(&sb_rect, 608, 72, 626, 376);
 	vis = (list.bottom - list.top - 4) / row_h;
 
-	/* Footer row */
+	/* Footer row - wider buttons to prevent text cutoff */
 	SetRect(&r_move,   12, 386,  82, 410);
-	SetRect(&r_imp,    88, 386, 178, 410);
-	SetRect(&r_exp,   184, 386, 274, 410);
-	SetRect(&r_visit, 464, 386, 550, 410);
+	SetRect(&r_imp,    88, 386, 198, 410);
+	SetRect(&r_exp,   204, 386, 314, 410);
+	SetRect(&r_visit, 450, 386, 550, 410);
 	SetRect(&r_done,  558, 386, 626, 410);
 
 	/* Native Controls */
@@ -3248,6 +3255,13 @@ void macos9_bookmark_window_show(struct gui_window *g)
 	btn_exp     = chrome_create_pushbutton(win, &r_exp,     "Export...");
 	btn_visit   = chrome_create_pushbutton(win, &r_visit,   "Visit Page");
 	btn_done    = chrome_create_pushbutton(win, &r_done,    "Done");
+
+	/* Disable default button ring on Done button */
+	{
+		Boolean bDefault = false;
+		SetControlData(btn_done, kControlNoPart,
+			kControlPushButtonDefaultTag, sizeof(bDefault), (Ptr)&bDefault);
+	}
 
 	nrows = bw_build_rows(rows, cap, filter);
 	sel = (nrows > 0) ? 0 : -1;

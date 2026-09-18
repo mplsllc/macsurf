@@ -681,10 +681,11 @@ static void dl_mgr_paint(void)
 				dl_draw_btn(&r_cancel, "\pCancel", 0);
 			} else if (nd->dl_state == 1) {
 				Rect r_reveal, r_open;
-				SetRect(&r_reveal, (short)(list.right - 134), (short)(y + 12),
+				/* Reveal: 68px, Open: 68px */
+				SetRect(&r_reveal, (short)(list.right - 140), (short)(y + 12),
 					(short)(list.right - 72), (short)(y + 36));
-				SetRect(&r_open, (short)(list.right - 68), (short)(y + 12),
-					(short)(list.right - 8), (short)(y + 36));
+				SetRect(&r_open, (short)(list.right - 70), (short)(y + 12),
+					(short)(list.right - 2), (short)(y + 36));
 				dl_draw_btn(&r_reveal, "\pReveal", 0);
 				dl_draw_btn(&r_open, "\pOpen", 0);
 			} else {
@@ -930,10 +931,11 @@ void macos9_download_mgr_click(short part, Point where)
 					}
 				} else if (nd->dl_state == 1) {
 					Rect r_reveal, r_open;
-					SetRect(&r_reveal, (short)(list.right - 134), (short)(y + 12),
+					/* Reveal: 68px, Open: 68px */
+					SetRect(&r_reveal, (short)(list.right - 140), (short)(y + 12),
 						(short)(list.right - 72), (short)(y + 36));
-					SetRect(&r_open, (short)(list.right - 68), (short)(y + 12),
-						(short)(list.right - 8), (short)(y + 36));
+					SetRect(&r_open, (short)(list.right - 70), (short)(y + 12),
+						(short)(list.right - 2), (short)(y + 36));
 					if (PtInRect(p, &r_reveal)) {
 						dl_draw_btn(&r_reveal, "\pReveal", 1);
 						dl_mgr_open_folder();
