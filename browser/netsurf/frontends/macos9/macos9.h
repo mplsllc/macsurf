@@ -487,6 +487,7 @@ struct gui_window *macos9_tab_create(struct macos9_window *mw,
 void macos9_tab_switch(struct macos9_window *mw, struct gui_window *new_tab);
 void macos9_scaffold_destroy(struct macos9_window *mw);
 void macos9_tab_strip_draw(struct macos9_window *mw);
+struct gui_window *macos9_tab_strip_hittest(struct macos9_window *mw, Point p);
 
 /* MACSURF_HOME_URL canonical definition is in macsurf_config.h.
  * Old frogfind default removed per fixes301. */

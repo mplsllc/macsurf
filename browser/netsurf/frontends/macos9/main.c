@@ -727,10 +727,6 @@ void macos9_handle_update(const EventRecord *event) {
 	if (macos9_download_mgr_is(win)) { macos9_download_mgr_draw(); return; }
 	if (!gw || macos9_quitting) return;
 	SetPortWindowPort(win); BeginUpdate(win);
-	/* Draw tab strip if this scaffold has multiple tabs */
-	if (gw->mw != NULL && gw->mw->tab_count > 1) {
-		macos9_tab_strip_draw(gw->mw);
-	}
 	/* fixes77f -- offscreen GWorld V2.
 	 *
 	 * Architecture (correcting fixes77c's failure mode):
@@ -809,6 +805,9 @@ void macos9_handle_update(const EventRecord *event) {
 		Boolean fb_bot_dirty = (Boolean)(update_bounds.bottom > gw->content_rect.bottom);
 		macos9_erase_content_base(&gw->content_rect);
 		if (fb_top_dirty) {
+			if (gw->mw != NULL && gw->mw->tab_count > 1) {
+				macos9_tab_strip_draw(gw->mw);
+			}
 			macos9_window_draw_toolbar_bg(gw);
 			draw_url_bar(gw);
 			DrawControls(win);
@@ -931,6 +930,9 @@ void macos9_handle_update(const EventRecord *event) {
 			Boolean top_dirty = (Boolean)(update_bounds.top < gw->content_rect.top);
 			Boolean bot_dirty = (Boolean)(update_bounds.bottom > gw->content_rect.bottom);
 			if (top_dirty) {
+				if (gw->mw != NULL && gw->mw->tab_count > 1) {
+					macos9_tab_strip_draw(gw->mw);
+				}
 				macos9_window_draw_toolbar_bg(gw);
 				draw_url_bar(gw);
 				DrawControls(win);
@@ -1150,6 +1152,9 @@ void macos9_handle_mouse_down(const EventRecord *event) {
 							struct gui_window *tab = macos9_tab_strip_hittest(gw->mw, p);
 							if (tab != NULL) {
 								macos9_tab_switch(gw->mw, tab);
+								break;
+							}
+							if (p.v >= 0 && p.v < MACOS9_TAB_STRIP_H) {
 								break;
 							}
 						}
