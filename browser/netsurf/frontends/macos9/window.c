@@ -2915,7 +2915,8 @@ struct gui_window *macos9_tab_create(struct macos9_window *mw,
 	window_list = g;
 	/* Set WRefCon to point to the active tab (always the front one) */
 	SetWRefCon(g->window, (long)g);
-	MS_LOG("tab_create: new tab in scaffold %p, count=%d", (void *)mw, mw->tab_count);
+	MS_LOG("tab_create: new tab in scaffold");
+	macsurf_debug_log_writef("tab_create: new tab in scaffold %p, count=%d", (void *)mw, mw->tab_count);
 	return g;
 }
 
