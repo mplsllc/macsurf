@@ -1616,7 +1616,8 @@ void macos9_history_init(void)
 
 /* chrome_confirm_delete lives in the bookmark-manager section below; the
  * History window (defined first) needs it for its Delete button. */
-static int chrome_confirm_delete(const char *msg);
+int macos9_chrome_confirm_delete(const char *msg);
+static int chrome_confirm_delete(const char *msg) { return macos9_chrome_confirm_delete(msg); }
 
 /* Read the TE's text into out (NUL-terminated). */
 static void chrome_te_get_text(TEHandle te, char *out, int cap)
@@ -2791,7 +2792,7 @@ static int chrome_prompt_text2(const char *title, const char *init_name,
 }
 
 /* Caution alert with Delete / Cancel. Returns 1 if the user confirms. */
-static int chrome_confirm_delete(const char *msg)
+int macos9_chrome_confirm_delete(const char *msg)
 {
 	Str255 p;
 	SInt16 item = 0;
@@ -3766,6 +3767,7 @@ void macos9_bookmark_window_show(struct gui_window *g)
 
 #else  /* !__MACOS9__ */
 void macos9_bookmark_window_show(struct gui_window *g) { (void)g; }
+int  macos9_chrome_confirm_delete(const char *msg) { (void)msg; return 1; }
 #endif
 
 /* Legacy "Show Bookmarks" alert - retained for ABI but no longer menu-

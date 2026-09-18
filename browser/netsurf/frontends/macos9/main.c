@@ -200,15 +200,29 @@ static void draw_status_bar(struct gui_window *gw) {
 	line.left = r.left; line.right = r.right;
 	line.top = r.top; line.bottom = (short)(r.top + 1);
 	RGBForeColor(&top); PaintRect(&line);
-	/* fixes627: pin a small chrome font (Geneva 9) before drawing status /
-	 * hover-URL text so it doesn't inherit a huge content-plot size. */
-	TextFont(kFontIDGeneva); TextSize(9); TextFace(0);
+	/* Geneva 10pt caption font per UI Design Guide (UI-DESIGN-GUIDE.md:34-38). */
+	TextFont(kFontIDGeneva); TextSize(10); TextFace(0);
 	RGBForeColor(&text);
-	MoveTo((short)(r.left+6), (short)(r.bottom-4));
-	if (gw->status[0]) {
-		unsigned char p[128]; size_t l = strlen(gw->status);
-		if(l>127) l=127; p[0]=(unsigned char)l; memcpy(p+1, gw->status, l);
-		DrawString(p);
+
+	{
+		RgnHandle saved_clip = NewRgn();
+		if (saved_clip != NULL) {
+			Rect clip_r = r;
+			GetClip(saved_clip);
+			clip_r.left = (short)(r.left + 4);
+			clip_r.right = (short)(r.right - 4);
+			ClipRect(&clip_r);
+		}
+		MoveTo((short)(r.left+6), (short)(r.bottom-4));
+		if (gw->status[0]) {
+			unsigned char p[128]; size_t l = strlen(gw->status);
+			if(l>127) l=127; p[0]=(unsigned char)l; memcpy(p+1, gw->status, l);
+			DrawString(p);
+		}
+		if (saved_clip != NULL) {
+			SetClip(saved_clip);
+			DisposeRgn(saved_clip);
+		}
 	}
 #endif
 }
@@ -217,8 +231,8 @@ static void macos9_init_menus(void) {
 #ifdef __MACOS9__
 	MenuHandle apple_menu, file_menu, edit_menu, go_menu;
 	apple_menu = NewMenu(MENU_APPLE, "\p\024");
-	AppendMenu(apple_menu, "\pAbout MacSurf...");
-	AppendMenu(apple_menu, "\pPreferences.../,");   /* item 2 - Cmd-, */
+	AppendMenu(apple_menu, "\pAbout MacSurf\311");
+	AppendMenu(apple_menu, "\pPreferences\311/,");   /* item 2 - Cmd-, */
 	AppendMenu(apple_menu, "\p(-");
 	/* fixes753 (#228) - do NOT AppendResMenu('DRVR') here. Under Carbon /
 	 * CarbonLib the Menu Manager auto-populates the Apple menu with the
@@ -231,7 +245,7 @@ static void macos9_init_menus(void) {
 
 	file_menu = NewMenu(MENU_FILE, "\pFile");
 	AppendMenu(file_menu, "\pNew Window/N");
-	AppendMenu(file_menu, "\pOpen Location.../L");
+	AppendMenu(file_menu, "\pOpen Location\311/L");
 	AppendMenu(file_menu, "\pClose/W");
 	AppendMenu(file_menu, "\pSend Debug Log");   /* fixes720 (item 4) */
 	AppendMenu(file_menu, "\p(-");
@@ -262,7 +276,7 @@ static void macos9_init_menus(void) {
 		MenuHandle view_menu = NewMenu(MENU_VIEW, "\pView");
 		AppendMenu(view_menu, "\pView Source/U");
 		AppendMenu(view_menu, "\p(-");
-		AppendMenu(view_menu, "\pFind.../F");
+		AppendMenu(view_menu, "\pFind\311/F");
 		/* fixes883 - Zoom and Downloads: both already worked, neither was
 		 * discoverable. Page zoom was reachable only through Cmd -/+/0
 		 * keystrokes that appeared in no menu, and the download-manager
@@ -273,7 +287,7 @@ static void macos9_init_menus(void) {
 		AppendMenu(view_menu, "\pZoom Out/-");            /* 6 */
 		AppendMenu(view_menu, "\pActual Size/0");         /* 7 */
 		AppendMenu(view_menu, "\p(-");                    /* 8 */
-		AppendMenu(view_menu, "\pDownloads");             /* 9 */
+		AppendMenu(view_menu, "\pDownloads\311/J");       /* 9 */
 		InsertMenu(view_menu, 0);
 	}
 
@@ -294,9 +308,9 @@ static void macos9_init_menus(void) {
 	 * macos9_history_init below and rebuilt on each menu-bar click. */
 	{
 		MenuHandle history_menu = NewMenu(MENU_HISTORY, "\pHistory");
-		AppendMenu(history_menu, "\pShow All History/H");
-		AppendMenu(history_menu, "\pClear History");
-		AppendMenu(history_menu, "\pClear Cache");
+		AppendMenu(history_menu, "\pShow All History\311/Y");
+		AppendMenu(history_menu, "\pClear History\311");
+		AppendMenu(history_menu, "\pClear Cache\311");
 		AppendMenu(history_menu, "\p(-");
 		InsertMenu(history_menu, 0);
 	}
@@ -540,16 +554,18 @@ static void macos9_handle_menu(short menu_id, short item) {
 		 * to run with an uninitialized `gw`). */
 		front = FrontWindow();
 		gw = front ? macos9_find_window(front) : NULL;
-		if (gw == NULL) break;
+		if (gw == NULL) gw = macos9_window_list_head();
 		/* fixes645 (#48) - item 1 adds the current page; items >= 3 are
 		 * saved bookmarks (item 2 is the separator, never selectable) and
 		 * navigate the front window to their URL. */
 		if (item == ITEM_BMK_ADD) {
-			extern void macos9_bookmark_add(struct gui_window *g);
-			macos9_bookmark_add(gw);
+			if (gw != NULL) {
+				extern void macos9_bookmark_add(struct gui_window *g);
+				macos9_bookmark_add(gw);
+			}
 		} else if (item == ITEM_BMK_MANAGE) {
 			macos9_bookmark_window_show(gw);
-		} else if (item >= ITEM_BMK_FIRST) {
+		} else if (item >= ITEM_BMK_FIRST && gw != NULL) {
 			macos9_bookmark_navigate(gw, item);
 		}
 		break;
@@ -559,14 +575,15 @@ static void macos9_handle_menu(short menu_id, short item) {
 		 * and navigate the front window. Menu refreshed on menu-bar click. */
 		front = FrontWindow();
 		gw = front ? macos9_find_window(front) : NULL;
-		if (gw == NULL) break;
+		if (gw == NULL) gw = macos9_window_list_head();
 		if (item == ITEM_HIST_SHOW_ALL) {
 			macos9_history_window_show(gw);
 		} else if (item == ITEM_HIST_CLEAR) {
-			macos9_history_clear();
+			if (macos9_chrome_confirm_delete("Clear entire browsing history?"))
+				macos9_history_clear();
 		} else if (item == ITEM_HIST_CLEAR_CACHE) {
 			macos9_cache_clear_ui();
-		} else if (item >= ITEM_HIST_FIRST) {
+		} else if (item >= ITEM_HIST_FIRST && gw != NULL) {
 			macos9_history_navigate(gw, item);
 		}
 		break;
@@ -1425,7 +1442,9 @@ static void macos9_handle_activate(const EventRecord *event) {
 	if (becoming_active) {
 		if (gw->url_field_active && gw->url_te) TEActivate(gw->url_te);
 	} else {
-		if (gw->url_te) TEDeactivate(gw->url_te);
+		if (gw->url_field_active) macos9_window_te_deactivate_url(gw);
+		else if (gw->url_te) TEDeactivate(gw->url_te);
+		macos9_urlsug_hide(gw);
 	}
 	macos9_window_update_button_states(gw);
 	macos9_window_invalidate_all(gw);

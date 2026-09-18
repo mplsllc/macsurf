@@ -282,6 +282,7 @@ void macos9_history_save(const char *buf, long len);
 void macos9_history_window_show(struct gui_window *g);
 /* fixes706 - Clear Cache menu handler (wipes disk cache + dead-host state). */
 void macos9_cache_clear_ui(void);
+int  macos9_chrome_confirm_delete(const char *msg);
 
 /* fixes645 (#199) - modeless download-manager window (macos9_download.c),
  * routed from the main event loop. */
