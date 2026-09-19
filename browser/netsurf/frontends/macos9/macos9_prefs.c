@@ -886,8 +886,16 @@ static void prefs_panel_vis(struct prefs_win *pw)
 static void prefs_set_cat(struct prefs_win *pw, int cat)
 {
 	Rect r;
+	int ua_rc;
 	if (cat < 0 || cat >= PREFS_CAT_COUNT) return;
 	if (cat == pw->cat) return;
+	if (pw->cat == PREFS_CAT_USERAGENT) {
+		ua_rc = prefs_ua_commit_editor(pw);
+		if (ua_rc < 0) {
+			SysBeep(1);
+			return;
+		}
+	}
 	if (pw->active_te != NULL) TEDeactivate(pw->active_te);
 	pw->active_te = NULL;
 	pw->cat = cat;
@@ -1310,6 +1318,8 @@ static void prefs_paint(struct prefs_win *pw)
 		TextFont(3); TextFace(normal); TextSize(9);
 		MoveTo(24, 116);
 		DrawString("\pChoose an existing rule or New Override to create one.");
+		MoveTo(24, 252);
+		DrawString("\pCustom string is used only when Custom... is selected.");
 		MoveTo(24, 304);
 		DrawString("\pMatches the domain and its subdomains. User rules override built-in");
 		MoveTo(24, 316);
