@@ -1,3 +1,6 @@
+<p align="center"><b>This project is developed with the assistance of an LLM</b></p>
+
+
 <p align="center">
   <img src="img/bannerlogo.png" alt="MacSurf" width="460">
 </p>
