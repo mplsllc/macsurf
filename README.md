@@ -78,7 +78,7 @@ As far as we can tell, it is the first serious [NetSurf](https://www.netsurf-bro
 
 ## Real sites, on real hardware
 
-Every shot below is a live site, captured on a Power Mac G3 running Mac OS 9.2.2 with MacSurf 2.0.5.
+Every shot below is a live site, captured on a Power Mac G3 running Mac OS 9.2.2 with MacSurf 2.0.5. They are kept here as a hardware baseline; MacSurf 2.3 has moved substantially beyond the browser shown in these images.
 
 <table>
 <tr>
@@ -180,35 +180,61 @@ Under it: text is measured in real device pixels (author `font-size` no longer d
 <tr>
 <td valign="top" width="50%">
 
-**Rendering**
-- Full NetSurf fetch, parse, cascade, layout, plot
-- Native libcss with `var()`, about 150 properties consumed in layout
-- Flexbox, CSS Grid, gradients, `border-radius`, `box-shadow`, opacity, transforms, z-index stacking
-- PNG (real alpha), GIF, JPEG, BMP, TIFF
-- Downloadable web-font icon glyphs
+**Rendering & CSS**
+- Full NetSurf fetch, parse, cascade, layout and QuickDraw paint pipeline
+- CSS custom properties with selector/media scope, specificity, inheritance and deferred `var()` resolution
+- Flexbox and CSS Grid, including stronger auto-track sizing, `minmax()`, `justify-self`, row/column gaps and stretch behavior
+- CSS math and sizing: `calc()`, `min()`, `max()`, `clamp()`, min/max/fit-content and viewport-relative sizing
+- Gradients, `border-radius`, `box-shadow`, opacity, transforms, z-index stacking and improved background clipping/origin
+- PNG, GIF, JPEG, BMP, TIFF and **native WebP**, including animated WebP machinery
+- Much stronger inline/external **SVG**: sizing, `viewBox`, aspect-ratio modes, shapes, transforms, fill/stroke and embedded raster images
+- Downloadable web fonts, including WOFF2/Brotli fixes
 
-[Full status &rarr;](docs/status.md)
+[Full 2.3 release notes &rarr;](docs/release-notes/MacSurf-2.3.md)
 
 </td>
 <td valign="top" width="50%">
 
-**JavaScript, macQJS (QuickJS, ES2023)**
-- `let`/`const`, arrows, classes, template literals, Promises, generators, modern regex
-- Runs real site bundles on-device
+**JavaScript, macQJS (QuickJS / ES2023)**
+- Modern language features plus **ES modules**
+- `fetch` / XHR, Headers, Request, Response, AbortController / AbortSignal and native cancellation
+- Promises, microtasks, timers, `requestAnimationFrame`, persistent `localStorage` and `sendBeacon`
+- MutationObserver, ResizeObserver and IntersectionObserver
+- Stronger DOM traversal/selectors, cloning/replacement, reflected properties, events and prototype relationships
+- Canvas 2D compatibility surface with native-font `measureText()`
+- `crypto.getRandomValues()` and `randomUUID()`
 
-**Networking**
-- HTTP/1.1: chunked, keep-alive, 3xx follow, connection pooling
-- HTTPS via macTLS: TLS 1.3, 1.2 fallback, full CA bundle
-- Cookies and logins that persist
+**Networking & security**
+- HTTP/1.1: chunked transfer, keep-alive, redirects, pooling, cache revalidation and gzip responses
+- HTTPS via macTLS: TLS 1.3 with TLS 1.2 fallback and Mozilla CA bundle
+- Certificate rejection fails closed; scripted HTTPS requests cannot silently downgrade to HTTP
+- Persistent cookies/logins, tighter referrer handling and tracker blocking
 
-**Chrome**
-- Address bar, back / forward / reload / home, bookmarks menu, downloads manager
-- Text input: caret, selection, cut / copy / paste, Tab between fields
-- Multi-window, smooth scroll bar, keyboard scrolling
+**Browser chrome**
+- **Tabbed browsing** with independent page, history, scroll, rendering and JavaScript state
+- Address bar, back / forward / reload / home and type-ahead suggestions
+- Rebuilt Downloads window with progress, speed, ETA, cancel, open and Reveal in Finder
+- Native Preferences, Bookmarks and History managers
+- Text input, selection, clipboard commands, keyboard navigation and native form controls
 
 </td>
 </tr>
 </table>
+
+### Supported systems
+
+MacSurf 2.3 supports **Mac OS 8.6 through Mac OS X 10.6 Snow Leopard**.
+
+- PowerPC Macs run MacSurf directly.
+- Intel Macs can run the PowerPC build through **Rosetta** where available.
+- Mac OS 9 remains the primary target and the environment most heavily tested on original hardware.
+- Recommended memory: **128 MB minimum**, **256 MB recommended**, **384 MB for the heaviest JavaScript sites**.
+
+### Stability and diagnostics
+
+A large part of 2.3 is work you should not have to notice: stronger page/runtime ownership, safer DOM reconstruction, guarded late callbacks, cache/content lifetime fixes, image reuse across reconvert, TLS bounds checks, and tab isolation.
+
+MacSurf also now has a much deeper built-in diagnostic system for correlating navigation, documents, frames, network requests, JavaScript tasks, timers, mutations, XHR/fetch, Promise rejections, layout, paint and compatibility gaps. The final Tiger multi-tab stress campaign completed **20/20 cycles with zero crashes and zero hangs**, followed by testing on Mac OS 9.2.2 hardware.
 
 ## Download
 
