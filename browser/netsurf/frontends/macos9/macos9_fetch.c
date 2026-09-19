@@ -77,10 +77,284 @@ static const char MACOS9_UA_FB_KAIOS[] =
 static const char MACOS9_UA_FB_FF134[] =
 	"Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:134.0) Gecko/20100101 Firefox/134.0";
 
+static const char MACOS9_UA_CHROME149[] =
+	"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36";
+
 struct macos9_ua_rule {
 	const char *suffix;	/* host suffix, e.g. "facebook.com" */
 	const char *ua;		/* User-Agent to send to that host */
 };
+
+
+/* User-editable rules live ahead of the built-in compatibility table.
+ * The UI edits a draft copy and replaces this array only on Preferences OK,
+ * so Cancel never mutates live fetch policy. */
+static struct macos9_user_ua_rule macos9_user_ua_rules[MACSURF_UA_USER_RULE_MAX];
+static int macos9_user_ua_rule_count = 0;
+
+#define MACOS9_UA_PREFS_LEAF "MacSurf User Agents"
+
+static int macos9_ua_suffix_match(const char *host, const char *suffix)
+{
+	size_t hl;
+	size_t sl;
+	if (host == NULL || suffix == NULL || suffix[0] == '\0') return 0;
+	hl = strlen(host);
+	sl = strlen(suffix);
+	if (hl < sl) return 0;
+	if (strncasecmp(host + hl - sl, suffix, sl) != 0) return 0;
+	return (hl == sl || host[hl - sl - 1] == '.');
+}
+
+int macos9_user_agent_normalize_host(const char *input, char *out, size_t cap)
+{
+	const char *p;
+	const char *start;
+	const char *end;
+	const char *scheme;
+	size_t n;
+	size_t i;
+	unsigned char ch;
+
+	if (out == NULL || cap == 0) return -1;
+	out[0] = '\0';
+	if (input == NULL) return -1;
+
+	start = input;
+	while (*start == ' ' || *start == '\t' || *start == '\r' || *start == '\n')
+		start++;
+
+	scheme = strstr(start, "://");
+	if (scheme != NULL) start = scheme + 3;
+	while (*start == '.') start++;
+
+	end = start;
+	while (*end != '\0' && *end != '/' && *end != '?' && *end != '#' &&
+	       *end != ':' && *end != ' ' && *end != '\t' &&
+	       *end != '\r' && *end != '\n') {
+		end++;
+	}
+	while (end > start && end[-1] == '.') end--;
+
+	n = (size_t)(end - start);
+	if (n == 0 || n >= cap) return -1;
+
+	for (i = 0; i < n; i++) {
+		ch = (unsigned char)start[i];
+		if (!((ch >= 'A' && ch <= 'Z') ||
+		      (ch >= 'a' && ch <= 'z') ||
+		      (ch >= '0' && ch <= '9') ||
+		      ch == '-' || ch == '.' || ch == '_')) {
+			out[0] = '\0';
+			return -1;
+		}
+		if (ch >= 'A' && ch <= 'Z') ch = (unsigned char)(ch + ('a' - 'A'));
+		out[i] = (char)ch;
+	}
+	out[n] = '\0';
+
+	p = out;
+	if (*p == '\0' || *p == '.' || out[n - 1] == '.') {
+		out[0] = '\0';
+		return -1;
+	}
+	return 0;
+}
+
+static int macos9_ua_clean_value(const char *input, char *out, size_t cap)
+{
+	size_t used;
+	unsigned char ch;
+	if (out == NULL || cap == 0) return -1;
+	out[0] = '\0';
+	if (input == NULL) return -1;
+
+	used = 0;
+	while (*input != '\0' && used + 1 < cap) {
+		ch = (unsigned char)*input++;
+		if (ch == '\r' || ch == '\n' || ch == '\t') ch = ' ';
+		if (ch < 0x20 || ch == 0x7F) continue;
+		out[used++] = (char)ch;
+	}
+	while (used > 0 && out[used - 1] == ' ') used--;
+	out[used] = '\0';
+	return used > 0 ? 0 : -1;
+}
+
+static int macos9_ua_rules_fullpath(char *out, long cap)
+{
+#ifdef __MACOS9__
+	short vRef;
+	long dirID;
+	FSSpec spec;
+	OSErr err;
+	unsigned char fname[32];
+	size_t nlen;
+	out[0] = '\0';
+	if (macos9_data_dir_get(NULL, &vRef, &dirID) != noErr) return -1;
+	nlen = strlen(MACOS9_UA_PREFS_LEAF);
+	if (nlen > 31) nlen = 31;
+	fname[0] = (unsigned char)nlen;
+	memcpy(fname + 1, MACOS9_UA_PREFS_LEAF, nlen);
+	err = FSMakeFSSpec(vRef, dirID, fname, &spec);
+	if (err != noErr && err != fnfErr) return -1;
+	if (macos9_fsspec_to_path(&spec, out, cap) != 0) return -1;
+	return 0;
+#else
+	(void)cap;
+	strcpy(out, "macsurf_user_agents.txt");
+	return 0;
+#endif
+}
+
+const struct macos9_user_ua_rule *macos9_user_agent_user_rules(int *count)
+{
+	if (count != NULL) *count = macos9_user_ua_rule_count;
+	return macos9_user_ua_rules;
+}
+
+int macos9_user_agent_user_rules_replace(
+		const struct macos9_user_ua_rule *rules, int count)
+{
+	struct macos9_user_ua_rule clean[MACSURF_UA_USER_RULE_MAX];
+	char host[MACSURF_UA_HOST_MAX];
+	char ua[MACSURF_UA_STRING_MAX];
+	int n;
+	int i;
+	int j;
+
+	if (count < 0) count = 0;
+	if (count > MACSURF_UA_USER_RULE_MAX) count = MACSURF_UA_USER_RULE_MAX;
+	n = 0;
+
+	for (i = 0; i < count; i++) {
+		if (rules == NULL) break;
+		if (macos9_user_agent_normalize_host(rules[i].suffix,
+				host, sizeof host) != 0) continue;
+		if (macos9_ua_clean_value(rules[i].ua, ua, sizeof ua) != 0) continue;
+
+		for (j = 0; j < n; j++) {
+			if (strcasecmp(clean[j].suffix, host) == 0) break;
+		}
+		if (j < n) {
+			strcpy(clean[j].ua, ua);
+			continue;
+		}
+		if (n >= MACSURF_UA_USER_RULE_MAX) break;
+		strcpy(clean[n].suffix, host);
+		strcpy(clean[n].ua, ua);
+		n++;
+	}
+
+	memset(macos9_user_ua_rules, 0, sizeof macos9_user_ua_rules);
+	if (n > 0) {
+		memcpy(macos9_user_ua_rules, clean,
+			(size_t)n * sizeof macos9_user_ua_rules[0]);
+	}
+	macos9_user_ua_rule_count = n;
+	return n;
+}
+
+const char *macos9_user_agent_preset_value(int preset)
+{
+	switch (preset) {
+	case MACOS9_UA_PRESET_DEFAULT:
+		return MACOS9_UA_DEFAULT;
+	case MACOS9_UA_PRESET_FIREFOX134:
+		return MACOS9_UA_FB_FF134;
+	case MACOS9_UA_PRESET_CHROME149:
+		return MACOS9_UA_CHROME149;
+	case MACOS9_UA_PRESET_KAIOS25:
+		return MACOS9_UA_FB_KAIOS;
+	default:
+		return "";
+	}
+}
+
+int macos9_user_agent_preset_for_value(const char *ua)
+{
+	int i;
+	if (ua == NULL) return MACOS9_UA_PRESET_CUSTOM;
+	for (i = MACOS9_UA_PRESET_DEFAULT; i < MACOS9_UA_PRESET_CUSTOM; i++) {
+		if (strcmp(ua, macos9_user_agent_preset_value(i)) == 0) return i;
+	}
+	return MACOS9_UA_PRESET_CUSTOM;
+}
+
+void macos9_user_agent_rules_load(void)
+{
+	struct macos9_user_ua_rule loaded[MACSURF_UA_USER_RULE_MAX];
+	char path[1024];
+	char line[MACSURF_UA_HOST_MAX + MACSURF_UA_STRING_MAX + 8];
+	FILE *fp;
+	size_t used;
+	int count;
+	int ch;
+
+	macos9_user_ua_rule_count = 0;
+	if (macos9_ua_rules_fullpath(path, (long)sizeof path) != 0) return;
+	fp = fopen(path, "rb");
+	if (fp == NULL) return;
+
+	memset(loaded, 0, sizeof loaded);
+	used = 0;
+	count = 0;
+	while ((ch = fgetc(fp)) != EOF) {
+		if (ch == '\r' || ch == '\n') {
+			if (used > 0) {
+				char *tab;
+				line[used] = '\0';
+				tab = strchr(line, '\t');
+				if (tab != NULL && count < MACSURF_UA_USER_RULE_MAX) {
+					*tab = '\0';
+					strncpy(loaded[count].suffix, line,
+						sizeof loaded[count].suffix - 1);
+					strncpy(loaded[count].ua, tab + 1,
+						sizeof loaded[count].ua - 1);
+					count++;
+				}
+				used = 0;
+			}
+		} else if (used + 1 < sizeof line) {
+			line[used++] = (char)ch;
+		}
+	}
+	if (used > 0) {
+		char *tab;
+		line[used] = '\0';
+		tab = strchr(line, '\t');
+		if (tab != NULL && count < MACSURF_UA_USER_RULE_MAX) {
+			*tab = '\0';
+			strncpy(loaded[count].suffix, line,
+				sizeof loaded[count].suffix - 1);
+			strncpy(loaded[count].ua, tab + 1,
+				sizeof loaded[count].ua - 1);
+			count++;
+		}
+	}
+	fclose(fp);
+	(void)macos9_user_agent_user_rules_replace(loaded, count);
+}
+
+void macos9_user_agent_rules_save(void)
+{
+	char path[1024];
+	FILE *fp;
+	int i;
+	if (macos9_ua_rules_fullpath(path, (long)sizeof path) != 0) return;
+	if (macos9_user_ua_rule_count == 0) {
+		(void)remove(path);
+		return;
+	}
+	fp = fopen(path, "wb");
+	if (fp == NULL) return;
+	for (i = 0; i < macos9_user_ua_rule_count; i++) {
+		fprintf(fp, "%s\t%s\r",
+			macos9_user_ua_rules[i].suffix,
+			macos9_user_ua_rules[i].ua);
+	}
+	fclose(fp);
+}
 
 static const struct macos9_ua_rule macos9_ua_rules[] = {
 	/*
@@ -108,8 +382,7 @@ static const struct macos9_ua_rule macos9_ua_rules[] = {
 	 * string the A/B proved; HN's login is pure HTML form POST
 	 * (goto/acct/pw), no JS needed, so core form.c handles it.
 	 */
-	{ "news.ycombinator.com",
-	  "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36" },
+	{ "news.ycombinator.com", MACOS9_UA_CHROME149 },
 	/*
 	 * fixes1115 - emaculation.com is behind Cloudflare bot-detection.
 	 * The honest MacSurf UA triggers HTTP 403 with a JS challenge page,
@@ -117,8 +390,7 @@ static const struct macos9_ua_rule macos9_ua_rules[] = {
 	 * A Chrome UA MAY bypass it (proven HN pattern); if not, TLS fingerprint
 	 * (BearSSL) is the next suspect. Test and revert if no difference.
 	 */
-	{ "emaculation.com",
-	  "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36" }
+	{ "emaculation.com", MACOS9_UA_CHROME149 }
 	/* add more host->UA overrides here */
 	/*
 	 * fixes741: macintoshrepository.org UA override REVERTED. fixes740 proved
@@ -137,20 +409,33 @@ const char *macos9_user_agent_default(void)
 
 const char *macos9_user_agent_for_host(const char *host)
 {
-	size_t hl;
 	size_t n;
 	size_t i;
+	int best;
+	size_t best_len;
+
 	if (host == NULL) return MACOS9_UA_DEFAULT;
-	hl = strlen(host);
+
+	/* User rules win over built-ins. Among user rules, the most-specific
+	 * suffix wins so a user can define both example.com and m.example.com
+	 * without needing a separate rule-order UI. */
+	best = -1;
+	best_len = 0;
+	for (i = 0; i < (size_t)macos9_user_ua_rule_count; i++) {
+		size_t sl = strlen(macos9_user_ua_rules[i].suffix);
+		if (sl >= best_len &&
+		    macos9_ua_suffix_match(host, macos9_user_ua_rules[i].suffix)) {
+			best = (int)i;
+			best_len = sl;
+		}
+	}
+	if (best >= 0) return macos9_user_ua_rules[best].ua;
+
+	/* Preserve the historical built-in first-match-wins contract. */
 	n = sizeof(macos9_ua_rules) / sizeof(macos9_ua_rules[0]);
 	for (i = 0; i < n; i++) {
-		size_t sl = strlen(macos9_ua_rules[i].suffix);
-		if (hl >= sl &&
-		    strncasecmp(host + hl - sl,
-				macos9_ua_rules[i].suffix, sl) == 0 &&
-		    (hl == sl || host[hl - sl - 1] == '.')) {
+		if (macos9_ua_suffix_match(host, macos9_ua_rules[i].suffix))
 			return macos9_ua_rules[i].ua;
-		}
 	}
 	return MACOS9_UA_DEFAULT;
 }
