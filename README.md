@@ -5,7 +5,7 @@
 <p align="center"><strong>The modern web, on a 25-year-old Mac.</strong></p>
 
 <p align="center">
-  A native web browser for Classic Mac OS 9 on PowerPC: real CSS3, modern JavaScript, and HTTPS, running on a G3 iMac. No proxy, no second machine.
+  A native browser for the Carbon era, Mac OS 8.6 through Mac OS X 10.6: real CSS, modern JavaScript, and HTTPS on the Mac itself. No proxy, no second machine.
 </p>
 
 <p align="center">
@@ -24,7 +24,7 @@
 
 A tested build on [**macsurf.org**](https://macsurf.org), free for everyone, with real hardware testing behind it.
 
-**Next stable: August 22, 2026**
+**Latest stable: MacSurf 2.3 "OPEN TABS"**
 
 </td>
 <td width="50%" valign="top" align="center">
@@ -66,7 +66,7 @@ In-progress builds land in **Beta-Box** every week, ahead of every stable releas
 ---
 
 > [!NOTE]
-> **2.0.5 "HACKADAY"** is a polish release over 2.0: point it at **hackaday.com** and the front page renders at real desktop width, with the right fonts and the article cards laid out. Under that headline is a browser-wide text-size fix (author `font-size` was drawing about 25% too small, which is why so many sites came up cramped), a large modern-CSS pass, a more capable on-device JavaScript engine, and tracker/ad-network blocking. It is still at its best on hand-built pages, retro sites, and forums. Very heavy modern apps (GitHub, video, React-heavy SPAs) still do not render. This is honest, in-progress software. Got a G3 or G4? Load it up and tell us what breaks. See [docs/status.md](docs/status.md) for the current punch list.
+> **2.3 "OPEN TABS"** is the largest MacSurf release since 2.0. Tabs are finally enabled, with independent page, scroll, history, rendering and JavaScript state inside one native Mac window. Underneath that is a major dynamic-page/lifecycle rewrite, a much larger browser API surface, more CSS and image/SVG support, rebuilt native managers, stronger networking and security, and a long hardware-driven stability campaign. MacSurf remains honest, in-progress software; some very heavy modern applications still expose layout and API gaps. See [the 2.3 release notes](docs/release-notes/MacSurf-2.3.md) and [docs/status.md](docs/status.md) for details.
 
 ## Why this exists
 
@@ -90,6 +90,16 @@ Every shot below is a live site, captured on a Power Mac G3 running Mac OS 9.2.2
 <td width="50%" align="center" valign="top"><img src="screenshots/2.0.5-hackernews.png" alt="Hacker News"><br><strong>news.ycombinator.com</strong><br><em>Hacker News: login and front page, no phantom boxes.</em></td>
 </tr>
 </table>
+
+## New in 2.3
+
+**Tabs.** One native Mac window can now host multiple independent browser pages. Command-T opens a tab; Command-W closes the current tab. Background tabs retain their own JavaScript realm, title, URL, content and scroll state without taking over the foreground chrome.
+
+The release also brings a major dynamic-page and JavaScript compatibility pass; deeper DOM reconstruction safety; CSS math, sizing, Grid, variables and paint improvements; native WebP and stronger SVG; a rebuilt Downloads window; improved Preferences, Bookmarks and History; tighter HTTPS/security behavior; and a large body of crash- and lifetime fixes.
+
+MacSurf 2.3 supports **Mac OS 8.6 through Mac OS X 10.6**. On Intel Macs, the PowerPC build runs under **Rosetta** where available.
+
+[Full 2.3 notes &rarr;](docs/release-notes/MacSurf-2.3.md)
 
 ## New in 2.0.5
 
@@ -202,9 +212,9 @@ Under it: text is measured in real device pixels (author `font-size` no longer d
 
 ## Download
 
-**[MacSurf 2.0.5 "HACKADAY"](https://github.com/mplsllc/macsurf/releases/latest)** (2026-07-17). See what changed in the [full release notes &rarr;](docs/release-notes/MacSurf-2.0.5.md) or the [2.0 notes &rarr;](docs/release-notes/MacSurf-2.0.md).
+**[MacSurf 2.3 "OPEN TABS"](https://github.com/mplsllc/macsurf/releases/latest)** (2026-09-19). See what changed in the [full 2.3 release notes &rarr;](docs/release-notes/MacSurf-2.3.md).
 
-- **[Download the .sit &rarr;](https://github.com/mplsllc/macsurf/releases/latest)**: expand with StuffIt Expander on Mac OS 8.6+ through Mac OS X 10.4 (CarbonLib 1.6+) and double-click. No installer.
+- **[Download MacSurf &rarr;](https://macsurf.org/download.html)**: expand with StuffIt Expander and double-click. MacSurf supports Mac OS 8.6 through Mac OS X 10.6; on Intel Macs the PowerPC build runs under Rosetta where available. No installer.
 - Already on a Mac OS 9 machine? Grab it from the plain-HTTP **[macsurf.org](http://macsurf.org/)**, since GitHub does not render on-device yet.
 - [All releases &rarr;](https://github.com/mplsllc/macsurf/releases)
 

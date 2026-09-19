@@ -1,0 +1,31 @@
+name: Publish MacSurf 2.3
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - docs/release-notes/MacSurf-2.3.md
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Publish v2.3 release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view v2.3 --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "v2.3 release already exists; nothing to do."
+            exit 0
+          fi
+          gh release create v2.3 \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title 'MacSurf 2.3 — OPEN TABS' \
+            --notes-file docs/release-notes/MacSurf-2.3.md

@@ -76,9 +76,9 @@ data 'plst' (0) {
 	"\t<key>CFBundleIdentifier</key>\n"
 	"\t<string>org.macsurf.MacSurf</string>\n"
 	"\t<key>CFBundleVersion</key>\n"
-	"\t<string>2.0.5</string>\n"
+	"\t<string>2.3</string>\n"
 	"\t<key>CFBundleShortVersionString</key>\n"
-	"\t<string>2.0.5</string>\n"
+	"\t<string>2.3</string>\n"
 	"\t<key>CFBundleSignature</key>\n"
 	"\t<string>MPLS</string>\n"
 	"\t<key>CFBundlePackageType</key>\n"
@@ -107,15 +107,15 @@ type 'vers' {
 };
 
 resource 'vers' (1) {
-	0x02, 0x05, final, 0x00, verUS,
-	"2.0.5",
-	"MacSurf 2.0.5"
+	0x02, 0x30, final, 0x00, verUS,
+	"2.3",
+	"MacSurf 2.3"
 };
 
 resource 'vers' (2) {
-	0x02, 0x05, final, 0x00, verUS,
-	"2.0.5",
-	"MacSurf 2.0.5"
+	0x02, 0x30, final, 0x00, verUS,
+	"2.3",
+	"MacSurf 2.3"
 };
 
 /* Icon family + FREF + BNDL. Generated; do not hand-edit. */

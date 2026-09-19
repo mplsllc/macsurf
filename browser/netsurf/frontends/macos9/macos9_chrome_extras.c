@@ -4028,7 +4028,7 @@ static void about_draw(GWorldPtr off, WindowRef win, const Rect *content,
 
 	/* 4. title with a sweeping metallic shine */
 	{
-		const char *tt = "MacSurf 2.0.5";
+		const char *tt = "MacSurf 2.3";
 		short n = (short)strlen(tt), tw, tx, ty = 100;
 		TextFont(titleFnum);
 		TextFace(bold);
@@ -4340,7 +4340,7 @@ fallback:
 		Str255 ptitle, pbody;
 		size_t blen;
 		const char *title =
-			"MacSurf 2.0.5 - a web browser for Classic Mac OS 9";
+			"MacSurf 2.3 - a web browser for Classic Mac OS 9";
 		size_t tlen = strlen(title);
 
 		strcpy(p, "Native TLS 1.3 via macTLS. Built on NetSurf.\r"

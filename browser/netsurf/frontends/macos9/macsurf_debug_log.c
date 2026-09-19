@@ -543,7 +543,7 @@ macsurf_debug_log_init(void)
 	macsurf_debug_log_write(
 		"=====================   N E W   S E S S I O N   ====================");
 	macsurf_debug_log_writef(
-		"===  MacSurf 2.0.5   (logger compiled %s %s)", __DATE__, __TIME__);
+		"===  MacSurf 2.3   (logger compiled %s %s)", __DATE__, __TIME__);
 	if (macsurf_running_app_mtime(&exe_mtime) == noErr) {
 		SecondsToDate(exe_mtime, &exe_date);
 		macsurf_debug_log_writef(
