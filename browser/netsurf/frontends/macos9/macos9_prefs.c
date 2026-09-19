@@ -624,6 +624,13 @@ static MenuHandle prefs_popup_menu(const struct prefs_popup_def *def, short id)
 	return m;
 }
 
+/* Forward declarations: UA editor helpers below need these before their
+ * definitions later in the file. CW8 otherwise creates an implicit int
+ * declaration and rejects the real static definition. */
+static short prefs_popup_item(const struct prefs_popup_def *def, int value);
+static int prefs_popup_get(ControlRef c,
+		const struct prefs_popup_def *def, int fallback);
+
 static MenuHandle prefs_ua_rule_menu_new(short id)
 {
 	MenuHandle m;
