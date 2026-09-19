@@ -234,7 +234,7 @@ int macos9_user_agent_user_rules_replace(
 		if (macos9_ua_clean_value(rules[i].ua, ua, sizeof ua) != 0) continue;
 
 		for (j = 0; j < n; j++) {
-			if (strcasecmp(clean[j].suffix, host) == 0) break;
+			if (strcmp(clean[j].suffix, host) == 0) break;
 		}
 		if (j < n) {
 			strcpy(clean[j].ua, ua);
