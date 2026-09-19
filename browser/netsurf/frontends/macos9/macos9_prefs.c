@@ -13,8 +13,8 @@
  *
  *   3. macos9_prefs_show()
  *      Programmatic native Carbon / Appearance Manager Preferences window.
- *      Organized into General, Web Content, Appearance, Privacy, and
- *      Advanced categories with descriptive explanations, reliable
+ *      Organized into General, Web Content, Appearance, Privacy, User
+ *      Agents, and Advanced categories with descriptive explanations, reliable
  *      checkbox and popup tracking, draft/cancel semantics, and homepage
  *      helpers.
  *
@@ -34,6 +34,7 @@
 #include "macos9.h"
 #include "macsurf_config.h"	/* MACSURF_HOME_URL */
 #include "macsurf_debug.h"
+#include "macos9_useragent.h"
 
 #ifdef __MACOS9__
 #include <Carbon.h>
@@ -255,6 +256,7 @@ enum {
 	PREFS_CAT_CONTENT,
 	PREFS_CAT_APPEAR,
 	PREFS_CAT_PRIVACY,
+	PREFS_CAT_USERAGENT,
 	PREFS_CAT_NETWORK,
 	PREFS_CAT_COUNT
 };
@@ -266,7 +268,7 @@ struct prefs_popup_def {
 };
 
 static const char *s_lbl_cat[] = {
-	"General", "Web Content", "Appearance", "Privacy", "Advanced"
+	"General", "Web Content", "Appearance", "Privacy", "User Agents", "Advanced"
 };
 
 static const char *s_lbl_font[] = {
@@ -298,6 +300,20 @@ static const char *s_lbl_perhost[] = { "1", "2", "3", "4", "6", "8", "12", "16" 
 static const int s_val_perhost[] = { 1, 2, 3, 4, 6, 8, 12, 16 };
 static const struct prefs_popup_def s_popup_perhost = {
 	s_lbl_perhost, s_val_perhost, 8
+};
+
+static const char *s_lbl_ua_profile[] = {
+	"MacSurf Default", "Firefox 134", "Chrome 149", "KaiOS 2.5", "Custom..."
+};
+static const int s_val_ua_profile[] = {
+	MACOS9_UA_PRESET_DEFAULT,
+	MACOS9_UA_PRESET_FIREFOX134,
+	MACOS9_UA_PRESET_CHROME149,
+	MACOS9_UA_PRESET_KAIOS25,
+	MACOS9_UA_PRESET_CUSTOM
+};
+static const struct prefs_popup_def s_popup_ua_profile = {
+	s_lbl_ua_profile, s_val_ua_profile, MACOS9_UA_PRESET_COUNT
 };
 
 static WindowRef g_prefs_open_win = NULL;
@@ -332,6 +348,18 @@ struct prefs_win {
 	ControlRef ck_dnt;
 	ControlRef btn_cache;
 	ControlRef btn_hist;
+	/* User Agents */
+	ControlRef pp_ua_rule;
+	MenuHandle m_ua_rule;
+	TEHandle te_ua_host;
+	ControlRef pp_ua_profile;
+	MenuHandle m_ua_profile;
+	TEHandle te_ua_custom;
+	ControlRef btn_ua_save;
+	ControlRef btn_ua_remove;
+	struct macos9_user_ua_rule ua_rules[MACSURF_UA_USER_RULE_MAX];
+	int ua_rule_count;
+	int ua_selected;
 	/* Advanced */
 	ControlRef pp_fetch;
 	MenuHandle m_fetch;
@@ -388,14 +416,24 @@ static const Rect s_ck_dnt_row_rect       = { 170,  24, 190, 456 };
 static const Rect s_btn_cache_rect        = { 230,  24, 254, 160 };
 static const Rect s_btn_hist_rect         = { 230, 175, 254, 310 };
 
+/* User Agents panel */
+static const Rect s_pp_ua_rule_rect       = {  82, 150, 104, 456 };
+static const Rect s_te_ua_host_rect       = { 126,  92, 148, 456 };
+static const Rect s_pp_ua_profile_rect    = { 166, 150, 188, 330 };
+static const Rect s_te_ua_custom_rect     = { 218,  24, 240, 456 };
+static const Rect s_btn_ua_save_rect      = { 258,  24, 282, 154 };
+static const Rect s_btn_ua_remove_rect    = { 258, 166, 282, 276 };
+
 /* Advanced panel */
 static const Rect s_pp_fetch_rect         = {  88, 280, 110, 380 };
 static const Rect s_pp_perhost_rect       = { 152, 280, 174, 380 };
 
-#define PREFS_MENU_ID_FONT    261
-#define PREFS_MENU_ID_MINFONT 262
-#define PREFS_MENU_ID_FETCH   263
-#define PREFS_MENU_ID_PERHOST 264
+#define PREFS_MENU_ID_FONT       261
+#define PREFS_MENU_ID_MINFONT    262
+#define PREFS_MENU_ID_FETCH      263
+#define PREFS_MENU_ID_PERHOST    264
+#define PREFS_MENU_ID_UA_RULE    265
+#define PREFS_MENU_ID_UA_PROFILE 266
 
 static void c_to_pstring(const char *src, unsigned char *dest)
 {
@@ -586,7 +624,178 @@ static MenuHandle prefs_popup_menu(const struct prefs_popup_def *def, short id)
 	return m;
 }
 
+static MenuHandle prefs_ua_rule_menu_new(short id)
+{
+	MenuHandle m;
+	m = NewMenu(id, "\p");
+	if (m != NULL) AppendMenu(m, "\pNew Override...");
+	return m;
+}
 
+static void prefs_te_set_text(TEHandle te, const char *text)
+{
+	if (te == NULL) return;
+	if (text == NULL) text = "";
+	TESetText(text, (long)strlen(text), te);
+	TESetSelect(0, 32767, te);
+}
+
+static int prefs_te_copy(TEHandle te, char *out, size_t cap)
+{
+	long n;
+	if (out == NULL || cap == 0) return 0;
+	out[0] = '\0';
+	if (te == NULL) return 0;
+	n = te[0]->teLength;
+	if (n < 0) n = 0;
+	if ((size_t)n >= cap) n = (long)(cap - 1);
+	if (n > 0) memcpy(out, *te[0]->hText, (size_t)n);
+	out[n] = '\0';
+	return (int)n;
+}
+
+static void prefs_ua_rule_menu_rebuild(struct prefs_win *pw)
+{
+	short count;
+	unsigned char pstr[256];
+	int i;
+	if (pw->m_ua_rule == NULL) return;
+	count = CountMenuItems(pw->m_ua_rule);
+	while (count > 0) {
+		DeleteMenuItem(pw->m_ua_rule, count);
+		count--;
+	}
+	AppendMenu(pw->m_ua_rule, "\pNew Override...");
+	for (i = 0; i < pw->ua_rule_count; i++) {
+		c_to_pstring(pw->ua_rules[i].suffix, pstr);
+		AppendMenu(pw->m_ua_rule, pstr);
+	}
+	if (pw->pp_ua_rule != NULL) {
+		SetControlMinimum(pw->pp_ua_rule, 1);
+		SetControlMaximum(pw->pp_ua_rule, (short)(pw->ua_rule_count + 1));
+		SetControlValue(pw->pp_ua_rule,
+			(short)(pw->ua_selected >= 0 ? pw->ua_selected + 2 : 1));
+	}
+}
+
+static void prefs_ua_editor_load(struct prefs_win *pw, int index)
+{
+	int preset;
+	const char *host;
+	const char *ua;
+	if (index < 0 || index >= pw->ua_rule_count) {
+		pw->ua_selected = -1;
+		host = "";
+		ua = "";
+		preset = MACOS9_UA_PRESET_DEFAULT;
+	} else {
+		pw->ua_selected = index;
+		host = pw->ua_rules[index].suffix;
+		ua = pw->ua_rules[index].ua;
+		preset = macos9_user_agent_preset_for_value(ua);
+	}
+	prefs_te_set_text(pw->te_ua_host, host);
+	prefs_popup_set_item(pw->pp_ua_profile, pw->m_ua_profile,
+		prefs_popup_item(&s_popup_ua_profile, preset));
+	if (preset == MACOS9_UA_PRESET_CUSTOM)
+		prefs_te_set_text(pw->te_ua_custom, ua);
+	else
+		prefs_te_set_text(pw->te_ua_custom, "");
+	if (pw->pp_ua_rule != NULL)
+		SetControlValue(pw->pp_ua_rule,
+			(short)(pw->ua_selected >= 0 ? pw->ua_selected + 2 : 1));
+}
+
+static void prefs_ua_remove_index(struct prefs_win *pw, int index)
+{
+	int i;
+	if (index < 0 || index >= pw->ua_rule_count) return;
+	for (i = index; i + 1 < pw->ua_rule_count; i++)
+		pw->ua_rules[i] = pw->ua_rules[i + 1];
+	pw->ua_rule_count--;
+	if (pw->ua_rule_count < 0) pw->ua_rule_count = 0;
+	memset(&pw->ua_rules[pw->ua_rule_count], 0,
+		sizeof pw->ua_rules[0]);
+}
+
+static int prefs_ua_clean_custom(const char *input, char *out, size_t cap)
+{
+	size_t used;
+	unsigned char ch;
+	if (out == NULL || cap == 0) return -1;
+	out[0] = '\0';
+	if (input == NULL) return -1;
+	used = 0;
+	while (*input != '\0' && used + 1 < cap) {
+		ch = (unsigned char)*input++;
+		if (ch == '\r' || ch == '\n' || ch == '\t') ch = ' ';
+		if (ch < 0x20 || ch == 0x7F) continue;
+		out[used++] = (char)ch;
+	}
+	while (used > 0 && out[used - 1] == ' ') used--;
+	out[used] = '\0';
+	return used > 0 ? 0 : -1;
+}
+
+/* Capture the User Agents editor into the window's private draft list.
+ * Return 1 when a rule was added/updated, 0 for an empty New Override editor,
+ * and -1 for invalid/incomplete input. */
+static int prefs_ua_commit_editor(struct prefs_win *pw)
+{
+	char host_raw[MACSURF_UA_HOST_MAX * 2];
+	char host[MACSURF_UA_HOST_MAX];
+	char custom_raw[MACSURF_UA_STRING_MAX];
+	char ua[MACSURF_UA_STRING_MAX];
+	const char *preset_ua;
+	int preset;
+	int target;
+	int i;
+
+	prefs_te_copy(pw->te_ua_host, host_raw, sizeof host_raw);
+	if (host_raw[0] == '\0' && pw->ua_selected < 0) return 0;
+	if (macos9_user_agent_normalize_host(host_raw, host, sizeof host) != 0)
+		return -1;
+
+	preset = prefs_popup_get(pw->pp_ua_profile, &s_popup_ua_profile,
+		MACOS9_UA_PRESET_DEFAULT);
+	if (preset == MACOS9_UA_PRESET_CUSTOM) {
+		prefs_te_copy(pw->te_ua_custom, custom_raw, sizeof custom_raw);
+		if (prefs_ua_clean_custom(custom_raw, ua, sizeof ua) != 0)
+			return -1;
+	} else {
+		preset_ua = macos9_user_agent_preset_value(preset);
+		if (preset_ua == NULL || preset_ua[0] == '\0') return -1;
+		strncpy(ua, preset_ua, sizeof ua - 1);
+		ua[sizeof ua - 1] = '\0';
+	}
+
+	if (pw->ua_selected >= 0 && pw->ua_selected < pw->ua_rule_count) {
+		target = pw->ua_selected;
+	} else {
+		if (pw->ua_rule_count >= MACSURF_UA_USER_RULE_MAX) return -1;
+		target = pw->ua_rule_count++;
+	}
+	strcpy(pw->ua_rules[target].suffix, host);
+	strcpy(pw->ua_rules[target].ua, ua);
+
+	/* If a rename collides with another rule, keep the edited rule and remove
+	 * the duplicate. Adjust target when a prior row is removed. */
+	i = 0;
+	while (i < pw->ua_rule_count) {
+		if (i != target &&
+		    strcmp(pw->ua_rules[i].suffix, host) == 0) {
+			prefs_ua_remove_index(pw, i);
+			if (i < target) target--;
+			continue;
+		}
+		i++;
+	}
+
+	pw->ua_selected = target;
+	prefs_ua_rule_menu_rebuild(pw);
+	prefs_ua_editor_load(pw, target);
+	return 1;
+}
 
 static void prefs_set_val(ControlRef c, int v)
 {
@@ -664,6 +873,11 @@ static void prefs_panel_vis(struct prefs_win *pw)
 	prefs_set_vis(pw->ck_dnt,           pw->cat == PREFS_CAT_PRIVACY);
 	prefs_set_vis(pw->btn_cache,        pw->cat == PREFS_CAT_PRIVACY);
 	prefs_set_vis(pw->btn_hist,         pw->cat == PREFS_CAT_PRIVACY);
+	/* User Agents */
+	prefs_set_vis(pw->pp_ua_rule,       pw->cat == PREFS_CAT_USERAGENT);
+	prefs_set_vis(pw->pp_ua_profile,    pw->cat == PREFS_CAT_USERAGENT);
+	prefs_set_vis(pw->btn_ua_save,      pw->cat == PREFS_CAT_USERAGENT);
+	prefs_set_vis(pw->btn_ua_remove,    pw->cat == PREFS_CAT_USERAGENT);
 	/* Advanced */
 	prefs_set_vis(pw->pp_fetch,         pw->cat == PREFS_CAT_NETWORK);
 	prefs_set_vis(pw->pp_perhost,       pw->cat == PREFS_CAT_NETWORK);
@@ -674,6 +888,8 @@ static void prefs_set_cat(struct prefs_win *pw, int cat)
 	Rect r;
 	if (cat < 0 || cat >= PREFS_CAT_COUNT) return;
 	if (cat == pw->cat) return;
+	if (pw->active_te != NULL) TEDeactivate(pw->active_te);
+	pw->active_te = NULL;
 	pw->cat = cat;
 	if (pw->tabs != NULL) {
 		SetControlValue(pw->tabs, (short)(cat + 1));
@@ -799,6 +1015,12 @@ static void prefs_apply_from_ui(struct prefs_win *pw)
 	if (pw->pp_perhost != NULL) {
 		nsoption_set_int(max_fetchers_per_host, prefs_popup_get(pw->pp_perhost, &s_popup_perhost, nsoption_int(max_fetchers_per_host)));
 	}
+
+	/* User Agents: replace the live fetch policy only when the whole
+	 * Preferences draft is committed. */
+	(void)macos9_user_agent_user_rules_replace(
+		pw->ua_rules, pw->ua_rule_count);
+	macos9_user_agent_rules_save();
 }
 
 /* Populate UI controls from live options */
@@ -806,6 +1028,8 @@ static void prefs_load_values(struct prefs_win *pw)
 {
 	char num[32];
 	const char *home = macos9_home_url();
+	const struct macos9_user_ua_rule *live_ua;
+	int live_ua_count;
 
 	if (pw->te_home != NULL) {
 		TESetText(home, (long)strlen(home), pw->te_home);
@@ -838,6 +1062,21 @@ static void prefs_load_values(struct prefs_win *pw)
 	prefs_set_val(pw->ck_cookies, nsoption_bool(accept_cookies) ? 1 : 0);
 	prefs_set_val(pw->ck_ref,     nsoption_bool(send_referer) ? 1 : 0);
 	prefs_set_val(pw->ck_dnt,     nsoption_bool(do_not_track) ? 1 : 0);
+
+	/* User Agents */
+	live_ua = macos9_user_agent_user_rules(&live_ua_count);
+	if (live_ua_count < 0) live_ua_count = 0;
+	if (live_ua_count > MACSURF_UA_USER_RULE_MAX)
+		live_ua_count = MACSURF_UA_USER_RULE_MAX;
+	pw->ua_rule_count = live_ua_count;
+	pw->ua_selected = -1;
+	memset(pw->ua_rules, 0, sizeof pw->ua_rules);
+	if (live_ua != NULL && live_ua_count > 0) {
+		memcpy(pw->ua_rules, live_ua,
+			(size_t)live_ua_count * sizeof pw->ua_rules[0]);
+	}
+	prefs_ua_rule_menu_rebuild(pw);
+	prefs_ua_editor_load(pw, -1);
 
 	/* Advanced */
 	prefs_popup_set_item(pw->pp_fetch,   pw->m_fetch,   prefs_popup_item(&s_popup_fetch, nsoption_int(max_fetchers)));
@@ -878,6 +1117,12 @@ static void prefs_load_defaults_into_ui(struct prefs_win *pw)
 	prefs_set_val(pw->ck_cookies, 1);
 	prefs_set_val(pw->ck_ref,     1);
 	prefs_set_val(pw->ck_dnt,     0);
+
+	pw->ua_rule_count = 0;
+	pw->ua_selected = -1;
+	memset(pw->ua_rules, 0, sizeof pw->ua_rules);
+	prefs_ua_rule_menu_rebuild(pw);
+	prefs_ua_editor_load(pw, -1);
 
 	prefs_popup_set_item(pw->pp_fetch,   pw->m_fetch,   prefs_popup_item(&s_popup_fetch, 128));
 	prefs_popup_set_item(pw->pp_perhost, pw->m_perhost, prefs_popup_item(&s_popup_perhost, 16));
@@ -1049,6 +1294,28 @@ static void prefs_paint(struct prefs_win *pw)
 		DrawString("\pRemoves temporarily cached files and recorded page visit history.");
 		break;;
 
+	case PREFS_CAT_USERAGENT:
+		RGBForeColor(&black_c);
+		TextFont(1); TextFace(normal); TextSize(12);
+		MoveTo(24, 98);
+		DrawString("\pSaved override:");
+		MoveTo(24, 142);
+		DrawString("\pDomain:");
+		MoveTo(24, 182);
+		DrawString("\pUser agent:");
+		MoveTo(24, 212);
+		DrawString("\pCustom string:");
+
+		RGBForeColor(&gray_c);
+		TextFont(3); TextFace(normal); TextSize(9);
+		MoveTo(24, 116);
+		DrawString("\pChoose an existing rule or New Override to create one.");
+		MoveTo(24, 304);
+		DrawString("\pMatches the domain and its subdomains. User rules override built-in");
+		MoveTo(24, 316);
+		DrawString("\pcompatibility rules and take effect on the next request after OK.");
+		break;
+
 	case PREFS_CAT_NETWORK:
 		RGBForeColor(&black_c);
 		TextFont(1); TextFace(normal); TextSize(12);
@@ -1091,6 +1358,21 @@ static void prefs_paint(struct prefs_win *pw)
 			MoveTo((short)(s_pp_minfont_rect.left + 8), (short)(s_pp_minfont_rect.top + 15));
 			DrawText(s_popup_minfont.labels[mi], 0, (short)strlen(s_popup_minfont.labels[mi]));
 		}
+	} else if (pw->cat == PREFS_CAT_USERAGENT) {
+		int ri = pw->pp_ua_rule != NULL ? GetControlValue(pw->pp_ua_rule) : 1;
+		int pi = pw->pp_ua_profile != NULL ? GetControlValue(pw->pp_ua_profile) - 1 : 0;
+		const char *rlabel = "New Override...";
+		if (ri >= 2 && ri - 2 < pw->ua_rule_count)
+			rlabel = pw->ua_rules[ri - 2].suffix;
+		MoveTo((short)(s_pp_ua_rule_rect.left + 8),
+			(short)(s_pp_ua_rule_rect.top + 15));
+		DrawText(rlabel, 0, (short)strlen(rlabel));
+		if (pi >= 0 && pi < s_popup_ua_profile.count) {
+			MoveTo((short)(s_pp_ua_profile_rect.left + 8),
+				(short)(s_pp_ua_profile_rect.top + 15));
+			DrawText(s_popup_ua_profile.labels[pi], 0,
+				(short)strlen(s_popup_ua_profile.labels[pi]));
+		}
 	} else if (pw->cat == PREFS_CAT_NETWORK) {
 		int fi = prefs_popup_item(&s_popup_fetch, nsoption_int(max_fetchers)) - 1;
 		int pi = prefs_popup_item(&s_popup_perhost, nsoption_int(max_fetchers_per_host)) - 1;
@@ -1121,6 +1403,19 @@ static void prefs_paint(struct prefs_win *pw)
 			r = s_te_wh_rect;
 			FrameRect(&r);
 			TEUpdate(&r, pw->te_wh);
+		}
+		RGBForeColor(&saved);
+	} else if (pw->cat == PREFS_CAT_USERAGENT) {
+		RGBForeColor(&black_c);
+		if (pw->te_ua_host != NULL) {
+			r = s_te_ua_host_rect;
+			FrameRect(&r);
+			TEUpdate(&r, pw->te_ua_host);
+		}
+		if (pw->te_ua_custom != NULL) {
+			r = s_te_ua_custom_rect;
+			FrameRect(&r);
+			TEUpdate(&r, pw->te_ua_custom);
 		}
 		RGBForeColor(&saved);
 	}
@@ -1180,13 +1475,19 @@ static void prefs_te_blur(struct prefs_win *pw)
 static void prefs_te_tab(struct prefs_win *pw)
 {
 	TEHandle next;
-	if (pw->cat != PREFS_CAT_GENERAL) return;
 	next = NULL;
-	if (pw->active_te == pw->te_home) next = pw->te_ww;
-	else if (pw->active_te == pw->te_ww) next = pw->te_wh;
-	else next = pw->te_home;
-	if (next == NULL) next = pw->te_ww;
-	if (next == NULL) next = pw->te_wh;
+	if (pw->cat == PREFS_CAT_GENERAL) {
+		if (pw->active_te == pw->te_home) next = pw->te_ww;
+		else if (pw->active_te == pw->te_ww) next = pw->te_wh;
+		else next = pw->te_home;
+		if (next == NULL) next = pw->te_ww;
+		if (next == NULL) next = pw->te_wh;
+	} else if (pw->cat == PREFS_CAT_USERAGENT) {
+		if (pw->active_te == pw->te_ua_host) next = pw->te_ua_custom;
+		else next = pw->te_ua_host;
+	} else {
+		return;
+	}
 	if (next == NULL) return;
 	if (pw->active_te != NULL && pw->active_te != next)
 		TEDeactivate(pw->active_te);
@@ -1204,6 +1505,11 @@ static int prefs_click(struct prefs_win *pw, Point lp)
 	if (PtInRect(lp, &s_btn_ok_rect)) {
 		part = TrackControl(pw->btn_ok, lp, NULL);
 		if (part != 0) {
+			if (pw->cat == PREFS_CAT_USERAGENT &&
+		    prefs_ua_commit_editor(pw) < 0) {
+				SysBeep(1);
+				return 0;
+			}
 			prefs_apply_from_ui(pw);
 			macos9_prefs_save();
 			macos9_prefs_apply_live();
@@ -1318,6 +1624,51 @@ static int prefs_click(struct prefs_win *pw, Point lp)
 		}
 		break;
 
+	case PREFS_CAT_USERAGENT:
+		if (PtInRect(lp, &s_pp_ua_rule_rect)) {
+			int item;
+			prefs_do_popup(pw->pp_ua_rule, pw->m_ua_rule, lp);
+			item = pw->pp_ua_rule != NULL ? GetControlValue(pw->pp_ua_rule) : 1;
+			prefs_ua_editor_load(pw, item - 2);
+			SetRect(&r, 0, PREFS_PANEL_TOP, PREFS_W_W, PREFS_PANEL_BOT);
+			InvalWindowRect(pw->win, &r);
+			return 0;
+		}
+		if (PtInRect(lp, &s_te_ua_host_rect)) {
+			prefs_te_focus(pw, pw->te_ua_host, lp); return 0;
+		}
+		if (PtInRect(lp, &s_pp_ua_profile_rect)) {
+			prefs_do_popup(pw->pp_ua_profile, pw->m_ua_profile, lp);
+			SetRect(&r, 0, PREFS_PANEL_TOP, PREFS_W_W, PREFS_PANEL_BOT);
+			InvalWindowRect(pw->win, &r);
+			return 0;
+		}
+		if (PtInRect(lp, &s_te_ua_custom_rect)) {
+			prefs_te_focus(pw, pw->te_ua_custom, lp); return 0;
+		}
+		if (PtInRect(lp, &s_btn_ua_save_rect)) {
+			part = TrackControl(pw->btn_ua_save, lp, NULL);
+			if (part != 0) {
+				if (prefs_ua_commit_editor(pw) < 0) SysBeep(1);
+				SetRect(&r, 0, PREFS_PANEL_TOP, PREFS_W_W, PREFS_PANEL_BOT);
+				InvalWindowRect(pw->win, &r);
+			}
+			return 0;
+		}
+		if (PtInRect(lp, &s_btn_ua_remove_rect)) {
+			part = TrackControl(pw->btn_ua_remove, lp, NULL);
+			if (part != 0 && pw->ua_selected >= 0) {
+				prefs_ua_remove_index(pw, pw->ua_selected);
+				pw->ua_selected = -1;
+				prefs_ua_rule_menu_rebuild(pw);
+				prefs_ua_editor_load(pw, -1);
+				SetRect(&r, 0, PREFS_PANEL_TOP, PREFS_W_W, PREFS_PANEL_BOT);
+				InvalWindowRect(pw->win, &r);
+			}
+			return 0;
+		}
+		break;
+
 	case PREFS_CAT_NETWORK:
 		if (PtInRect(lp, &s_pp_fetch_rect)) {
 			prefs_do_popup(pw->pp_fetch, pw->m_fetch, lp); return 0;
@@ -1356,6 +1707,11 @@ static int prefs_key(struct prefs_win *pw, const EventRecord *ev)
 	}
 	if (ch == 0x1B) return 1;  /* Esc = cancel */
 	if (ch == '\r' || ch == 0x03) {  /* Return / Enter = OK */
+		if (pw->cat == PREFS_CAT_USERAGENT &&
+		    prefs_ua_commit_editor(pw) < 0) {
+			SysBeep(1);
+			return 0;
+		}
 		prefs_apply_from_ui(pw);
 		macos9_prefs_save();
 		macos9_prefs_apply_live();
@@ -1450,6 +1806,20 @@ void macos9_prefs_show(void)
 	pw.btn_cache  = prefs_create_button(pw.win, &s_btn_cache_rect, "Clear Cache...");
 	pw.btn_hist   = prefs_create_button(pw.win, &s_btn_hist_rect, "Clear History...");
 
+	/* User Agents controls */
+	pw.ua_selected = -1;
+	pw.m_ua_rule = prefs_ua_rule_menu_new(PREFS_MENU_ID_UA_RULE);
+	pw.pp_ua_rule = prefs_create_popup(pw.win, &s_pp_ua_rule_rect,
+		pw.m_ua_rule, 1, 1);
+	pw.m_ua_profile = prefs_popup_menu(&s_popup_ua_profile,
+		PREFS_MENU_ID_UA_PROFILE);
+	pw.pp_ua_profile = prefs_create_popup(pw.win, &s_pp_ua_profile_rect,
+		pw.m_ua_profile, s_popup_ua_profile.count, 1);
+	pw.btn_ua_save = prefs_create_button(pw.win, &s_btn_ua_save_rect,
+		"Add / Update");
+	pw.btn_ua_remove = prefs_create_button(pw.win, &s_btn_ua_remove_rect,
+		"Remove");
+
 	/* Advanced popups */
 	pw.m_fetch = prefs_popup_menu(&s_popup_fetch, PREFS_MENU_ID_FETCH);
 	pw.pp_fetch = prefs_create_popup(pw.win, &s_pp_fetch_rect, pw.m_fetch,
@@ -1471,6 +1841,14 @@ void macos9_prefs_show(void)
 	{
 		Rect r = s_te_wh_rect;
 		pw.te_wh = TENew(&r, &r);
+	}
+	{
+		Rect r = s_te_ua_host_rect;
+		pw.te_ua_host = TENew(&r, &r);
+	}
+	{
+		Rect r = s_te_ua_custom_rect;
+		pw.te_ua_custom = TENew(&r, &r);
 	}
 
 	prefs_load_values(&pw);
@@ -1581,12 +1959,18 @@ void macos9_prefs_show(void)
 	prefs_disp_ctrl(pw.ck_dnt);
 	prefs_disp_ctrl(pw.btn_cache);
 	prefs_disp_ctrl(pw.btn_hist);
+	prefs_disp_ctrl(pw.pp_ua_rule);
+	prefs_disp_ctrl(pw.pp_ua_profile);
+	prefs_disp_ctrl(pw.btn_ua_save);
+	prefs_disp_ctrl(pw.btn_ua_remove);
 	prefs_disp_ctrl(pw.pp_fetch);
 	prefs_disp_ctrl(pw.pp_perhost);
 
 	/* Dispose menus */
 	prefs_disp_menu(pw.m_font);
 	prefs_disp_menu(pw.m_minfont);
+	prefs_disp_menu(pw.m_ua_rule);
+	prefs_disp_menu(pw.m_ua_profile);
 	prefs_disp_menu(pw.m_fetch);
 	prefs_disp_menu(pw.m_perhost);
 
@@ -1594,6 +1978,8 @@ void macos9_prefs_show(void)
 	if (pw.te_home != NULL) TEDispose(pw.te_home);
 	if (pw.te_ww != NULL) TEDispose(pw.te_ww);
 	if (pw.te_wh != NULL) TEDispose(pw.te_wh);
+	if (pw.te_ua_host != NULL) TEDispose(pw.te_ua_host);
+	if (pw.te_ua_custom != NULL) TEDispose(pw.te_ua_custom);
 
 	DisposeWindow(pw.win);
 	g_prefs_open_win = NULL;
