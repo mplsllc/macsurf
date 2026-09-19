@@ -41,6 +41,28 @@
 #define MACSURF_CALLER_HDRS_CAP   2048  /* XHR/Fetch extra request headers    */
 #define MACSURF_REDIRECT_URL_CAP  1024  /* Location: header value buffer      */
 
+/* User-editable per-site User-Agent rules. Kept deliberately small and
+ * fixed-size for CW8 / Classic Mac OS: no allocator ownership crosses the
+ * fetch/preferences boundary, and a corrupt preferences file cannot grow an
+ * unbounded rule set. */
+#define MACSURF_UA_USER_RULE_MAX  16
+#define MACSURF_UA_HOST_MAX       128
+#define MACSURF_UA_STRING_MAX     512
+
+struct macos9_user_ua_rule {
+	char suffix[MACSURF_UA_HOST_MAX];
+	char ua[MACSURF_UA_STRING_MAX];
+};
+
+enum macos9_ua_preset {
+	MACOS9_UA_PRESET_DEFAULT = 0,
+	MACOS9_UA_PRESET_FIREFOX134,
+	MACOS9_UA_PRESET_CHROME149,
+	MACOS9_UA_PRESET_KAIOS25,
+	MACOS9_UA_PRESET_CUSTOM,
+	MACOS9_UA_PRESET_COUNT
+};
+
 /* === Function declarations ============================================= */
 
 /* MacSurf's honest default User-Agent (every host not in the override
@@ -53,6 +75,18 @@ const char *macos9_user_agent_default(void);
  * be NULL (returns the default). The returned string is static storage and
  * must not be freed or modified; never NULL. */
 const char *macos9_user_agent_for_host(const char *host);
+
+/* Runtime-editable rules are loaded from/saved to "MacSurf User Agents" in
+ * MacSurfData. User rules are consulted before the built-in compatibility
+ * table and therefore can intentionally override a built-in rule. */
+void macos9_user_agent_rules_load(void);
+void macos9_user_agent_rules_save(void);
+const struct macos9_user_ua_rule *macos9_user_agent_user_rules(int *count);
+int macos9_user_agent_user_rules_replace(
+		const struct macos9_user_ua_rule *rules, int count);
+int macos9_user_agent_normalize_host(const char *input, char *out, size_t cap);
+const char *macos9_user_agent_preset_value(int preset);
+int macos9_user_agent_preset_for_value(const char *ua);
 
 /* fixes835 (#167 M1)  -  request-header helpers (shared, impl in
  * macos9_fetch.c). See that file for the drop-list contract. */
