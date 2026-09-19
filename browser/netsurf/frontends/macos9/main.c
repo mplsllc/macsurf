@@ -15,6 +15,7 @@
 #include "macsurf_memory.h"    /* macsurf_recon_mem() */
 #include "macsurf_timebase.h"
 #include "macsurf_osver.h"     /* fixes936 -- macsurf_os_is_osx() */
+#include "macos9_useragent.h"  /* user-editable per-site UA rules */
 
 #ifdef __MACOS9__
 #include <OpenTransport.h>
@@ -2146,6 +2147,8 @@ int main(void) {
 	MS_LOG("BOOT nsoption_init done");
 	macos9_prefs_load();
 	MS_LOG("BOOT prefs file loaded");
+	macos9_user_agent_rules_load();
+	MS_LOG("BOOT user-agent rules loaded");
 	/* fixes1189 - the line this replaces ("images enabled, author_css on,
 	 * fetcher 128/16, mem cache 32MB") was a hardcoded claim left over
 	 * from before macos9_prefs_load existed, and stayed accurate only by
