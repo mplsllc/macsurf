@@ -458,7 +458,7 @@ void macsurf_transition_tick(void *p)
             struct gui_window *gw;
             extern struct gui_window *macos9_window_list_head(void);
             extern void macos9_window_invalidate_content(struct gui_window *g);
-            for (gw = macos9_window_list_head(); gw != NULL; gw = gw->next) {
+            for (gw = macos9_window_list_head(); gw != NULL; gw = gw->next_global) {
                 macos9_window_invalidate_content(gw);
             }
             TRANSITION_DIAG(("LIFE 2B2 invalidate active=%d", g_effect_count));
@@ -568,3 +568,4 @@ bool macsurf_transition_get_opacity(dom_node *node, css_fixed target,
 
 /* test hook for harness */
 uint32_t macsurf_transition_test_now = 0;
+

@@ -86,8 +86,9 @@ long macsurf_diag_serialize_network(char *buf, long cap);
 enum ms_script_kind  { MS_SCRIPT_CLASSIC = 0, MS_SCRIPT_MODULE };
 enum ms_script_state { MS_SCR_RUNNING = 0, MS_SCR_DONE, MS_SCR_COMPILE_FAIL,
 		       MS_SCR_RUN_FAIL, MS_SCR_SKIPPED };
-enum ms_task_kind    { MS_TASK_NONE = 0, MS_TASK_TIMER, MS_TASK_EVENT,
-		       MS_TASK_XHR, MS_TASK_MICROTASK };
+enum ms_task_kind    { MS_TASK_NONE = 0, MS_TASK_SCRIPT, MS_TASK_EVENT,
+		       MS_TASK_TIMER, MS_TASK_MICROTASK, MS_TASK_INTERNAL_SETUP,
+		       MS_TASK_INTERNAL_NOTIFICATION, MS_TASK_XHR };
 
 /* Saved outer scope; scoped push/pop, NOT bare assignment. */
 struct ms_diag_scope {
@@ -109,6 +110,13 @@ void ms_diag_script_leave(struct ms_diag_scope *s, int state);
 unsigned long ms_diag_task_enter(struct ms_diag_scope *s, int kind,
 	unsigned long nav_id, unsigned long origin_script,
 	unsigned long extra, const char *name);
+/* Observe a task whose ID is owned by an existing execution spine.  This is
+ * deliberately separate from ms_diag_task_enter(): the diagnostic layer must
+ * never manufacture a competing identity for a QuickJS task. */
+void ms_diag_task_enter_external(struct ms_diag_scope *s,
+	unsigned long task_id, int kind, unsigned long nav_id,
+	unsigned long origin_script, unsigned long extra, const char *name);
+void ms_diag_task_set_script(unsigned long task_id, unsigned long script_id);
 void ms_diag_task_leave(struct ms_diag_scope *s);
 
 /* microtask only: after the drain, record how many jobs ran and whether the
@@ -231,7 +239,8 @@ void ms_diag_io_timer_bind(unsigned long io_id, const char *target_name,
  * stage record copies it via ms_diag_cur_provenance(), never piecemeal cur_*(). */
 
 enum ms_render_kind { MS_RENDER_INITIAL = 0, MS_RENDER_RECONVERT,
-		      MS_RENDER_FAST_STYLE, MS_RENDER_FAST_INHERITED };
+		      MS_RENDER_FAST_STYLE, MS_RENDER_FAST_INHERITED,
+		      MS_RENDER_POLICY };
 enum ms_stage_kind   { MS_STAGE_STYLEFAST = 0, MS_STAGE_INHERITED_COLOR };
 enum ms_stage_result { MS_SRES_COMMIT = 0, MS_SRES_FALLBACK, MS_SRES_DECLINE };
 enum ms_stage_reason { MS_SREASON_NONE = 0,
@@ -241,7 +250,13 @@ enum ms_stage_reason { MS_SREASON_NONE = 0,
 		       MS_SREASON_NOT_READY,
 		       MS_SREASON_NO_CANDIDATE };
 enum ms_render_result { MS_RRES_RUNNING = 0, MS_RRES_DONE, MS_RRES_FALLBACK,
-			MS_RRES_FAIL, MS_RRES_QUEUED };
+			MS_RRES_FAIL, MS_RRES_QUEUED, MS_RRES_DECLINED,
+			MS_RRES_COSMETIC_SUPPRESSED, MS_RRES_DEFER_NOT_DONE,
+			MS_RRES_DEFER_JS_ACTIVE, MS_RRES_BUSY, MS_RRES_STALE_DROP,
+			MS_RRES_OVERFLOW };
+enum ms_render_action { MS_RACTION_NONE = 0, MS_RACTION_PAINT,
+	MS_RACTION_RECASCADE, MS_RACTION_LOCAL_REFLOW, MS_RACTION_SUBTREE,
+	MS_RACTION_FULL, MS_RACTION_SYNC_FULL };
 
 /* The frozen causal descriptor. Fill with ms_diag_cur_provenance() or build it
  * from a pending-table slot; pass by const pointer, never re-read cur_*(). */
@@ -257,24 +272,29 @@ struct ms_diag_provenance {
 
 /* saved ambient render scope; scoped push/pop, NOT bare assignment */
 struct ms_diag_render_scope {
-	unsigned long prev_nav, prev_frame, prev_doc, prev_batch, prev_pass;
+	unsigned long prev_nav, prev_frame, prev_doc, prev_script, prev_task,
+		prev_batch, prev_pass;
 	unsigned long my_pass;
 };
 
 /* --- documents --- */
 unsigned long ms_diag_document_open(unsigned long nav, unsigned long frame);
 void ms_diag_document_set_frame(unsigned long doc_id, unsigned long frame);
+void ms_diag_document_set_nav(unsigned long doc_id, unsigned long nav);
 void ms_diag_document_close(unsigned long doc_id);
 
 /* --- mutation batches (R1: keyed by document, opened per pending slot) --- */
 unsigned long ms_diag_batch_open(const struct ms_diag_provenance *prov);
 void ms_diag_batch_add(unsigned long batch_id, int mut_kind, unsigned long task);
 void ms_diag_batch_freeze(unsigned long batch_id);
+int ms_diag_batch_provenance(unsigned long batch_id,
+	struct ms_diag_provenance *out);
 
 /* --- render transaction: synchronous reconvert path (open+push / close+pop) --- */
 unsigned long ms_diag_render_enter(struct ms_diag_render_scope *s, int kind,
 	const struct ms_diag_provenance *prov);
 void ms_diag_render_leave(struct ms_diag_render_scope *s, int result, int reason);
+void ms_diag_render_action(int action);
 
 /* --- render transaction: async initial layout (open once; push/pop per slice;
  *     close once). prov->pass is filled in by _open. --- */

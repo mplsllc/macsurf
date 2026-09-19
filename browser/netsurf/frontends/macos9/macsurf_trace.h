@@ -66,6 +66,15 @@ int  macsurf_trace_armed(void);
 void macsurf_trace_emit(int cat, int event, int state, int reason,
 	unsigned long a, unsigned long b);
 
+/* Record one event from a frozen causal descriptor.  This is for work which
+ * deliberately outlives its ambient JS/render scope (notably a debounced DOM
+ * mutation batch).  The descriptor is copied at emission time; it is never
+ * installed into the ambient diagnostic state. */
+struct ms_diag_provenance;
+void macsurf_trace_emit_with_provenance(int cat, int event, int state,
+	int reason, const struct ms_diag_provenance *prov,
+	unsigned long a, unsigned long b);
+
 /* `MSdg GET trace`: newest-first dump of the ring (or a "disarmed" note). */
 long macsurf_trace_serialize(char *buf, long cap);
 

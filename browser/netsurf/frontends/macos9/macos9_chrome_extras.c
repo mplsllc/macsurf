@@ -1616,7 +1616,8 @@ void macos9_history_init(void)
 
 /* chrome_confirm_delete lives in the bookmark-manager section below; the
  * History window (defined first) needs it for its Delete button. */
-static int chrome_confirm_delete(const char *msg);
+int macos9_chrome_confirm_delete(const char *msg);
+static int chrome_confirm_delete(const char *msg) { return macos9_chrome_confirm_delete(msg); }
 
 /* Read the TE's text into out (NUL-terminated). */
 static void chrome_te_get_text(TEHandle te, char *out, int cap)
@@ -1775,7 +1776,7 @@ static void mgr_icon_ensure(int id)
 /* fixes742/745 - a shiny gold gradient title banner across the top of a manager
  * window, with an icon (id 1=History, 2=Bookmarks, 0=none) + bold white title.
  * content is the window's local rect. */
-static void chrome_mgr_header(const Rect *content, const char *title, int icon)
+void macos9_chrome_mgr_header(const Rect *content, const char *title, int icon)
 {
 	Rect band;
 	Rect ln;
@@ -1832,6 +1833,7 @@ static void chrome_mgr_header(const Rect *content, const char *title, int icon)
 	}
 	RGBForeColor(&saved_fg);
 }
+#define chrome_mgr_header macos9_chrome_mgr_header
 
 /* fixes742 - shiny rounded button: a light top-lit gradient clipped to the
  * round-rect, a crisp frame, centred label. */
@@ -1944,22 +1946,30 @@ static int hw_prev_entry(struct hw_row *rows, int from)
 	return -1;
 }
 
+static ControlRef chrome_create_pushbutton(WindowRef win, const Rect *r, const char *title)
+{
+	unsigned char pstr[256];
+	c_to_pstring(title, pstr);
+	return NewControl(win, r, pstr, true, 0, 0, 1, kControlPushButtonProc, 0);
+}
+
 void macos9_history_window_show(struct gui_window *g)
 {
 	WindowRef win;
-	Rect wb, list, up, dn, clr, del, go, done, search_rect;
+	Rect wb, content, list, sb_rect, search_rect;
+	Rect r_clr, r_del, r_visit, r_done;
+	ControlRef btn_clr, btn_del, btn_visit, btn_done, sb;
 	GrafPtr saved_port;
 	EventRecord ev;
 	struct hw_row *rows;
 	int cap, nrows;
 	int scroll_top = 0, sel = -1;
-	int row_h = 20, vis;              /* fixes742 - taller rows, more padding */
+	int row_h = 20, vis;
 	long today_day = 0;
-	int done_flag = 0;
+	int done_flag = 0, dirty = 1;
 	char go_url[MACSURF_HIST_URL_MAX];
 	int last_click_row = -1;
 	unsigned long last_click_time = 0;
-	int dirty = 1;
 	TEHandle te_search = NULL;
 	int search_focus = 0;
 	char filter[128];
@@ -1978,7 +1988,7 @@ void macos9_history_window_show(struct gui_window *g)
 	rows = (struct hw_row *)malloc((size_t)cap * sizeof(struct hw_row));
 	if (rows == NULL) return;
 
-	SetRect(&wb, 120, 90, 640, 490);
+	SetRect(&wb, 100, 80, 740, 500);  /* 640 x 420 px */
 	if (CreateNewWindow(kDocumentWindowClass, kWindowCloseBoxAttribute,
 			&wb, &win) != noErr || win == NULL) {
 		free(rows);
@@ -1988,31 +1998,61 @@ void macos9_history_window_show(struct gui_window *g)
 
 	GetPort(&saved_port);
 	SetPortWindowPort(win);
-	TextFont(1);   /* application font (Geneva) */
-	TextSize(12);  /* fixes742 - larger row text */
+	TextFont(1);
+	TextSize(12);
 
-	/* content is 520 x 400 local. Search field + list below the 34px
-	 * title banner; the filter narrows rows to title/URL matches. */
-	SetRect(&search_rect, 48, 40, 512, 60);
-	SetRect(&list, 8, 64, 512, 344);
-	SetRect(&up,   494, 64,  512, 86);
-	SetRect(&dn,   494, 322, 512, 344);
-	SetRect(&clr,  8,   352, 128, 376);
-	SetRect(&del,  132, 352, 192, 376);
-	SetRect(&go,   300, 352, 380, 376);
-	SetRect(&done, 420, 352, 512, 376);
+	SetRect(&content, 0, 0, 640, 420);
+
+	/* Toolbar row */
+	SetRect(&r_clr,      12, 40, 140, 64);
+	SetRect(&r_del,     148, 40, 220, 64);
+	SetRect(&search_rect, 412, 42, 626, 62);
+
+	/* List & Scrollbar */
+	SetRect(&list, 12, 72, 608, 376);
+	SetRect(&sb_rect, 608, 72, 626, 376);
 	vis = (list.bottom - list.top - 4) / row_h;
 
-	te_search = TENew(&search_rect, &search_rect);
+	/* Footer row - wider buttons to prevent text cutoff */
+	SetRect(&r_visit, 440, 386, 550, 410);   /* 110px - "Visit Page" */
+	SetRect(&r_done,  560, 386, 636, 410);   /* 76px - "Done" */
+
+	/* Native Controls */
+	btn_clr   = chrome_create_pushbutton(win, &r_clr,   "Clear History...");
+	btn_del   = chrome_create_pushbutton(win, &r_del,   "Delete");
+	btn_visit = chrome_create_pushbutton(win, &r_visit, "Visit Page");
+	btn_done  = chrome_create_pushbutton(win, &r_done,  "Done");
+
+	/* Disable default button ring on Done button (black outline) */
+	{
+		SInt16 def_state = 0;  /* kControlPushButtonDefaultStateOff */
+		SetControlData(btn_done, kControlEntireControl,
+			104 /* kControlPushButtonDefaultStateTag */, sizeof(def_state), &def_state);
+	}
+
+	nrows = hw_build_rows(rows, cap, today_day, filter);
+	sel = hw_next_entry(rows, nrows, 0);
+
+	{
+		int maxtop = nrows - vis; if (maxtop < 0) maxtop = 0;
+		sb = NewControl(win, &sb_rect, "\p", true, 0, 0, (short)maxtop,
+			kControlScrollBarLiveProc, 0);
+	}
+
+	{
+		Rect te_box = search_rect;
+		InsetRect(&te_box, 3, 2);
+		te_search = TENew(&te_box, &te_box);
+	}
 	if (te_search == NULL) {
+		DisposeControl(btn_clr); DisposeControl(btn_del);
+		DisposeControl(btn_visit); DisposeControl(btn_done);
+		if (sb != NULL) DisposeControl(sb);
 		SetPort(saved_port);
 		DisposeWindow(win);
 		free(rows);
 		return;
 	}
-
-	nrows = hw_build_rows(rows, cap, today_day, filter);
-	sel = hw_next_entry(rows, nrows, 0);
 
 	ShowWindow(win);
 	SelectWindow(win);
@@ -2023,25 +2063,31 @@ void macos9_history_window_show(struct gui_window *g)
 		case updateEvt:
 			if ((WindowRef)ev.message == win) {
 				BeginUpdate(win);
-				EndUpdate(win);   /* validate; shared draw repaints */
+				EndUpdate(win);
 				dirty = 1;
 			} else {
-				/* fixes709 - repaint an uncovered background browser
-				 * window (dragging left it white). Restore our port. */
 				extern void macos9_handle_update(const EventRecord *event);
 				macos9_handle_update(&ev);
 				SetPortWindowPort(win);
 			}
 			break;
+		case kHighLevelEvent:
+			AEProcessAppleEvent(&ev);
+			break;
+		case nullEvent:
+			if (search_focus && te_search != NULL)
+				TEIdle(te_search);
+			break;
 		case mouseDown: {
 			WindowRef which;
 			short part = FindWindow(ev.where, &which);
 			Point lp;
+			ControlRef ctrl = NULL;
 			if (which != win) break;
 			if (part == inDrag) {
-				Rect db; BitMap sb;
-				GetQDGlobalsScreenBits(&sb);
-				db = sb.bounds;
+				Rect db; BitMap sbmp;
+				GetQDGlobalsScreenBits(&sbmp);
+				db = sbmp.bounds;
 				DragWindow(win, ev.where, &db);
 				break;
 			}
@@ -2052,63 +2098,92 @@ void macos9_history_window_show(struct gui_window *g)
 			if (part != inContent) break;
 			lp = ev.where;
 			GlobalToLocal(&lp);
-			if (PtInRect(lp, &done)) { done_flag = 1; break; }
-			if (PtInRect(lp, &clr)) {
-				macos9_history_clear();
-				nrows = hw_build_rows(rows, cap, today_day, filter);
-				sel = hw_next_entry(rows, nrows, 0);
-				scroll_top = 0;
-				last_click_row = -1;
-				break;
-			}
-			if (PtInRect(lp, &del)) {
-				if (sel >= 0 && sel < nrows && !rows[sel].is_header) {
-					int hi = rows[sel].hidx;
-					if (hi >= 0 && hi < macsurf_hist_n &&
-					    chrome_confirm_delete(
-						"Delete this history entry?")) {
-						macos9_history_delete_entry(hi);
-						nrows = hw_build_rows(rows, cap,
-							today_day, filter);
-						if (sel >= nrows) sel = nrows - 1;
-						if (nrows == 0) sel = -1;
-						if (scroll_top > nrows - vis)
-							scroll_top = nrows - vis;
-						if (scroll_top < 0) scroll_top = 0;
-					}
+
+			/* Native Controls Hit-Testing */
+			part = FindControl(lp, win, &ctrl);
+			if (ctrl != NULL) {
+				if (ctrl == btn_done) {
+					if (TrackControl(btn_done, lp, NULL)) done_flag = 1;
+					break;
 				}
-				break;
-			}
-			if (PtInRect(lp, &go)) {
-				if (sel >= 0 && sel < nrows && !rows[sel].is_header) {
-					int hi = rows[sel].hidx;
-					if (hi >= 0 && hi < macsurf_hist_n) {
-						strcpy(go_url, macsurf_hist[hi].url);
-						done_flag = 1;
+				if (ctrl == btn_visit) {
+					if (TrackControl(btn_visit, lp, NULL)) {
+						if (sel >= 0 && sel < nrows && !rows[sel].is_header) {
+							int hi = rows[sel].hidx;
+							if (hi >= 0 && hi < macsurf_hist_n) {
+								strcpy(go_url, macsurf_hist[hi].url);
+								done_flag = 1;
+							}
+						}
 					}
+					break;
 				}
-				break;
+				if (ctrl == btn_clr) {
+					if (TrackControl(btn_clr, lp, NULL)) {
+						if (chrome_confirm_delete("Clear entire browsing history?")) {
+							macos9_history_clear();
+							nrows = hw_build_rows(rows, cap, today_day, filter);
+							sel = hw_next_entry(rows, nrows, 0);
+							scroll_top = 0;
+							last_click_row = -1;
+							dirty = 1;
+						}
+					}
+					break;
+				}
+				if (ctrl == btn_del) {
+					if (TrackControl(btn_del, lp, NULL)) {
+						if (sel >= 0 && sel < nrows && !rows[sel].is_header) {
+							int hi = rows[sel].hidx;
+							if (hi >= 0 && hi < macsurf_hist_n &&
+							    chrome_confirm_delete("Delete this history entry?")) {
+								macos9_history_delete_entry(hi);
+								nrows = hw_build_rows(rows, cap, today_day, filter);
+								if (sel >= nrows) sel = nrows - 1;
+								if (nrows == 0) sel = -1;
+								if (scroll_top > nrows - vis)
+									scroll_top = nrows - vis;
+								if (scroll_top < 0) scroll_top = 0;
+								dirty = 1;
+							}
+						}
+					}
+					break;
+				}
+				if (ctrl == sb) {
+					part = TrackControl(sb, lp, NULL);
+					if (part == kControlIndicatorPart) {
+						scroll_top = GetControlValue(sb);
+					} else if (part == kControlUpButtonPart) {
+						scroll_top -= 1;
+					} else if (part == kControlDownButtonPart) {
+						scroll_top += 1;
+					} else if (part == kControlPageUpPart) {
+						scroll_top -= (vis > 1 ? vis - 1 : 1);
+					} else if (part == kControlPageDownPart) {
+						scroll_top += (vis > 1 ? vis - 1 : 1);
+					}
+					if (scroll_top < 0) scroll_top = 0;
+					{
+						int maxtop = nrows - vis; if (maxtop < 0) maxtop = 0;
+						if (scroll_top > maxtop) scroll_top = maxtop;
+					}
+					SetControlValue(sb, (short)scroll_top);
+					dirty = 1;
+					break;
+				}
 			}
-			if (PtInRect(lp, &up)) {
-				scroll_top -= 3;
-				if (scroll_top < 0) scroll_top = 0;
-				break;
-			}
-			if (PtInRect(lp, &dn)) {
-				int maxtop = nrows - vis;
-				if (maxtop < 0) maxtop = 0;
-				scroll_top += 3;
-				if (scroll_top > maxtop) scroll_top = maxtop;
-				break;
-			}
+
 			if (PtInRect(lp, &search_rect)) {
 				if (!search_focus) {
 					search_focus = 1;
 					TEActivate(te_search);
 				}
 				TEClick(lp, false, te_search);
+				dirty = 1;
 				break;
 			}
+
 			if (PtInRect(lp, &list)) {
 				int idx = scroll_top + (lp.v - (list.top + 2)) / row_h;
 				if (search_focus) {
@@ -2116,18 +2191,21 @@ void macos9_history_window_show(struct gui_window *g)
 					TEDeactivate(te_search);
 				}
 				if (idx >= 0 && idx < nrows && !rows[idx].is_header) {
-					if (idx == last_click_row &&
-					    (ev.when - last_click_time) <= GetDblTime()) {
+					unsigned long now = TickCount();
+					if (idx == last_click_row && (now - last_click_time) <= GetDblTime()) {
 						int hi = rows[idx].hidx;
 						if (hi >= 0 && hi < macsurf_hist_n) {
 							strcpy(go_url, macsurf_hist[hi].url);
 							done_flag = 1;
+							break;
 						}
 					}
 					sel = idx;
 					last_click_row = idx;
-					last_click_time = ev.when;
+					last_click_time = now;
 				}
+				dirty = 1;
+				break;
 			}
 			break;
 		}
@@ -2138,24 +2216,22 @@ void macos9_history_window_show(struct gui_window *g)
 			    (ch == '.' || ch == 'w' || ch == 'W')) {
 				done_flag = 1;
 			} else if (search_focus && ch == 0x09) {
-				/* Tab leaves the search field */
 				search_focus = 0;
 				TEDeactivate(te_search);
+				dirty = 1;
 			} else if (search_focus && ch == 0x1B) {
-				/* Esc clears the filter first, then closes */
 				if (filter[0] != '\0') {
 					filter[0] = '\0';
 					TESetSelect(0, 32767, te_search);
 					TESetText("", 0, te_search);
-					nrows = hw_build_rows(rows, cap,
-						today_day, filter);
+					nrows = hw_build_rows(rows, cap, today_day, filter);
 					scroll_top = 0;
 					sel = hw_next_entry(rows, nrows, 0);
+					dirty = 1;
 				} else {
 					done_flag = 1;
 				}
 			} else if (search_focus && (ch == 0x0D || ch == 0x03)) {
-				/* Return in the field = Go */
 				if (sel >= 0 && sel < nrows && !rows[sel].is_header) {
 					int hi = rows[sel].hidx;
 					if (hi >= 0 && hi < macsurf_hist_n) {
@@ -2167,45 +2243,33 @@ void macos9_history_window_show(struct gui_window *g)
 				int was_empty = (filter[0] == '\0');
 				if (ch == 0x1F || ch == 0x1E || ch == 0x0C ||
 				    ch == 0x0B || ch == 0x01 || ch == 0x04) {
-					/* list navigation still works while typing */
-					if (ch == 0x1F) {
-						int ns = hw_next_entry(rows, nrows,
-							(sel < 0) ? 0 : sel + 1);
-						if (ns >= 0) sel = ns;
-					} else if (ch == 0x1E) {
-						int ps = hw_prev_entry(rows,
-							(sel <= 0) ? 0 : sel - 1);
-						if (ps >= 0) sel = ps;
-					} else if (ch == 0x0C) {
-						scroll_top += vis - 1;
-					} else if (ch == 0x0B) {
-						scroll_top -= vis - 1;
-					} else if (ch == 0x01) {
-						scroll_top = 0;
-						sel = hw_next_entry(rows, nrows, 0);
+					if (ch == 0x1F) sel = hw_next_entry(rows, nrows, sel + 1);
+					else if (ch == 0x1E) sel = hw_prev_entry(rows, sel - 1);
+					else if (ch == 0x0C) { scroll_top += vis - 1; }
+					else if (ch == 0x0B) { scroll_top -= vis - 1; }
+					else if (ch == 0x01) {
+						scroll_top = 0; sel = hw_next_entry(rows, nrows, 0);
 					} else {
 						sel = hw_prev_entry(rows, nrows - 1);
 						scroll_top = nrows - vis;
 					}
 				} else if ((ch >= 0x20 && ch < 0x7F) || ch == 0x08) {
-					/* printable / backspace - edit, re-filter */
 					TEKey(ch, te_search);
-					chrome_te_get_text(te_search, filter,
-						(int)sizeof filter);
-					nrows = hw_build_rows(rows, cap,
-						today_day, filter);
+					chrome_te_get_text(te_search, filter, (int)sizeof filter);
+					nrows = hw_build_rows(rows, cap, today_day, filter);
 					if (was_empty || nrows == 0) scroll_top = 0;
 					sel = hw_next_entry(rows, nrows, 0);
 				} else {
 					TEKey(ch, te_search);
 				}
+				dirty = 1;
 			} else if (ch == 0x09) {
-				/* Tab enters the search field */
 				search_focus = 1;
 				TEActivate(te_search);
-			} else if (ch == 0x1B) {          /* Esc */
+				dirty = 1;
+			} else if (ch == 0x1B) {
 				done_flag = 1;
-			} else if (ch == 0x0D || ch == 0x03) { /* Return / Enter */
+			} else if (ch == 0x0D || ch == 0x03) {
 				if (sel >= 0 && sel < nrows && !rows[sel].is_header) {
 					int hi = rows[sel].hidx;
 					if (hi >= 0 && hi < macsurf_hist_n) {
@@ -2213,30 +2277,49 @@ void macos9_history_window_show(struct gui_window *g)
 						done_flag = 1;
 					}
 				}
-			} else if (ch == 0x1F) {          /* Down arrow */
-				int ns = hw_next_entry(rows, nrows,
-					(sel < 0) ? 0 : sel + 1);
-				if (ns >= 0) sel = ns;
-			} else if (ch == 0x1E) {          /* Up arrow */
-				int ps = hw_prev_entry(rows, (sel <= 0) ? 0 : sel - 1);
-				if (ps >= 0) sel = ps;
-			} else if (ch == 0x0C) {          /* Page Down */
+			} else if (ch == 0x08 || ch == 0x7F) {
+				/* Delete key */
+				if (sel >= 0 && sel < nrows && !rows[sel].is_header) {
+					int hi = rows[sel].hidx;
+					if (hi >= 0 && hi < macsurf_hist_n &&
+					    chrome_confirm_delete("Delete this history entry?")) {
+						macos9_history_delete_entry(hi);
+						nrows = hw_build_rows(rows, cap, today_day, filter);
+						if (sel >= nrows) sel = nrows - 1;
+						if (nrows == 0) sel = -1;
+						if (scroll_top > nrows - vis)
+							scroll_top = nrows - vis;
+						if (scroll_top < 0) scroll_top = 0;
+						dirty = 1;
+					}
+				}
+			} else if (ch == 0x1F) {
+				int next = hw_next_entry(rows, nrows, sel + 1);
+				if (next >= 0) sel = next;
+				dirty = 1;
+			} else if (ch == 0x1E) {
+				int prev = hw_prev_entry(rows, sel - 1);
+				if (prev >= 0) sel = prev;
+				dirty = 1;
+			} else if (ch == 0x0C) {
 				scroll_top += vis - 1;
-			} else if (ch == 0x0B) {          /* Page Up */
+				dirty = 1;
+			} else if (ch == 0x0B) {
 				scroll_top -= vis - 1;
-			} else if (ch == 0x01) {          /* Home */
+				dirty = 1;
+			} else if (ch == 0x01) {
 				scroll_top = 0; sel = hw_next_entry(rows, nrows, 0);
-			} else if (ch == 0x04) {          /* End */
+				dirty = 1;
+			} else if (ch == 0x04) {
 				sel = hw_prev_entry(rows, nrows - 1);
 				scroll_top = nrows - vis;
+				dirty = 1;
 			}
 			if (scroll_top < 0) scroll_top = 0;
 			{
-				int maxtop = nrows - vis;
-				if (maxtop < 0) maxtop = 0;
+				int maxtop = nrows - vis; if (maxtop < 0) maxtop = 0;
 				if (scroll_top > maxtop) scroll_top = maxtop;
 			}
-			/* keep selection visible */
 			if (sel >= 0) {
 				if (sel < scroll_top) scroll_top = sel;
 				else if (sel >= scroll_top + vis)
@@ -2248,47 +2331,73 @@ void macos9_history_window_show(struct gui_window *g)
 			break;
 		}
 
-		/* Any user event may have changed scroll/selection/contents. */
-		if (ev.what == mouseDown || ev.what == keyDown ||
-		    ev.what == autoKey)
-			dirty = 1;
+		if (sb != NULL) {
+			int maxtop = nrows - vis; if (maxtop < 0) maxtop = 0;
+			SetControlMaximum(sb, (short)maxtop);
+			SetControlValue(sb, (short)scroll_top);
+		}
 
-		/* Repaint only when something changed (no idle flicker). */
 		if (!done_flag && dirty) {
 			RgnHandle saveclip = NewRgn();
-			Rect tr;
+			Rect tr, list_fr, sf;
+			RGBColor blk, wht, sep;
 			int r, y;
+			blk.red = 0; blk.green = 0; blk.blue = 0;
+			wht.red = 0xFFFF; wht.green = 0xFFFF; wht.blue = 0xFFFF;
+			sep.red = 0xBBBB; sep.green = 0xBBBB; sep.blue = 0xBBBB;
+
 			GetClip(saveclip);
-			{ Rect content; SetRect(&content, 0, 0, 520, 400);
-			  chrome_mgr_header(&content, "History", 1); }
-			/* search field (label + frame, then the TE's text) */
-			chrome_draw_search_field(&search_rect, 6);
-			TEUpdate(&search_rect, te_search);
-			EraseRect(&list);
-			FrameRect(&list);
+			chrome_mgr_header(&content, "History", 1);
+
+			/* Draw all native push buttons and scrollbar */
+			DrawControls(win);
+
+			/* Search label and framed edit field */
+			RGBForeColor(&blk);
+			TextFont(1); TextFace(normal); TextSize(12);
+			MoveTo(356, 56);
+			DrawString("\pSearch:");
+
+			sf = search_rect;
+			RGBForeColor(&wht);
+			PaintRect(&sf);
+			RGBForeColor(&blk);
+			FrameRect(&sf);
+			{
+				Rect te_box = search_rect;
+				InsetRect(&te_box, 3, 2);
+				TEUpdate(&te_box, te_search);
+			}
+
+			/* List container frame */
+			list_fr = list;
+			InsetRect(&list_fr, -1, -1);
+			FrameRect(&list_fr);
+
+			/* Clip to row content */
 			ClipRect(&list);
+			EraseRect(&list);
+
 			y = list.top + 2;
-			for (r = scroll_top;
-			     r < nrows && (r - scroll_top) < vis; r++) {
-				short len = (short)strlen(rows[r].text);
-				RGBColor blk, wht;
-				blk.red = blk.green = blk.blue = 0;
-				wht.red = wht.green = wht.blue = 0xFFFF;
-				tr.left = (short)(list.left + 1);
-				tr.right = (short)(list.right - 20);
+			for (r = scroll_top; r < nrows && r < scroll_top + vis; r++) {
+				int len = (int)strlen(rows[r].text);
+				tr.left = (short)(list.left + 2);
+				tr.right = (short)(list.right - 2);
 				tr.top = (short)y;
 				tr.bottom = (short)(y + row_h);
+
 				if (rows[r].is_header) {
 					RGBColor hc;
 					hc.red = 0x7A7A; hc.green = 0x4E4E; hc.blue = 0x1414;
 					chrome_vgrad(&tr, 0xFB, 0xF0, 0xDC, 0xF4, 0xE2, 0xC0);
 					RGBForeColor(&hc);
-					TextFace(bold);
-					MoveTo((short)(list.left + 6), (short)(y + 14));
+					TextFont(1); TextFace(bold); TextSize(11);
+					MoveTo((short)(list.left + 8), (short)(y + 14));
 					DrawText(rows[r].text, 0, len);
 					TextFace(normal);
 					RGBForeColor(&blk);
 				} else {
+					int hi = rows[r].hidx;
 					if (r == sel) {
 						RGBColor selc;
 						selc.red = 0xE8E8; selc.green = 0x9E9E; selc.blue = 0x3838;
@@ -2298,52 +2407,82 @@ void macos9_history_window_show(struct gui_window *g)
 						st.red = 0xFDFD; st.green = 0xF8F8; st.blue = 0xEFEF;
 						RGBForeColor(&st); PaintRect(&tr);
 					}
-					/* per-site favicon dot - green = visited. V1 has no
-					 * per-host icon cache, so the dot is a fixed colour
-					 * (window.c's per-window favicon GWorlds are private). */
+
+					/* Green visited dot */
 					{
 						Rect dot;
 						RGBColor grn;
-						dot.left = (short)(list.left + 7);
-						dot.top = (short)(y + 7);
-						dot.right = (short)(dot.left + 7);
-						dot.bottom = (short)(dot.top + 7);
-						grn.red = 0x3030; grn.green = 0xE0E0;
-						grn.blue = 0x3030;
+						SetRect(&dot, (short)(list.left + 8), (short)(y + 6),
+							(short)(list.left + 15), (short)(y + 13));
+						grn.red = 0x3030; grn.green = 0xCCCC; grn.blue = 0x3030;
 						RGBForeColor(&grn);
 						PaintOval(&dot);
 					}
+
+					/* Page Title */
 					if (r == sel) RGBForeColor(&wht);
 					else RGBForeColor(&blk);
-					MoveTo((short)(list.left + 22), (short)(y + 14));
-					DrawText(rows[r].text, 0, len);
+					TextFont(1); TextFace(normal); TextSize(12);
+					{
+						Rect col_t;
+						SetRect(&col_t, (short)(list.left + 22), (short)y,
+							(short)(list.left + 288), (short)(y + row_h));
+						ClipRect(&col_t);
+						MoveTo((short)(list.left + 22), (short)(y + 14));
+						DrawText(rows[r].text, 0, len);
+						ClipRect(&list);
+					}
+
+					/* Page URL in right column */
+					if (hi >= 0 && hi < macsurf_hist_n && macsurf_hist[hi].url[0] != '\0') {
+						int ulen = (int)strlen(macsurf_hist[hi].url);
+						if (r == sel) {
+							RGBColor lsel;
+							lsel.red = 0xFFFF; lsel.green = 0xEEEE; lsel.blue = 0xDDDD;
+							RGBForeColor(&lsel);
+						} else {
+							RGBColor gcol;
+							gcol.red = 0x7777; gcol.green = 0x7777; gcol.blue = 0x7777;
+							RGBForeColor(&gcol);
+						}
+						TextFont(1); TextFace(normal); TextSize(10);
+						{
+							Rect col_u;
+							SetRect(&col_u, (short)(list.left + 296), (short)y,
+								(short)(list.right - 4), (short)(y + row_h));
+							ClipRect(&col_u);
+							MoveTo((short)(list.left + 296), (short)(y + 14));
+							DrawText(macsurf_hist[hi].url, 0, ulen);
+							ClipRect(&list);
+						}
+					}
 					RGBForeColor(&blk);
 				}
 				y += row_h;
 			}
+
 			SetClip(saveclip);
 			DisposeRgn(saveclip);
-			/* scroll arrows */
-			EraseRect(&up); FrameRect(&up);
-			MoveTo(up.left + 6, up.top + 15); DrawString("\p^");
-			EraseRect(&dn); FrameRect(&dn);
-			MoveTo(dn.left + 6, dn.top + 15); DrawString("\pv");
-			/* buttons */
-			chrome_draw_button(&clr, "\pClear History");
-			chrome_draw_button(&del, "\pDelete");
-			chrome_draw_button(&go, "\pGo");
-			chrome_draw_button(&done, "\pDone");
+
 			if (nrows == 0) {
-				MoveTo(list.left + 12, list.top + 24);
-				DrawString((filter[0] != '\0') ? "\p(No matches)"
-					: "\p(No history yet)");
+				MoveTo(list.left + 20, list.top + 30);
+				TextFont(1); TextFace(normal); TextSize(12);
+				if (filter[0] != '\0')
+					DrawString("\pNo history entries match search query.");
+				else
+					DrawString("\pHistory is empty.");
 			}
 			dirty = 0;
 		}
 	}
 
-	SetPort(saved_port);
+	DisposeControl(btn_clr);
+	DisposeControl(btn_del);
+	DisposeControl(btn_visit);
+	DisposeControl(btn_done);
+	if (sb != NULL) DisposeControl(sb);
 	TEDispose(te_search);
+	SetPort(saved_port);
 	DisposeWindow(win);
 	free(rows);
 
@@ -2353,6 +2492,7 @@ void macos9_history_window_show(struct gui_window *g)
 
 #else  /* !__MACOS9__ */
 void macos9_history_window_show(struct gui_window *g) { (void)g; }
+void macos9_chrome_mgr_header(const Rect *content, const char *title, int icon) { (void)content; (void)title; (void)icon; }
 #endif
 
 /* ====================================================================
@@ -2652,7 +2792,7 @@ static int chrome_prompt_text2(const char *title, const char *init_name,
 }
 
 /* Caution alert with Delete / Cancel. Returns 1 if the user confirms. */
-static int chrome_confirm_delete(const char *msg)
+int macos9_chrome_confirm_delete(const char *msg)
 {
 	Str255 p;
 	SInt16 item = 0;
@@ -3025,20 +3165,24 @@ static void bw_export_bookmarks(void)
 void macos9_bookmark_window_show(struct gui_window *g)
 {
 	WindowRef win;
-	Rect wb, list, up, dn, nf, rn, del, mv, upbtn, dnbtn;
-	Rect imp, exp, go, done, search_rect;
+	Rect wb, content, list, sb_rect, search_rect;
+	Rect r_new_bmk, r_new_fld, r_del, r_rename;
+	Rect r_move, r_imp, r_exp, r_visit, r_done;
+	ControlRef btn_new_bmk, btn_new_fld, btn_del, btn_rename;
+	ControlRef btn_move, btn_imp, btn_exp, btn_visit, btn_done, sb;
 	GrafPtr saved_port;
 	EventRecord ev;
 	struct bw_row *rows;
 	int cap, nrows;
 	int scroll_top = 0, sel = -1;
-	int row_h = 20, vis;              /* fixes742 - taller rows, more padding */
+	int row_h = 20, vis;
 	int done_flag = 0, dirty = 1;
 	char go_url[MACSURF_BMK_URL_MAX];
 	int moved_id = 0;
 	TEHandle te_search = NULL;
 	int search_focus = 0;
 	char filter[128];
+	unsigned long last_click_time = 0;
 
 	if (g == NULL) return;
 	go_url[0] = '\0';
@@ -3048,7 +3192,7 @@ void macos9_bookmark_window_show(struct gui_window *g)
 	rows = (struct bw_row *)malloc((size_t)cap * sizeof(struct bw_row));
 	if (rows == NULL) return;
 
-	SetRect(&wb, 110, 90, 750, 490);
+	SetRect(&wb, 100, 80, 740, 500);  /* 640 x 420 px */
 	if (CreateNewWindow(kDocumentWindowClass, kWindowCloseBoxAttribute,
 			&wb, &win) != noErr || win == NULL) {
 		free(rows);
@@ -3059,36 +3203,72 @@ void macos9_bookmark_window_show(struct gui_window *g)
 	GetPort(&saved_port);
 	SetPortWindowPort(win);
 	TextFont(1);
-	TextSize(12);  /* fixes742 - larger row text */
+	TextSize(12);
 
-	/* content is 640 x 400 local. Search field + tree list below the 34px
-	 * title banner; the filter narrows rows to label/URL matches. */
-	SetRect(&search_rect, 46, 40, 552, 60);
-	SetRect(&list, 8, 64, 552, 344);
-	SetRect(&up,   534, 64,  552, 86);
-	SetRect(&dn,   534, 322, 552, 344);
-	SetRect(&nf,   8,   352, 88,  376);
-	SetRect(&rn,   92,  352, 148, 376);
-	SetRect(&del,  152, 352, 208, 376);
-	SetRect(&mv,   212, 352, 260, 376);
-	SetRect(&upbtn, 264, 352, 330, 376);
-	SetRect(&dnbtn, 334, 352, 414, 376);
-	SetRect(&imp,  418, 352, 474, 376);
-	SetRect(&exp,  478, 352, 534, 376);
-	SetRect(&go,   538, 352, 580, 376);
-	SetRect(&done, 584, 352, 632, 376);
+	SetRect(&content, 0, 0, 640, 420);
+
+	/* Toolbar row - widened Delete and Rename buttons with 8px gaps to prevent text clipping */
+	SetRect(&r_new_bmk,   12, 40, 112, 64);  /* 100px - "+ Bookmark" */
+	SetRect(&r_new_fld,  120, 40, 204, 64);  /* 84px - "+ Folder" */
+	SetRect(&r_del,      212, 40, 284, 64);  /* 72px - "Delete" */
+	SetRect(&r_rename,   292, 40, 388, 64);  /* 96px - "Rename..." */
+	SetRect(&search_rect, 460, 42, 626, 62);
+
+	/* List & Scrollbar */
+	SetRect(&list, 12, 72, 608, 376);
+	SetRect(&sb_rect, 608, 72, 626, 376);
 	vis = (list.bottom - list.top - 4) / row_h;
 
-	te_search = TENew(&search_rect, &search_rect);
+	/* Footer row - 8px grid compliant */
+	SetRect(&r_move,   12, 386,  88, 410);   /* 76px - "Move..." */
+	SetRect(&r_imp,    96, 386, 200, 410);   /* 104px - "Import..." */
+	SetRect(&r_exp,   208, 386, 312, 410);   /* 104px - "Export..." */
+	SetRect(&r_visit, 440, 386, 550, 410);   /* 110px - "Visit Page" */
+	SetRect(&r_done,  560, 386, 636, 410);   /* 76px - "Done" */
+
+	/* Native Controls */
+	btn_new_bmk = chrome_create_pushbutton(win, &r_new_bmk, "+ Bookmark");
+	btn_new_fld = chrome_create_pushbutton(win, &r_new_fld, "+ Folder");
+	btn_del     = chrome_create_pushbutton(win, &r_del,     "Delete");
+	btn_rename  = chrome_create_pushbutton(win, &r_rename,  "Rename...");
+	btn_move    = chrome_create_pushbutton(win, &r_move,    "Move...");
+	btn_imp     = chrome_create_pushbutton(win, &r_imp,     "Import...");
+	btn_exp     = chrome_create_pushbutton(win, &r_exp,     "Export...");
+	btn_visit   = chrome_create_pushbutton(win, &r_visit,   "Visit Page");
+	btn_done    = chrome_create_pushbutton(win, &r_done,    "Done");
+
+	/* Disable default button ring on Done button (black outline) */
+	{
+		SInt16 def_state = 0;  /* kControlPushButtonDefaultStateOff */
+		SetControlData(btn_done, kControlEntireControl,
+			104 /* kControlPushButtonDefaultStateTag */, sizeof(def_state), &def_state);
+	}
+
+	nrows = bw_build_rows(rows, cap, filter);
+	sel = (nrows > 0) ? 0 : -1;
+
+	{
+		int maxtop = nrows - vis; if (maxtop < 0) maxtop = 0;
+		sb = NewControl(win, &sb_rect, "\p", true, 0, 0, (short)maxtop,
+			kControlScrollBarLiveProc, 0);
+	}
+
+	{
+		Rect te_box = search_rect;
+		InsetRect(&te_box, 3, 2);
+		te_search = TENew(&te_box, &te_box);
+	}
 	if (te_search == NULL) {
+		DisposeControl(btn_new_bmk); DisposeControl(btn_new_fld);
+		DisposeControl(btn_del); DisposeControl(btn_rename);
+		DisposeControl(btn_move); DisposeControl(btn_imp);
+		DisposeControl(btn_exp); DisposeControl(btn_visit);
+		DisposeControl(btn_done); if (sb != NULL) DisposeControl(sb);
 		SetPort(saved_port);
 		DisposeWindow(win);
 		free(rows);
 		return;
 	}
-
-	nrows = bw_build_rows(rows, cap, filter);
-	sel = (nrows > 0) ? 0 : -1;
 
 	ShowWindow(win);
 	SelectWindow(win);
@@ -3103,23 +3283,28 @@ void macos9_bookmark_window_show(struct gui_window *g)
 				EndUpdate(win);
 				dirty = 1;
 			} else {
-				/* fixes709 - repaint a background browser window we
-				 * uncovered while being dragged, so it doesn't stay
-				 * white. Restore our port afterwards. */
 				extern void macos9_handle_update(const EventRecord *event);
 				macos9_handle_update(&ev);
 				SetPortWindowPort(win);
 			}
 			break;
+		case kHighLevelEvent:
+			AEProcessAppleEvent(&ev);
+			break;
+		case nullEvent:
+			if (search_focus && te_search != NULL)
+				TEIdle(te_search);
+			break;
 		case mouseDown: {
 			WindowRef which;
 			short part = FindWindow(ev.where, &which);
 			Point lp;
+			ControlRef ctrl = NULL;
 			if (which != win) break;
 			if (part == inDrag) {
-				Rect db; BitMap sb;
-				GetQDGlobalsScreenBits(&sb);
-				db = sb.bounds;
+				Rect db; BitMap sbmp;
+				GetQDGlobalsScreenBits(&sbmp);
+				db = sbmp.bounds;
 				DragWindow(win, ev.where, &db);
 				break;
 			}
@@ -3130,122 +3315,147 @@ void macos9_bookmark_window_show(struct gui_window *g)
 			if (part != inContent) break;
 			lp = ev.where;
 			GlobalToLocal(&lp);
-			if (PtInRect(lp, &done)) { done_flag = 1; break; }
-			if (PtInRect(lp, &up)) {
-				scroll_top -= 3; if (scroll_top < 0) scroll_top = 0; break;
-			}
-			if (PtInRect(lp, &dn)) {
-				int maxtop = nrows - vis; if (maxtop < 0) maxtop = 0;
-				scroll_top += 3; if (scroll_top > maxtop) scroll_top = maxtop;
-				break;
-			}
-			if (PtInRect(lp, &nf)) {
-				char name[MACSURF_BMK_LBL_MAX];
-				if (chrome_prompt_text("New Folder", "", name, sizeof name))
-					macos9_bookmark_new_folder(name, 0);
-				rebuilt = 1; break;
-			}
-			if (PtInRect(lp, &rn)) {
-				if (sel >= 0 && sel < nrows) {
-					int bi = rows[sel].bidx;
-					if (bi >= 0 && bi < macsurf_bookmark_count) {
-						if (macsurf_bookmarks[bi].is_folder) {
-							char name[MACSURF_BMK_LBL_MAX];
-							if (chrome_prompt_text("Rename Folder",
-								macsurf_bookmarks[bi].label,
-								name, sizeof name))
-								macos9_bookmark_rename(
-									macsurf_bookmarks[bi].id,
-									name);
-						} else {
-							/* Edit Bookmark: label AND url in one
-							 * two-field dialog. */
-							char name[MACSURF_BMK_LBL_MAX];
-							char url[MACSURF_BMK_URL_MAX];
-							if (chrome_prompt_text2("Edit Bookmark",
-								macsurf_bookmarks[bi].label,
-								macsurf_bookmarks[bi].url,
-								name, (int)sizeof name,
-								url, (int)sizeof url)) {
-								macos9_bookmark_rename(
-									macsurf_bookmarks[bi].id,
-									name);
-								macos9_bookmark_set_url(
-									macsurf_bookmarks[bi].id,
-									url);
+
+			/* Native Controls Hit-Testing */
+			part = FindControl(lp, win, &ctrl);
+			if (ctrl != NULL) {
+				if (ctrl == btn_done) {
+					if (TrackControl(btn_done, lp, NULL)) done_flag = 1;
+					break;
+				}
+				if (ctrl == btn_visit) {
+					if (TrackControl(btn_visit, lp, NULL)) {
+						if (sel >= 0 && sel < nrows && !rows[sel].is_folder) {
+							int bi = rows[sel].bidx;
+							if (bi >= 0 && bi < macsurf_bookmark_count) {
+								strcpy(go_url, macsurf_bookmarks[bi].url);
+								done_flag = 1;
 							}
 						}
 					}
+					break;
 				}
-				rebuilt = 1; break;
-			}
-			if (PtInRect(lp, &del)) {
-				if (sel >= 0 && sel < nrows) {
-					int bi = rows[sel].bidx;
-					if (bi >= 0 && bi < macsurf_bookmark_count &&
-					    chrome_confirm_delete(
-						macsurf_bookmarks[bi].is_folder ?
-						"Delete this folder? Its bookmarks move to the top level."
-						: "Delete this bookmark?"))
-						macos9_bookmark_delete(macsurf_bookmarks[bi].id);
-				}
-				rebuilt = 1; break;
-			}
-			if (PtInRect(lp, &mv)) {
-				Point gp;
-				if (sel >= 0 && sel < nrows && !rows[sel].is_folder) {
-					gp.h = mv.left; gp.v = mv.top;
-					LocalToGlobal(&gp);
-					bw_move_via_picker(rows[sel].bidx, gp.v, gp.h);
-				}
-				rebuilt = 1; break;
-			}
-			if (PtInRect(lp, &upbtn)) {
-				if (sel >= 0 && sel < nrows) {
-					int bi = rows[sel].bidx;
-					if (bi >= 0 && bi < macsurf_bookmark_count) {
-						int mid = macsurf_bookmarks[bi].id;
-						if (bw_move_sibling(bi, -1)) moved_id = mid;
+				if (ctrl == btn_new_bmk) {
+					if (TrackControl(btn_new_bmk, lp, NULL)) {
+						macos9_bookmark_add(g);
+						rebuilt = 1;
 					}
+					break;
 				}
-				rebuilt = 1; break;
-			}
-			if (PtInRect(lp, &dnbtn)) {
-				if (sel >= 0 && sel < nrows) {
-					int bi = rows[sel].bidx;
-					if (bi >= 0 && bi < macsurf_bookmark_count) {
-						int mid = macsurf_bookmarks[bi].id;
-						if (bw_move_sibling(bi, 1)) moved_id = mid;
+				if (ctrl == btn_new_fld) {
+					if (TrackControl(btn_new_fld, lp, NULL)) {
+						char name[MACSURF_BMK_LBL_MAX];
+						if (chrome_prompt_text("New Folder", "", name, sizeof name)) {
+							macos9_bookmark_new_folder(name, 0);
+							rebuilt = 1;
+						}
 					}
+					break;
 				}
-				rebuilt = 1; break;
-			}
-			if (PtInRect(lp, &imp)) {
-				bw_import_bookmarks();
-				rebuilt = 1; break;
-			}
-			if (PtInRect(lp, &exp)) {
-				bw_export_bookmarks();
-				rebuilt = 1; break;
-			}
-			if (PtInRect(lp, &go)) {
-				if (sel >= 0 && sel < nrows && !rows[sel].is_folder) {
-					int bi = rows[sel].bidx;
-					if (bi >= 0 && bi < macsurf_bookmark_count) {
-						strcpy(go_url, macsurf_bookmarks[bi].url);
-						done_flag = 1;
+				if (ctrl == btn_del) {
+					if (TrackControl(btn_del, lp, NULL)) {
+						if (sel >= 0 && sel < nrows) {
+							int bi = rows[sel].bidx;
+							if (bi >= 0 && bi < macsurf_bookmark_count &&
+							    chrome_confirm_delete(
+								macsurf_bookmarks[bi].is_folder ?
+								"Delete this folder? Its bookmarks move to the top level."
+								: "Delete this bookmark?")) {
+								macos9_bookmark_delete(macsurf_bookmarks[bi].id);
+								rebuilt = 1;
+							}
+						}
 					}
+					break;
 				}
-				break;
+				if (ctrl == btn_rename) {
+					if (TrackControl(btn_rename, lp, NULL)) {
+						if (sel >= 0 && sel < nrows) {
+							int bi = rows[sel].bidx;
+							if (bi >= 0 && bi < macsurf_bookmark_count) {
+								if (macsurf_bookmarks[bi].is_folder) {
+									char name[MACSURF_BMK_LBL_MAX];
+									if (chrome_prompt_text("Rename Folder",
+										macsurf_bookmarks[bi].label,
+										name, sizeof name))
+										macos9_bookmark_rename(macsurf_bookmarks[bi].id, name);
+								} else {
+									char name[MACSURF_BMK_LBL_MAX];
+									char url[MACSURF_BMK_URL_MAX];
+									if (chrome_prompt_text2("Edit Bookmark",
+										macsurf_bookmarks[bi].label,
+										macsurf_bookmarks[bi].url,
+										name, (int)sizeof name,
+										url, (int)sizeof url)) {
+										macos9_bookmark_rename(macsurf_bookmarks[bi].id, name);
+										macos9_bookmark_set_url(macsurf_bookmarks[bi].id, url);
+									}
+								}
+								rebuilt = 1;
+							}
+						}
+					}
+					break;
+				}
+				if (ctrl == btn_move) {
+					if (TrackControl(btn_move, lp, NULL)) {
+						Point gp = lp;
+						LocalToGlobal(&gp);
+						if (sel >= 0 && sel < nrows && !rows[sel].is_folder) {
+							bw_move_via_picker(rows[sel].bidx, gp.v, gp.h);
+							rebuilt = 1;
+						}
+					}
+					break;
+				}
+				if (ctrl == btn_imp) {
+					if (TrackControl(btn_imp, lp, NULL)) {
+						bw_import_bookmarks();
+						rebuilt = 1;
+					}
+					break;
+				}
+				if (ctrl == btn_exp) {
+					if (TrackControl(btn_exp, lp, NULL)) {
+						bw_export_bookmarks();
+						rebuilt = 1;
+					}
+					break;
+				}
+				if (ctrl == sb) {
+					part = TrackControl(sb, lp, NULL);
+					if (part == kControlIndicatorPart) {
+						scroll_top = GetControlValue(sb);
+					} else if (part == kControlUpButtonPart) {
+						scroll_top -= 1;
+					} else if (part == kControlDownButtonPart) {
+						scroll_top += 1;
+					} else if (part == kControlPageUpPart) {
+						scroll_top -= (vis > 1 ? vis - 1 : 1);
+					} else if (part == kControlPageDownPart) {
+						scroll_top += (vis > 1 ? vis - 1 : 1);
+					}
+					if (scroll_top < 0) scroll_top = 0;
+					{
+						int maxtop = nrows - vis; if (maxtop < 0) maxtop = 0;
+						if (scroll_top > maxtop) scroll_top = maxtop;
+					}
+					SetControlValue(sb, (short)scroll_top);
+					dirty = 1;
+					break;
+				}
 			}
+
 			if (PtInRect(lp, &search_rect)) {
 				if (!search_focus) {
 					search_focus = 1;
 					TEActivate(te_search);
 				}
 				TEClick(lp, false, te_search);
+				dirty = 1;
 				break;
 			}
+
 			if (PtInRect(lp, &list)) {
 				int idx = scroll_top + (lp.v - (list.top + 2)) / row_h;
 				if (search_focus) {
@@ -3253,14 +3463,26 @@ void macos9_bookmark_window_show(struct gui_window *g)
 					TEDeactivate(te_search);
 				}
 				if (idx >= 0 && idx < nrows) {
+					unsigned long now = TickCount();
+					if (sel == idx && (now - last_click_time) <= GetDblTime()) {
+						/* Double-click navigates to bookmark */
+						if (!rows[idx].is_folder) {
+							int bi = rows[idx].bidx;
+							if (bi >= 0 && bi < macsurf_bookmark_count) {
+								strcpy(go_url, macsurf_bookmarks[bi].url);
+								done_flag = 1;
+								break;
+							}
+						}
+					}
 					sel = idx;
-					/* fixes710 - drag a bookmark onto a folder to
-					 * move it (folders/headers aren't draggable). */
+					last_click_time = now;
 					if (!rows[idx].is_folder &&
-					    bw_try_drag(rows, nrows, idx, &list,
-							scroll_top, row_h))
+					    bw_try_drag(rows, nrows, idx, &list, scroll_top, row_h))
 						rebuilt = 1;
 				}
+				dirty = 1;
+				break;
 			}
 			break;
 		}
@@ -3271,11 +3493,10 @@ void macos9_bookmark_window_show(struct gui_window *g)
 			    (ch == '.' || ch == 'w' || ch == 'W')) {
 				done_flag = 1;
 			} else if (search_focus && ch == 0x09) {
-				/* Tab leaves the search field */
 				search_focus = 0;
 				TEDeactivate(te_search);
+				dirty = 1;
 			} else if (search_focus && ch == 0x1B) {
-				/* Esc clears the filter first, then closes */
 				if (filter[0] != '\0') {
 					filter[0] = '\0';
 					TESetSelect(0, 32767, te_search);
@@ -3283,11 +3504,11 @@ void macos9_bookmark_window_show(struct gui_window *g)
 					nrows = bw_build_rows(rows, cap, filter);
 					scroll_top = 0;
 					sel = (nrows > 0) ? 0 : -1;
+					dirty = 1;
 				} else {
 					done_flag = 1;
 				}
 			} else if (search_focus && (ch == 0x0D || ch == 0x03)) {
-				/* Return in the field = Go */
 				if (sel >= 0 && sel < nrows && !rows[sel].is_folder) {
 					int bi = rows[sel].bidx;
 					if (bi >= 0 && bi < macsurf_bookmark_count) {
@@ -3299,7 +3520,6 @@ void macos9_bookmark_window_show(struct gui_window *g)
 				int was_empty = (filter[0] == '\0');
 				if (ch == 0x1F || ch == 0x1E || ch == 0x0C ||
 				    ch == 0x0B || ch == 0x01 || ch == 0x04) {
-					/* list navigation still works while typing */
 					if (ch == 0x1F) { if (sel < nrows - 1) sel++; }
 					else if (ch == 0x1E) { if (sel > 0) sel--; }
 					else if (ch == 0x0C) { scroll_top += vis - 1; }
@@ -3310,7 +3530,6 @@ void macos9_bookmark_window_show(struct gui_window *g)
 						sel = nrows - 1; scroll_top = nrows - vis;
 					}
 				} else if ((ch >= 0x20 && ch < 0x7F) || ch == 0x08) {
-					/* printable / backspace - edit, re-filter */
 					TEKey(ch, te_search);
 					chrome_te_get_text(te_search, filter,
 						(int)sizeof filter);
@@ -3320,10 +3539,11 @@ void macos9_bookmark_window_show(struct gui_window *g)
 				} else {
 					TEKey(ch, te_search);
 				}
+				dirty = 1;
 			} else if (ch == 0x09) {
-				/* Tab enters the search field */
 				search_focus = 1;
 				TEActivate(te_search);
+				dirty = 1;
 			} else if (ch == 0x1B) {
 				done_flag = 1;
 			} else if (ch == 0x0D || ch == 0x03) {
@@ -3334,18 +3554,37 @@ void macos9_bookmark_window_show(struct gui_window *g)
 						done_flag = 1;
 					}
 				}
+			} else if (ch == 0x08 || ch == 0x7F) {
+				/* Delete key */
+				if (sel >= 0 && sel < nrows) {
+					int bi = rows[sel].bidx;
+					if (bi >= 0 && bi < macsurf_bookmark_count &&
+					    chrome_confirm_delete(
+						macsurf_bookmarks[bi].is_folder ?
+						"Delete this folder? Its bookmarks move to the top level."
+						: "Delete this bookmark?")) {
+						macos9_bookmark_delete(macsurf_bookmarks[bi].id);
+						rebuilt = 1;
+					}
+				}
 			} else if (ch == 0x1F) {
 				if (sel < nrows - 1) sel++;
+				dirty = 1;
 			} else if (ch == 0x1E) {
 				if (sel > 0) sel--;
+				dirty = 1;
 			} else if (ch == 0x0C) {
 				scroll_top += vis - 1;
+				dirty = 1;
 			} else if (ch == 0x0B) {
 				scroll_top -= vis - 1;
+				dirty = 1;
 			} else if (ch == 0x01) {
 				scroll_top = 0; sel = (nrows > 0) ? 0 : -1;
+				dirty = 1;
 			} else if (ch == 0x04) {
 				sel = nrows - 1; scroll_top = nrows - vis;
+				dirty = 1;
 			}
 			if (scroll_top < 0) scroll_top = 0;
 			{
@@ -3367,8 +3606,6 @@ void macos9_bookmark_window_show(struct gui_window *g)
 			int r;
 			nrows = bw_build_rows(rows, cap, filter);
 			if (moved_id != 0) {
-				/* Move Up/Down swapped structs - keep the moved
-				 * bookmark selected by its stable id. */
 				sel = -1;
 				for (r = 0; r < nrows; r++) {
 					int bi = rows[r].bidx;
@@ -3386,35 +3623,65 @@ void macos9_bookmark_window_show(struct gui_window *g)
 				scroll_top = nrows - vis;
 				if (scroll_top < 0) scroll_top = 0;
 			}
-		}
-		if (ev.what == mouseDown || ev.what == keyDown ||
-		    ev.what == autoKey)
 			dirty = 1;
+		}
+
+		if (sb != NULL) {
+			int maxtop = nrows - vis; if (maxtop < 0) maxtop = 0;
+			SetControlMaximum(sb, (short)maxtop);
+			SetControlValue(sb, (short)scroll_top);
+		}
 
 		if (!done_flag && dirty) {
 			RgnHandle saveclip = NewRgn();
-			Rect tr;
+			Rect tr, list_fr, sf;
+			RGBColor blk, wht, sep;
 			int r, y;
+			blk.red = 0; blk.green = 0; blk.blue = 0;
+			wht.red = 0xFFFF; wht.green = 0xFFFF; wht.blue = 0xFFFF;
+			sep.red = 0xBBBB; sep.green = 0xBBBB; sep.blue = 0xBBBB;
+
 			GetClip(saveclip);
-			{ Rect content; SetRect(&content, 0, 0, 640, 400);
-			  chrome_mgr_header(&content, "Bookmarks", 2); }
-			chrome_draw_search_field(&search_rect, 6);
-			TEUpdate(&search_rect, te_search);
-			EraseRect(&list);
-			FrameRect(&list);
+			chrome_mgr_header(&content, "Bookmarks", 2);
+
+			/* Draw all native push buttons and scrollbar */
+			DrawControls(win);
+
+			/* Search label and framed edit field */
+			RGBForeColor(&blk);
+			TextFont(1); TextFace(normal); TextSize(12);
+			MoveTo(404, 56);
+			DrawString("\pSearch:");
+
+			sf = search_rect;
+			RGBForeColor(&wht);
+			PaintRect(&sf);
+			RGBForeColor(&blk);
+			FrameRect(&sf);
+			{
+				Rect te_box = search_rect;
+				InsetRect(&te_box, 3, 2);
+				TEUpdate(&te_box, te_search);
+			}
+
+			/* List container frame */
+			list_fr = list;
+			InsetRect(&list_fr, -1, -1);
+			FrameRect(&list_fr);
+
+			/* Clip to row content */
 			ClipRect(&list);
+			EraseRect(&list);
+
 			y = list.top + 2;
-			for (r = scroll_top;
-			     r < nrows && (r - scroll_top) < vis; r++) {
-				short len = (short)strlen(rows[r].text);
-				short x = (short)(list.left + 6 + rows[r].depth * 18);
-				RGBColor blk, wht;
-				blk.red = blk.green = blk.blue = 0;
-				wht.red = wht.green = wht.blue = 0xFFFF;
-				tr.left = (short)(list.left + 1);
-				tr.right = (short)(list.right - 20);
+			for (r = scroll_top; r < nrows && r < scroll_top + vis; r++) {
+				short x = (short)(list.left + 8 + rows[r].depth * 18);
+				int len = (int)strlen(rows[r].text);
+				tr.left = (short)(list.left + 2);
+				tr.right = (short)(list.right - 2);
 				tr.top = (short)y;
 				tr.bottom = (short)(y + row_h);
+
 				if (r == sel) {
 					RGBColor selc;
 					selc.red = 0xE8E8; selc.green = 0x9E9E; selc.blue = 0x3838;
@@ -3424,49 +3691,71 @@ void macos9_bookmark_window_show(struct gui_window *g)
 					st.red = 0xFDFD; st.green = 0xF8F8; st.blue = 0xEFEF;
 					RGBForeColor(&st); PaintRect(&tr);
 				}
-				if (rows[r].is_folder) TextFace(bold);
-				if (r == sel) {
-					RGBForeColor(&wht);
-				} else if (rows[r].is_folder) {
+
+				if (rows[r].is_folder) {
+					/* Folder icon badge */
+					Rect ficon;
+					SetRect(&ficon, x, y + 4, x + 13, y + 15);
+					if (r == sel) RGBForeColor(&wht);
+					else {
+						RGBColor fcol;
+						fcol.red = 0x7A7A; fcol.green = 0x4E4E; fcol.blue = 0x1414;
+						RGBForeColor(&fcol);
+					}
+					FrameRect(&ficon);
+					TextFace(bold);
+					x += 18;
+				} else {
+					/* Page bullet badge */
+					if (r == sel) RGBForeColor(&wht);
+					else RGBForeColor(&blk);
+					MoveTo(x + 2, (short)(y + 13));
+					DrawString("\p\245");
+					TextFace(normal);
+					x += 14;
+				}
+
+				if (r == sel) RGBForeColor(&wht);
+				else if (rows[r].is_folder) {
 					RGBColor fc;
 					fc.red = 0x7A7A; fc.green = 0x4E4E; fc.blue = 0x1414;
 					RGBForeColor(&fc);
 				} else {
 					RGBForeColor(&blk);
 				}
+
 				MoveTo(x, (short)(y + 14));
 				DrawText(rows[r].text, 0, len);
-				if (rows[r].is_folder) TextFace(normal);
+				TextFace(normal);
 				RGBForeColor(&blk);
 				y += row_h;
 			}
+
 			SetClip(saveclip);
 			DisposeRgn(saveclip);
-			EraseRect(&up); FrameRect(&up);
-			MoveTo(up.left + 6, up.top + 15); DrawString("\p^");
-			EraseRect(&dn); FrameRect(&dn);
-			MoveTo(dn.left + 6, dn.top + 15); DrawString("\pv");
-			chrome_draw_button(&nf, "\pNew Folder");
-			chrome_draw_button(&rn, "\pRename");
-			chrome_draw_button(&del, "\pDelete");
-			chrome_draw_button(&mv, "\pMove");
-			chrome_draw_button(&upbtn, "\pMove Up");
-			chrome_draw_button(&dnbtn, "\pMove Down");
-			chrome_draw_button(&imp, "\pImport...");
-			chrome_draw_button(&exp, "\pExport...");
-			chrome_draw_button(&go, "\pGo");
-			chrome_draw_button(&done, "\pDone");
+
 			if (nrows == 0) {
-				MoveTo(list.left + 12, list.top + 24);
+				MoveTo(list.left + 20, list.top + 30);
+				TextFont(1); TextFace(normal); TextSize(12);
 				if (filter[0] != '\0')
-					DrawString("\p(No matches)");
+					DrawString("\pNo bookmarks match search query.");
 				else
-					DrawString("\p(No bookmarks yet)");
+					DrawString("\pNo bookmarks saved. Choose \"Add Bookmark\" (Cmd-D) to save pages.");
 			}
 			dirty = 0;
 		}
 	}
 
+	DisposeControl(btn_new_bmk);
+	DisposeControl(btn_new_fld);
+	DisposeControl(btn_del);
+	DisposeControl(btn_rename);
+	DisposeControl(btn_move);
+	DisposeControl(btn_imp);
+	DisposeControl(btn_exp);
+	DisposeControl(btn_visit);
+	DisposeControl(btn_done);
+	if (sb != NULL) DisposeControl(sb);
 	TEDispose(te_search);
 	SetPort(saved_port);
 	DisposeWindow(win);
@@ -3478,6 +3767,7 @@ void macos9_bookmark_window_show(struct gui_window *g)
 
 #else  /* !__MACOS9__ */
 void macos9_bookmark_window_show(struct gui_window *g) { (void)g; }
+int  macos9_chrome_confirm_delete(const char *msg) { (void)msg; return 1; }
 #endif
 
 /* Legacy "Show Bookmarks" alert - retained for ABI but no longer menu-

@@ -56,3 +56,4 @@ unsigned long macsurf_gap_last_count(int id);      /* 0 if id out of range */
 const char   *macsurf_gap_slug(int id);           /* "?" if id out of range */
 
 #endif /* MACSURF_GAP_H */
+

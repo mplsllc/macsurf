@@ -18,7 +18,7 @@
  * and broke hub_parser.c ("hubbub_parser undefined"). */
 #include "hubbub_errors.h"
 #include <hubbub/hubbub.h>
-#include <hubbub/parser.h>
+#include "../../../libhubbub/src/hub_parser_api.h"
 
 #include <dom/dom.h>
 

@@ -41,3 +41,4 @@ long macsurf_diag_serialize_css_gaps(char *buf, long cap);
 long macsurf_diag_serialize_gapreport(char *buf, long cap);
 
 #endif
+

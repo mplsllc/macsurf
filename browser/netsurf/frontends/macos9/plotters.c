@@ -21,7 +21,6 @@
 #include "netsurf/plot_style.h"
 #include "netsurf/plotters.h"
 #include "netsurf/bitmap.h"
-#include "frontends/macos9/macos9_opacity.h"
 
 /* Forward-declare our bitmap accessors directly so plotters.c
  * does not need an implicit-int fallback for bitmap_get_buffer.
@@ -51,7 +50,6 @@ static int clip_text_mask_seen = 0;
 static int clip_text_state_seen = 0;
 static int blend_colour_seen = 0;
 static int blend_bitmap_seen = 0;
-static int opacity_diag_seen = 0;
 /* fixes366d  -  log the snapshot values at plot_rectangle entry,
  * regardless of which branch the plotter ends up taking. Tells us
  * whether the one-shot values are reaching the plotter at all, or
@@ -68,7 +66,6 @@ void macos9_plotter_diag_counters_reset(void)
 	clip_text_state_seen = 0;
 	blend_colour_seen = 0;
 	blend_bitmap_seen = 0;
-	opacity_diag_seen = 0;
 	snapshot_seen = 0;
 }
 
@@ -1812,48 +1809,34 @@ macos9_plot_rectangle(const struct redraw_context *ctx,
 		 * and background bits where the pattern is 0. */
 		plot_style_fixed op = pstyle->opacity;
 		bool stipple = false;
-		int opacity_bucket = 5;
 #ifdef __MACOS9__
 		Pattern stipple_pat;
 #endif
-		/* Legacy styles leave opacity_set false; those zero-initialised
-		 * styles retain the historical opaque default. */
-		op = (plot_style_fixed)macos9_opacity_resolve(op,
-				pstyle->opacity_set);
+		/* fixes223 reverted: many code paths leave pstyle.opacity = 0
+		 * by default (calloc / memset of plot_style structs that
+		 * don't go through redraw.c's css_computed_opacity check),
+		 * and treating 0 as "skip" zeroes out borders and chrome.
+		 * Keep the uninit->opaque fallback. The dark-grey-on-mactrove
+		 * regression is not from this code path. */
+		if (op == 0) op = (plot_style_fixed)PLOT_STYLE_SCALE; /* uninit -> opaque */
 		if (op < (plot_style_fixed)(PLOT_STYLE_SCALE / 20)) {
 			/* < 5% - skip painting entirely. */
-			opacity_bucket = 0;
-			if (opacity_diag_seen < 32) {
-				opacity_diag_seen++;
-				macsurf_debug_log_writef(
-					"LIFE 2B2 plot rect incoming=%d set=%d bucket=%d",
-					(int)op, pstyle->opacity_set ? 1 : 0, opacity_bucket);
-			}
 			goto opacity_done;
 		}
 #ifdef __MACOS9__
 		if (op < (plot_style_fixed)((PLOT_STYLE_SCALE * 35) / 100)) {
-			opacity_bucket = 2;
 			GetIndPattern(&stipple_pat, sysPatListID, 2);
 			/* ltGray approx; if GetIndPattern fails the pattern
 			 * is already zero-initialised which means solid bg. */
 			stipple = true;
 		} else if (op < (plot_style_fixed)((PLOT_STYLE_SCALE * 60) / 100)) {
-			opacity_bucket = 3;
 			GetIndPattern(&stipple_pat, sysPatListID, 3);
 			stipple = true;
 		} else if (op < (plot_style_fixed)((PLOT_STYLE_SCALE * 85) / 100)) {
-			opacity_bucket = 4;
 			GetIndPattern(&stipple_pat, sysPatListID, 4);
 			stipple = true;
 		}
 #endif
-		if (op != PLOT_STYLE_SCALE && opacity_diag_seen < 32) {
-			opacity_diag_seen++;
-			macsurf_debug_log_writef(
-				"LIFE 2B2 plot rect incoming=%d set=%d bucket=%d",
-				(int)op, pstyle->opacity_set ? 1 : 0, opacity_bucket);
-		}
 		macos9_colour_to_rgb(pstyle->fill_colour, &rgb);
 		RGBForeColor(&rgb);
 #ifdef __MACOS9__
@@ -2317,10 +2300,9 @@ macos9_plot_path(const struct redraw_context *ctx,
 		bool stipple = false;
 		Pattern stipple_pat;
 
-		/* Legacy styles leave opacity_set false; explicit CSS/SVG zero is
-		 * therefore distinguishable from an omitted opacity value. */
-		op = (plot_style_fixed)macos9_opacity_resolve(op,
-				pstyle->opacity_set);
+		/* fixes49/fixes223: 0 means "never set" for the many callers
+		 * that memset their plot_style, NOT transparent. */
+		if (op == 0) op = (plot_style_fixed)PLOT_STYLE_SCALE;
 		if (op < (plot_style_fixed)(PLOT_STYLE_SCALE / 20)) {
 			/* < 5%  -  paint nothing at all */
 			KillPoly(poly);

@@ -477,6 +477,45 @@ unsigned long ms_diag_task_enter(struct ms_diag_scope *s, int kind,
 	return s->my_id;
 }
 
+void ms_diag_task_enter_external(struct ms_diag_scope *s,
+	unsigned long task_id, int kind, unsigned long nav_id,
+	unsigned long origin_script, unsigned long extra, const char *name)
+{
+	struct ms_diag_task *e;
+
+	s->prev_script = g_cur_script;
+	s->prev_task = g_cur_task;
+	s->my_id = task_id;
+	if (task_id == 0) return;
+	/* Keep the legacy allocating API collision-free for any later caller. */
+	if (task_id > g_task_seq) g_task_seq = task_id;
+	e = &g_task_ring[g_task_ring_head];
+	g_task_ring_head = (g_task_ring_head + 1) % MS_TASK_RING_N;
+	e->id = task_id;
+	e->nav_id = nav_id;
+	e->script_id = origin_script;
+	e->extra = extra;
+	e->kind = (short) kind;
+	e->capped = 0;
+	ms_name_copy(e->name, name);
+	g_cur_task = task_id;
+	if (nav_id != 0) g_cur_nav = nav_id;
+	if (origin_script != 0) g_cur_script = origin_script;
+	ms_diag_progress(MS_PROGRESS_TASK);
+}
+
+void ms_diag_task_set_script(unsigned long task_id, unsigned long script_id)
+{
+	int i;
+	if (task_id == 0 || script_id == 0) return;
+	for (i = 0; i < MS_TASK_RING_N; i++) {
+		if (g_task_ring[i].id == task_id) {
+			g_task_ring[i].script_id = script_id;
+			break;
+		}
+	}
+}
+
 void ms_diag_task_leave(struct ms_diag_scope *s)
 {
 	g_cur_script = s->prev_script;
@@ -522,10 +561,13 @@ static const char *ms_script_state_s(int st)
 static const char *ms_task_kind_s(int k)
 {
 	switch (k) {
+	case MS_TASK_SCRIPT:    return "script";
 	case MS_TASK_TIMER:     return "timer";
 	case MS_TASK_EVENT:     return "event";
 	case MS_TASK_XHR:       return "xhr";
 	case MS_TASK_MICROTASK: return "microtask";
+	case MS_TASK_INTERNAL_SETUP: return "internal_setup";
+	case MS_TASK_INTERNAL_NOTIFICATION: return "internal_notification";
 	default:                return "none";
 	}
 }
@@ -642,6 +684,7 @@ struct ms_diag_pass {
 	unsigned long id;		/* 0 == empty */
 	unsigned long nav, frame, doc, batch, task, script;
 	short kind;			/* enum ms_render_kind */
+	short action;		/* enum ms_render_action */
 	short result;			/* enum ms_render_result */
 	short reason;			/* enum ms_stage_reason */
 	unsigned long paint;		/* bound paint id, 0 if none */
@@ -799,6 +842,14 @@ void ms_diag_document_set_frame(unsigned long doc_id, unsigned long frame)
 	}
 }
 
+void ms_diag_document_set_nav(unsigned long doc_id, unsigned long nav)
+{
+	int i;
+	for (i = 0; i < MS_DOC_RING_N; i++) {
+		if (g_doc_ring[i].id == doc_id) { g_doc_ring[i].nav = nav; break; }
+	}
+}
+
 void ms_diag_document_close(unsigned long doc_id)
 {
 	int i;
@@ -831,9 +882,25 @@ static struct ms_diag_mut_batch *ms_batch_find(unsigned long id)
 	return (struct ms_diag_mut_batch *) 0;
 }
 
+static void ms_batch_provenance(const struct ms_diag_mut_batch *e,
+	struct ms_diag_provenance *prov)
+{
+	memset(prov, 0, sizeof(*prov));
+	if (e == (const struct ms_diag_mut_batch *) 0) {
+		return;
+	}
+	prov->nav = e->nav;
+	prov->frame = e->frame;
+	prov->doc = e->doc;
+	prov->script = e->script;
+	prov->task = e->task;
+	prov->batch = e->id;
+}
+
 unsigned long ms_diag_batch_open(const struct ms_diag_provenance *prov)
 {
 	struct ms_diag_mut_batch *e = &g_batch_ring[g_batch_ring_head];
+	struct ms_diag_provenance trace_prov;
 	g_batch_ring_head = (g_batch_ring_head + 1) % MS_BATCH_RING_N;
 	memset(e, 0, sizeof(*e));
 	e->id = ms_next(&g_batch_seq);
@@ -844,14 +911,16 @@ unsigned long ms_diag_batch_open(const struct ms_diag_provenance *prov)
 		e->script = prov->script;
 		e->task = prov->task;
 	}
-	macsurf_trace_emit(MS_TC_MUTATION, MS_TE_MUTATION_BEGIN, 0, 0,
-		e->id, e->doc);
+	ms_batch_provenance(e, &trace_prov);
+	macsurf_trace_emit_with_provenance(MS_TC_MUTATION, MS_TE_MUTATION_BEGIN,
+		0, 0, &trace_prov, e->id, e->doc);
 	return e->id;
 }
 
 void ms_diag_batch_add(unsigned long batch_id, int mut_kind, unsigned long task)
 {
 	struct ms_diag_mut_batch *e = ms_batch_find(batch_id);
+	struct ms_diag_provenance trace_prov;
 	if (e == (struct ms_diag_mut_batch *) 0) {
 		return;
 	}
@@ -867,20 +936,35 @@ void ms_diag_batch_add(unsigned long batch_id, int mut_kind, unsigned long task)
 	} else if (e->task == 0 && !e->mixed_tasks && task != 0) {
 		e->task = task;
 	}
-	macsurf_trace_emit(MS_TC_MUTATION, MS_TE_MUTATION_MERGE, 0, 0,
-		batch_id, (unsigned long) mut_kind);
+	ms_batch_provenance(e, &trace_prov);
+	macsurf_trace_emit_with_provenance(MS_TC_MUTATION, MS_TE_MUTATION_MERGE,
+		0, 0, &trace_prov, batch_id, (unsigned long) mut_kind);
 	ms_diag_progress(MS_PROGRESS_MUTATION);
 }
 
 void ms_diag_batch_freeze(unsigned long batch_id)
 {
 	struct ms_diag_mut_batch *e = ms_batch_find(batch_id);
+	struct ms_diag_provenance trace_prov;
 	if (e != (struct ms_diag_mut_batch *) 0) {
 		e->frozen = 1;
-		macsurf_trace_emit(MS_TC_MUTATION, MS_TE_MUTATION_FREEZE, 0, 0,
-			batch_id, e->total);
+		ms_batch_provenance(e, &trace_prov);
+		macsurf_trace_emit_with_provenance(MS_TC_MUTATION,
+			MS_TE_MUTATION_FREEZE, 0, 0, &trace_prov, batch_id, e->total);
 		ms_diag_progress(MS_PROGRESS_MUTATION);
 	}
+}
+
+int ms_diag_batch_provenance(unsigned long batch_id,
+	struct ms_diag_provenance *out)
+{
+	struct ms_diag_mut_batch *e = ms_batch_find(batch_id);
+	if (out == (struct ms_diag_provenance *) 0 ||
+	    e == (struct ms_diag_mut_batch *) 0) {
+		return 0;
+	}
+	ms_batch_provenance(e, out);
+	return 1;
 }
 
 /* --- render passes --- */
@@ -902,6 +986,7 @@ static struct ms_diag_pass *ms_pass_find(unsigned long id)
 static unsigned long ms_pass_alloc(const struct ms_diag_provenance *prov, int kind)
 {
 	struct ms_diag_pass *e = &g_pass_ring[g_pass_ring_head];
+	struct ms_diag_provenance trace_prov;
 	g_pass_ring_head = (g_pass_ring_head + 1) % MS_PASS_RING_N;
 	memset(e, 0, sizeof(*e));
 	e->id = ms_next(&g_pass_seq);
@@ -916,8 +1001,11 @@ static unsigned long ms_pass_alloc(const struct ms_diag_provenance *prov, int ki
 	e->kind = (short) kind;
 	e->result = (short) MS_RRES_RUNNING;
 	e->reason = (short) MS_SREASON_NONE;
-	macsurf_trace_emit(MS_TC_LAYOUT, MS_TE_LAYOUT_BEGIN, 0, 0,
-		e->id, (unsigned long) kind);
+	memset(&trace_prov, 0, sizeof(trace_prov));
+	if (prov != (const struct ms_diag_provenance *) 0) trace_prov = *prov;
+	trace_prov.pass = e->id;
+	macsurf_trace_emit_with_provenance(MS_TC_LAYOUT, MS_TE_LAYOUT_BEGIN,
+		0, 0, &trace_prov, e->id, (unsigned long) kind);
 	return e->id;
 }
 
@@ -927,6 +1015,8 @@ static void ms_scope_push(struct ms_diag_render_scope *s,
 	s->prev_nav = g_cur_nav;
 	s->prev_frame = g_cur_frame;
 	s->prev_doc = g_cur_doc;
+	s->prev_script = g_cur_script;
+	s->prev_task = g_cur_task;
 	s->prev_batch = g_cur_batch;
 	s->prev_pass = g_cur_pass;
 	s->my_pass = pass;
@@ -936,6 +1026,8 @@ static void ms_scope_push(struct ms_diag_render_scope *s,
 		}
 		g_cur_frame = prov->frame;
 		g_cur_doc = prov->doc;
+		g_cur_script = prov->script;
+		g_cur_task = prov->task;
 		g_cur_batch = prov->batch;
 	}
 	g_cur_pass = pass;
@@ -947,9 +1039,17 @@ static void ms_scope_pop(struct ms_diag_render_scope *s)
 	g_cur_nav = s->prev_nav;
 	g_cur_frame = s->prev_frame;
 	g_cur_doc = s->prev_doc;
+	g_cur_script = s->prev_script;
+	g_cur_task = s->prev_task;
 	g_cur_batch = s->prev_batch;
 	g_cur_pass = s->prev_pass;
 	g_cur_paint = 0;
+}
+
+void ms_diag_render_action(int action)
+{
+	struct ms_diag_pass *e = ms_pass_find(g_cur_pass);
+	if (e != (struct ms_diag_pass *) 0) e->action = (short) action;
 }
 
 unsigned long ms_diag_render_enter(struct ms_diag_render_scope *s, int kind,
@@ -1148,6 +1248,7 @@ static const char *ms_render_kind_s(int k)
 	case MS_RENDER_RECONVERT:      return "reconvert";
 	case MS_RENDER_FAST_STYLE:     return "fast_style";
 	case MS_RENDER_FAST_INHERITED: return "fast_inherited";
+	case MS_RENDER_POLICY:         return "policy";
 	default:                       return "initial";
 	}
 }
@@ -1158,7 +1259,26 @@ static const char *ms_render_result_s(int r)
 	case MS_RRES_FALLBACK: return "fallback";
 	case MS_RRES_FAIL:     return "fail";
 	case MS_RRES_QUEUED:   return "queued";
+	case MS_RRES_DECLINED: return "declined_nonfull";
+	case MS_RRES_COSMETIC_SUPPRESSED: return "cosmetic_suppressed";
+	case MS_RRES_DEFER_NOT_DONE: return "defer_not_done";
+	case MS_RRES_DEFER_JS_ACTIVE: return "defer_js_active";
+	case MS_RRES_BUSY: return "full_busy";
+	case MS_RRES_STALE_DROP: return "stale_content_drop";
+	case MS_RRES_OVERFLOW: return "overflow_decline";
 	default:               return "running";
+	}
+}
+static const char *ms_render_action_s(int a)
+{
+	switch (a) {
+	case MS_RACTION_PAINT: return "paint";
+	case MS_RACTION_RECASCADE: return "recascade";
+	case MS_RACTION_LOCAL_REFLOW: return "local_reflow";
+	case MS_RACTION_SUBTREE: return "subtree";
+	case MS_RACTION_FULL: return "full";
+	case MS_RACTION_SYNC_FULL: return "sync_full";
+	default: return "none";
 	}
 }
 static const char *ms_stage_kind_s(int k)
@@ -1276,11 +1396,11 @@ long macsurf_diag_serialize_layout(char *buf, long cap)
 		}
 		snprintf(line, sizeof line,
 			"pass=%lu nav=%lu frame=%lu doc=%lu batch=%lu task=%lu "
-			"kind=%s result=%s reason=%s paint=%lu\n",
+			"kind=%s action=%s result=%s reason=%s paint=%lu\n",
 			(unsigned long) e->id, (unsigned long) e->nav,
 			(unsigned long) e->frame, (unsigned long) e->doc,
 			(unsigned long) e->batch, (unsigned long) e->task,
-			ms_render_kind_s(e->kind), ms_render_result_s(e->result),
+			ms_render_kind_s(e->kind), ms_render_action_s(e->action), ms_render_result_s(e->result),
 			ms_stage_reason_s(e->reason), (unsigned long) e->paint);
 		n = diag_cat(buf, cap, n, line);
 	}

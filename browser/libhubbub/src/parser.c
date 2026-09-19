@@ -11,7 +11,7 @@
 #include <parserutils/charset/mibenum.h>
 #include <parserutils/input/inputstream.h>
 
-#include <hubbub/parser.h>
+#include "hub_parser_api.h"
 
 #include "hub_charset_detect.h"
 #include "tokeniser/tokeniser.h"
@@ -39,11 +39,11 @@ struct hubbub_parser {
  *         HUBBUB_BADENCODING if \p enc is unsupported
  */
 hubbub_error hubbub_parser_create(const char *enc, bool fix_enc,
-		hubbub_parser **parser)
+		struct hubbub_parser **parser)
 {
-	parserutils_error perror;
+	parserutils_error pu_error;
 	hubbub_error error;
-	hubbub_parser *p;
+	struct hubbub_parser *p;
 
 	if (parser == NULL)
 		return HUBBUB_BADPARM;
@@ -65,12 +65,12 @@ hubbub_error hubbub_parser_create(const char *enc, bool fix_enc,
 		}
 	}
 
-	perror = parserutils_inputstream_create(enc,
+	pu_error = parserutils_inputstream_create(enc,
 		enc != NULL ? HUBBUB_CHARSET_CONFIDENT : HUBBUB_CHARSET_UNKNOWN,
 		hubbub_charset_extract, &p->stream);
-	if (perror != PARSERUTILS_OK) {
+	if (pu_error != PARSERUTILS_OK) {
 		free(p);
-		return hubbub_error_from_parserutils_error(perror);
+		return hubbub_error_from_parserutils_error(pu_error);
 	}
 
 	error = hubbub_tokeniser_create(p->stream, &p->tok);
@@ -99,7 +99,7 @@ hubbub_error hubbub_parser_create(const char *enc, bool fix_enc,
  * \param parser  Parser instance to destroy
  * \return HUBBUB_OK on success, appropriate error otherwise
  */
-hubbub_error hubbub_parser_destroy(hubbub_parser *parser)
+hubbub_error hubbub_parser_destroy(struct hubbub_parser *parser)
 {
 	if (parser == NULL)
 		return HUBBUB_BADPARM;
@@ -123,7 +123,7 @@ hubbub_error hubbub_parser_destroy(hubbub_parser *parser)
  * \param params  Option-specific parameters
  * \return HUBBUB_OK on success, appropriate error otherwise
  */
-hubbub_error hubbub_parser_setopt(hubbub_parser *parser,
+hubbub_error hubbub_parser_setopt(struct hubbub_parser *parser,
 		hubbub_parser_opttype type,
 		hubbub_parser_optparams *params)
 {
@@ -215,7 +215,7 @@ hubbub_error hubbub_parser_setopt(hubbub_parser *parser,
  * \param len     Length, in bytes, of data
  * \return HUBBUB_OK on success, appropriate error otherwise
  */
-hubbub_error hubbub_parser_insert_chunk(hubbub_parser *parser,
+hubbub_error hubbub_parser_insert_chunk(struct hubbub_parser *parser,
 		const uint8_t *data, size_t len)
 {
 	if (parser == NULL || data == NULL)
@@ -232,18 +232,18 @@ hubbub_error hubbub_parser_insert_chunk(hubbub_parser *parser,
  * \param len     Length, in bytes, of data
  * \return HUBBUB_OK on success, appropriate error otherwise
  */
-hubbub_error hubbub_parser_parse_chunk(hubbub_parser *parser,
+hubbub_error hubbub_parser_parse_chunk(struct hubbub_parser *parser,
 		const uint8_t *data, size_t len)
 {
-	parserutils_error perror;
+	parserutils_error pu_error;
 	hubbub_error error;
 
 	if (parser == NULL || data == NULL)
 		return HUBBUB_BADPARM;
 
-	perror = parserutils_inputstream_append(parser->stream, data, len);
-	if (perror != PARSERUTILS_OK)
-		return hubbub_error_from_parserutils_error(perror);
+	pu_error = parserutils_inputstream_append(parser->stream, data, len);
+	if (pu_error != PARSERUTILS_OK)
+		return hubbub_error_from_parserutils_error(pu_error);
 
 	error = hubbub_tokeniser_run(parser->tok);
 	if (error == HUBBUB_BADENCODING) {
@@ -251,14 +251,14 @@ hubbub_error hubbub_parser_parse_chunk(hubbub_parser *parser,
 		 * support. We've not actually processed any data at this
 		 * point so fall back to Windows-1252 and hope for the best
 		 */
-		perror = parserutils_inputstream_change_charset(parser->stream,
+		pu_error = parserutils_inputstream_change_charset(parser->stream,
 				"Windows-1252", HUBBUB_CHARSET_TENTATIVE);
 		/* Under no circumstances should we get here if we've managed
 		 * to process data. If there is a way, I want to know about it
 		 */
-		assert(perror != PARSERUTILS_INVALID);
-		if (perror != PARSERUTILS_OK)
-			return hubbub_error_from_parserutils_error(perror);
+		assert(pu_error != PARSERUTILS_INVALID);
+		if (pu_error != PARSERUTILS_OK)
+			return hubbub_error_from_parserutils_error(pu_error);
 
 		/* Retry the tokenisation */
 		error = hubbub_tokeniser_run(parser->tok);
@@ -276,17 +276,17 @@ hubbub_error hubbub_parser_parse_chunk(hubbub_parser *parser,
  * \param parser  Parser to inform
  * \return HUBBUB_OK on success, appropriate error otherwise
  */
-hubbub_error hubbub_parser_completed(hubbub_parser *parser)
+hubbub_error hubbub_parser_completed(struct hubbub_parser *parser)
 {
-	parserutils_error perror;
+	parserutils_error pu_error;
 	hubbub_error error;
 
 	if (parser == NULL)
 		return HUBBUB_BADPARM;
 
-	perror = parserutils_inputstream_append(parser->stream, NULL, 0);
-	if (perror != PARSERUTILS_OK)
-		return hubbub_error_from_parserutils_error(perror);
+	pu_error = parserutils_inputstream_append(parser->stream, NULL, 0);
+	if (pu_error != PARSERUTILS_OK)
+		return hubbub_error_from_parserutils_error(pu_error);
 
 	error = hubbub_tokeniser_run(parser->tok);
 	if (error != HUBBUB_OK)
@@ -302,7 +302,7 @@ hubbub_error hubbub_parser_completed(hubbub_parser *parser)
  * \param source  Pointer to location to receive charset source
  * \return Pointer to charset name (constant; do not free), or NULL if unknown
  */
-const char *hubbub_parser_read_charset(hubbub_parser *parser,
+const char *hubbub_parser_read_charset(struct hubbub_parser *parser,
 		hubbub_charset_source *source)
 {
 	const char *name;
@@ -317,4 +317,3 @@ const char *hubbub_parser_read_charset(hubbub_parser *parser,
 
 	return name;
 }
-

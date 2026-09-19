@@ -97,7 +97,51 @@ struct rect;
 #include "netsurf/window.h"
 
 /* 4. Implementation Structs */
+
+/* Tab-strip layout constants. */
+#define MACOS9_TAB_STRIP_H 24  /* height of the tab bar in pixels */
+
+/* macos9_window: one native Mac browser window (scaffold).
+ * Owns the WindowRef, toolbar controls, URL bar, scrollbars, and layout
+ * geometry.  May host multiple gui_window tabs. */
+struct macos9_window {
+	WindowRef window;
+	ControlRef back_btn;
+	ControlRef forward_btn;
+	ControlRef stop_btn;      /* fixes724 - Stop (X) */
+	ControlRef reload_btn;
+	ControlRef home_btn;
+	ControlRef vscroll;
+	ControlRef hscroll;
+	TEHandle url_te;
+	bool url_field_active;
+	Rect toolbar_rect;
+	Rect url_rect;
+	Rect loader_rect;         /* fixes726 - animated loading spinner slot */
+	Rect content_rect;
+	Rect status_rect;
+	/* fixes645 (#188): self-tracked zoom/maximize state. */
+	Rect zoom_saved_bounds;
+	int zoomed;
+	/* Tab management */
+	struct gui_window *tabs;        /* linked list of tabs (gui_window) */
+	struct gui_window *active_tab;  /* currently visible tab */
+	int tab_count;
+	/* Tab strip hover state for close button */
+	struct gui_window *hover_tab;   /* tab the mouse is currently over */
+	struct macos9_window *next;     /* scaffold list linkage */
+};
+
+/* gui_window: one NetSurf browsing context / browser tab.
+ * Owns per-tab state: browser_window, scroll position, content metrics,
+ * status text, caret state, and the offscreen back-buffer.
+ *
+ * Also retains WindowRef and control handles for backward compatibility
+ * with the existing codebase.  The scaffold (macos9_window) is the
+ * canonical owner of the native window; gui_window holds a reference
+ * for convenient access during the incremental migration to tabs. */
 struct gui_window {
+	struct macos9_window *mw;       /* owning scaffold */
 	WindowRef window;
 	ControlRef back_btn;
 	ControlRef forward_btn;
@@ -127,7 +171,8 @@ struct gui_window {
 	 * update handler can detect resize and reallocate. */
 	GWorldPtr content_gworld;
 	Rect content_gworld_rect;
-	struct gui_window *next;
+	struct gui_window *next;        /* tab list linkage (within scaffold) */
+	struct gui_window *next_global; /* global gui_window list linkage */
 	/* fixes451: set after first profile emit per page, reset on new URL */
 	int profile_emitted;
 	/* fixes640: PERFACC (phase-accumulator) summary is emitted once at the
@@ -144,17 +189,14 @@ struct gui_window {
 	 * zoom we restore them. `zoomed` toggles which way the box goes. */
 	Rect zoom_saved_bounds;
 	int zoomed;
-	/* fixes663 (#191): in-page text caret. The place_caret gui callback
-	 * hands us document-relative coords + height; the update handler draws
-	 * the caret on top of the composited content and macos9_caret_blink_tick
-	 * toggles caret_on. caret_active is set while a field owns the caret and
-	 * cleared on GW_EVENT_REMOVE_CARET (blur). Distinct from the URL bar,
-	 * which is a Carbon TextEdit field with its own TEIdle blink. */
+	/* fixes663 (#191): in-page text caret. */
 	int caret_active;
 	int caret_on;
 	int caret_x;
 	int caret_y;
 	int caret_h;
+	/* Per-tab title (for tab strip display) */
+	char title[256];
 };
 
 /* fixes645 - download manager V2. Downloads now auto-save to a "MacSurf
@@ -177,6 +219,10 @@ struct gui_download_window {
 	int                dl_state;       /* fixes645: 0 active,1 done,2 fail/cancel */
 	struct gui_download_window *dl_next; /* fixes645: manager list link */
 	struct download_context *dl_ctx;   /* fixes646: for Cancel (abort) */
+	unsigned long      start_ticks;
+	unsigned long      last_rate_ticks;
+	unsigned long      last_rate_bytes;
+	unsigned long      last_rate_bps;
 };
 
 /* 5. External Declarations */
@@ -207,10 +253,11 @@ extern bool macos9_quitting;
 #define MENU_BMK_SUB_MAX  32
 
 #define ITEM_FILE_NEW       1
-#define ITEM_FILE_LOCATION  2
-#define ITEM_FILE_CLOSE     3
-#define ITEM_FILE_SENDLOG   4   /* fixes720: Send Debug Log */
-#define ITEM_FILE_QUIT      6
+#define ITEM_FILE_NEWTAB    2   /* Cmd-T: New Tab */
+#define ITEM_FILE_LOCATION  3
+#define ITEM_FILE_CLOSE     4
+#define ITEM_FILE_SENDLOG   5   /* fixes720: Send Debug Log */
+#define ITEM_FILE_QUIT      7
 
 #define ITEM_GO_BACK        1
 #define ITEM_GO_FORWARD     2
@@ -278,23 +325,33 @@ void macos9_history_save(const char *buf, long len);
 void macos9_history_window_show(struct gui_window *g);
 /* fixes706 - Clear Cache menu handler (wipes disk cache + dead-host state). */
 void macos9_cache_clear_ui(void);
+int  macos9_chrome_confirm_delete(const char *msg);
 
 /* fixes645 (#199) - modeless download-manager window (macos9_download.c),
  * routed from the main event loop. */
 long macos9_download_mgr_is(WindowRef w);   /* 1 if w is the mgr window */
 void macos9_download_mgr_draw(void);
 void macos9_download_mgr_show(void);        /* fixes883: View > Downloads */
+void macos9_download_mgr_hide(void);
 void macos9_download_mgr_click(short part, Point where);
 #ifdef __MACOS9__
+void macos9_chrome_mgr_header(const Rect *content, const char *title, int icon);
 OSErr macos9_downloads_dir_get(short *vRef, long *dirID);
 /* fixes647: shared <app>/MacSurfData[/subfolder] resolver (Cache, Downloads,
  * Bookmarks, log all nest under one MacSurfData folder). subfolder NULL =
  * the MacSurfData folder itself. */
 OSErr macos9_data_dir_get(const char *subfolder, short *vRef, long *dirID);
+int macos9_choose_folder(char *out_path, size_t cap, FSSpec *out_spec);
+int macos9_finder_open_folder(short vRef, long dirID);
+int macos9_finder_open_file(const FSSpec *spec);
+int macos9_finder_reveal_file(const FSSpec *spec);
 #endif
 
+struct macos9_window *macos9_find_scaffold(WindowRef w);
 struct gui_window *macos9_find_window(WindowRef w);
+struct gui_window *macos9_scaffold_active_tab(struct macos9_window *mw);
 void macos9_window_layout(struct gui_window *g);
+void macos9_window_layout_scaffold(struct macos9_window *mw);
 void macos9_window_invalidate_all(struct gui_window *g);
 void macos9_window_invalidate_content(struct gui_window *g);
 void macos9_window_request_reformat(struct gui_window *g);
@@ -312,6 +369,7 @@ void macos9_window_draw_toolbar_icons(struct gui_window *g);
 void macos9_window_draw_toolbar_bg(struct gui_window *g);
 void macos9_window_update_scrollbars(struct gui_window *g);
 void macos9_window_scroll_to(struct gui_window *g, int nx, int ny);
+int macos9_path_to_fsspec(const char *path, FSSpec *out);
 void macos9_window_scroll_by(struct gui_window *g, int dx, int dy);
 void macos9_window_handle_scrollbar_click(struct gui_window *g, ControlRef c, short p, void *lp);
 void macos9_window_te_activate_url(struct gui_window *g);
@@ -335,10 +393,13 @@ void macos9_window_resize(struct gui_window *g);
 /* fixes641 - declared for the per-window close path in main.c (both defined
  * in window.c; previously only referenced internally). */
 struct gui_window *macos9_window_list_head(void);
+struct macos9_window *macos9_scaffold_list_head(void);
 void macos9_window_destroy(struct gui_window *g);
+void macos9_scaffold_destroy(struct macos9_window *mw);
 void macos9_windows_te_idle(void);
 void macos9_windows_process_deferred(void);
 struct gui_window *macos9_create_initial_window(void);
+void macos9_tab_switch(struct macos9_window *mw, struct gui_window *new_tab);
 extern struct gui_window *initial_win;
 void macos9_handle_mouse_down(const EventRecord *event);
 void macos9_handle_key_down(const EventRecord *event);
@@ -419,9 +480,16 @@ void macos9_prefs_save(void);
 void macos9_prefs_log_deltas(void);
 const char *macos9_home_url(void);
 void macos9_prefs_apply_live(void);
-/* True only after preferences opt into diagnostics/profiling. Kept here so
- * instrumentation can be a no-op before the option table is initialized. */
-int macos9_debug_integrations_enabled(void);
+
+/* Tab management functions. */
+nserror macos9_new_tab(struct gui_window *current);
+void macos9_tab_switch(struct macos9_window *mw, struct gui_window *new_tab);
+void macos9_scaffold_destroy(struct macos9_window *mw);
+void macos9_tab_strip_draw(struct macos9_window *mw);
+void macos9_tab_strip_update_hover(struct macos9_window *mw);
+struct gui_window *macos9_tab_strip_hittest(struct macos9_window *mw, Point p);
+struct gui_window *macos9_tab_close_at_point(struct macos9_window *mw, Point p);
+int macos9_tab_plus_hit(struct macos9_window *mw, Point p);
 
 /* MACSURF_HOME_URL canonical definition is in macsurf_config.h.
  * Old frogfind default removed per fixes301. */

@@ -125,8 +125,6 @@ typedef struct plot_style_s {
         int radial_sy;
         int radial_px;
         int radial_py;
-        /* true when opacity contains an intentional CSS/SVG value. */
-        bool opacity_set;
 } plot_style_t;
 
 /**

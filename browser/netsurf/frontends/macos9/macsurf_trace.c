@@ -49,11 +49,11 @@ int macsurf_trace_armed(void)
 	return g_trace_armed_flag;
 }
 
-void macsurf_trace_emit(int cat, int event, int state, int reason,
-	unsigned long a, unsigned long b)
+static void ms_trace_emit_with_provenance(int cat, int event, int state,
+	int reason, const struct ms_diag_provenance *prov,
+	unsigned long paint, unsigned long a, unsigned long b)
 {
 	struct ms_trace_entry *e;
-	struct ms_diag_provenance prov;
 
 	if (!g_trace_armed_flag) {
 		return;
@@ -66,27 +66,43 @@ void macsurf_trace_emit(int cat, int event, int state, int reason,
 		return;
 	}
 
-	ms_diag_cur_provenance(&prov);
-
 	e = &g_trace_ring[g_trace_head];
 	g_trace_head = (g_trace_head + 1) % MS_TRACE_RING_N;
 	g_trace_total++;
 
 	e->ts = ms_trace_now();
-	e->nav = prov.nav;
-	e->doc = prov.doc;
-	e->frame = prov.frame;
-	e->script = prov.script;
-	e->task = prov.task;
-	e->batch = prov.batch;
-	e->pass = prov.pass;
-	e->paint = ms_diag_cur_paint();
+	e->nav = (prov != (const struct ms_diag_provenance *) 0) ? prov->nav : 0;
+	e->doc = (prov != (const struct ms_diag_provenance *) 0) ? prov->doc : 0;
+	e->frame = (prov != (const struct ms_diag_provenance *) 0) ? prov->frame : 0;
+	e->script = (prov != (const struct ms_diag_provenance *) 0) ? prov->script : 0;
+	e->task = (prov != (const struct ms_diag_provenance *) 0) ? prov->task : 0;
+	e->batch = (prov != (const struct ms_diag_provenance *) 0) ? prov->batch : 0;
+	e->pass = (prov != (const struct ms_diag_provenance *) 0) ? prov->pass : 0;
+	e->paint = paint;
 	e->category = (unsigned short) cat;
 	e->event = (unsigned short) event;
 	e->state = (unsigned short) state;
 	e->reason = (unsigned short) reason;
 	e->a = a;
 	e->b = b;
+}
+
+void macsurf_trace_emit(int cat, int event, int state, int reason,
+	unsigned long a, unsigned long b)
+{
+	struct ms_diag_provenance prov;
+
+	ms_diag_cur_provenance(&prov);
+	ms_trace_emit_with_provenance(cat, event, state, reason, &prov,
+		ms_diag_cur_paint(), a, b);
+}
+
+void macsurf_trace_emit_with_provenance(int cat, int event, int state,
+	int reason, const struct ms_diag_provenance *prov,
+	unsigned long a, unsigned long b)
+{
+	/* Frozen work has no ambient paint transaction. */
+	ms_trace_emit_with_provenance(cat, event, state, reason, prov, 0, a, b);
 }
 
 static const char *ms_trace_cat_s(int c)

@@ -404,14 +404,11 @@ extern int   memcmp(const void *, const void *, size_t);
  * with this ON unconditionally since fixes1023 (harness/Makefile:32,145);
  * this only changes the Mac's default. */
 #ifndef MACSURF_JS_FIRE_LOAD
-#define MACSURF_JS_FIRE_LOAD 1
+#define MACSURF_JS_FIRE_LOAD 0
 #endif
 
-/* Shared-build release profile: keep the AppleEvent diagnostics available on
- * demand, but make the durable Debug.log channel a release stub. Remove this
- * one define for an explicitly requested diagnostic build. */
-#ifndef MACSURF_RELEASE
-#define MACSURF_RELEASE 1
+#ifndef MACSURF_JS_MUTATION_OBSERVER_DELIVERY
+#define MACSURF_JS_MUTATION_OBSERVER_DELIVERY 0
 #endif
 
 /* fixes305a: enable the file-backed diagnostic log channel by default.

@@ -179,3 +179,4 @@ uint32_t destroy_transition_property(void *bytecode)
 	(void)bytecode;
 	return 0;
 }
+

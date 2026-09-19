@@ -107,3 +107,4 @@ uint32_t destroy_transition_delay(void *bytecode)
 	(void)bytecode;
 	return 0;
 }
+

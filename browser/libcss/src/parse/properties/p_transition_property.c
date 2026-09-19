@@ -183,3 +183,4 @@ css_error css__parse_transition_property(css_language *c,
 
 	return CSS_OK;
 }
+

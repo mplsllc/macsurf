@@ -32,7 +32,6 @@
 #include "macos9_blocklist.h"
 #include "macos9_gzip.h"	/* fixes965 - streaming Content-Encoding: gzip */	/* fixes856 (#285) - tracker/ad blocklist */
 #include "macsurf_debug.h"
-#include "macsurf_diag.h"
 #include "macsurf_osver.h"	/* fixes936 (OS X tier 1) - macsurf_os_is_osx() */
 
 #include <string.h>
@@ -1391,12 +1390,8 @@ static void hctx_fail(struct macos9_https_ctx *c, const char *why)
 	 *  - cipher suite if handshake completed (0 if not)
 	 *  - pump_calls + ot_recv_bytes to see how far we got
 	 */
-	macsurf_debug_log_writef(
-		"https: FAIL state=%d status=%d body=%ld nav=%ld req=%ld why=%s",
-		c->state, c->status, c->body_bytes,
-		(long) fetch_get_nav_id(c->parent),
-		(long) fetch_get_request_id(c->parent),
-		why ? why : "(null)");
+	macsurf_debug_log_writef("https: FAIL state=%d status=%d body=%ld why=%s",
+		c->state, c->status, c->body_bytes, why ? why : "(null)");
 	macsurf_debug_log_writef("  FAIL host=%s port=%d path=%s",
 		c->host[0] ? c->host : "(unset)",
 		(int)c->port,
@@ -1669,9 +1664,6 @@ static void hctx_fail(struct macos9_https_ctx *c, const char *why)
 					(void)fetch_set_http_code(c->parent, 301);
 					rm.type = FETCH_REDIRECT;
 					rm.data.redirect = c->redirect_url;
-					macsurf_diag_request_record(c->parent,
-						MS_REQ_REDIRECT, 301,
-						MS_SCHEME_HTTPS, 0, 0);
 					fetch_send_callback(&rm, c->parent);
 					parent_save = c->parent;
 					c->parent = NULL; /* fixes447: null before OT
@@ -1741,8 +1733,6 @@ static void hctx_fail(struct macos9_https_ctx *c, const char *why)
 
 	msg.type = FETCH_ERROR;
 	msg.data.error = why ? why : "https: fetch failed";
-	macsurf_diag_request_record(c->parent, MS_REQ_FAIL, c->status,
-		MS_SCHEME_HTTPS, (unsigned long) c->body_bytes, 0);
 	fetch_send_callback(&msg, c->parent);
 
 	p = c->parent;
@@ -1860,13 +1850,10 @@ static void hctx_finish(struct macos9_https_ctx *c)
 			hctx_fail(c, "https: gzip stream incomplete");
 			return;
 		}
-		macsurf_debug_log_writef(
-			"LIFE gzip ok host=%s in=%ld out=%ld nav=%ld req=%ld",
+		macsurf_debug_log_writef("LIFE gzip ok host=%s in=%ld out=%ld",
 			c->host[0] ? c->host : "(unset)",
 			macos9_gunzip_total_in(c->gz),
-			macos9_gunzip_total_out(c->gz),
-			(long) fetch_get_nav_id(c->parent),
-			(long) fetch_get_request_id(c->parent));
+			macos9_gunzip_total_out(c->gz));
 	}
 
 	macsurf_debug_log_writef("https: done body=%ld status=%d",
@@ -1939,8 +1926,6 @@ static void hctx_finish(struct macos9_https_ctx *c)
 
 	c->state = HS_DONE;
 	msg.type = FETCH_FINISHED;
-	macsurf_diag_request_record(c->parent, MS_REQ_DONE, c->status,
-		MS_SCHEME_HTTPS, (unsigned long) c->body_bytes, 0);
 	fetch_send_callback(&msg, c->parent);
 
 	/* fixes244 - mark host as "ever-succeeded" so future timeouts on
@@ -2242,12 +2227,10 @@ static int parse_headers(struct macos9_https_ctx *c, long *body_off)
 		 * downloads without spamming a synced log line per image. */
 		if (force_download || c->status >= 400 || c->mime[0] == 0) {
 			macsurf_debug_log_writef(
-				"RECON MIME net host=%s path=%s mime=%s cd=%d st=%d nav=%ld req=%ld",
+				"RECON MIME net host=%s path=%s mime=%s cd=%d st=%d",
 				c->host, c->path,
 				c->mime[0] ? c->mime : "(empty)",
-				force_download, c->status,
-				(long) fetch_get_nav_id(c->parent),
-				(long) fetch_get_request_id(c->parent));
+				force_download, c->status);
 		}
 		/* fixes1319: the per-image success trace that used to live here
 		 * ("IMG MIME net") is gone - it never had "LIFE " in it, so it
@@ -2297,8 +2280,6 @@ static int parse_headers(struct macos9_https_ctx *c, long *body_off)
 				"LIFE 304 not-modified host=%s path=%s",
 				c->host, c->path);
 			msg.type = FETCH_NOTMODIFIED;
-			macsurf_diag_request_record(c->parent,
-				MS_REQ_NOTMODIFIED, 304, MS_SCHEME_HTTPS, 0, 0);
 			fetch_send_callback(&msg, c->parent);
 			parent_save = c->parent;
 			hctx_clear(c);
@@ -2326,9 +2307,6 @@ static int parse_headers(struct macos9_https_ctx *c, long *body_off)
 		struct fetch *parent_save;
 		msg.type = FETCH_REDIRECT;
 		msg.data.redirect = c->redirect_url;
-		macsurf_diag_request_record(c->parent, MS_REQ_REDIRECT,
-			c->status, MS_SCHEME_HTTPS,
-			(unsigned long) c->body_bytes, 0);
 		fetch_send_callback(&msg, c->parent);
 		/* fixes368a (#167) - log the redirect TARGET, not just "redirect".
 		 * The Facebook login chain is GET → POST → 302 → save-device →
@@ -3230,12 +3208,10 @@ static void hctx_poll(struct macos9_https_ctx *c)
 			c->state = HS_SEND_REQ;
 			MS_LOG("https: pool reuse");
 			macsurf_debug_log_writef(
-				"LIFE FETCHCONC pool host=%s active=%d cap=%ld nav=%ld req=%ld",
+				"LIFE FETCHCONC pool host=%s active=%d cap=%ld",
 				c->pool_key,
 				https_active_count_for_host(c->pool_key),
-				(long) nsoption_int(max_fetchers_per_host),
-				(long) fetch_get_nav_id(c->parent),
-				(long) fetch_get_request_id(c->parent));
+				(long) nsoption_int(max_fetchers_per_host));
 			return;
 		}
 
@@ -3257,12 +3233,10 @@ static void hctx_poll(struct macos9_https_ctx *c)
 		c->state = HS_TLSING;
 		MS_LOG("https: started");
 		macsurf_debug_log_writef(
-			"LIFE FETCHCONC cold host=%s active=%d cap=%ld nav=%ld req=%ld",
+			"LIFE FETCHCONC cold host=%s active=%d cap=%ld",
 			c->pool_key,
 			https_active_count_for_host(c->pool_key),
-			(long) nsoption_int(max_fetchers_per_host),
-			(long) fetch_get_nav_id(c->parent),
-			(long) fetch_get_request_id(c->parent));
+			(long) nsoption_int(max_fetchers_per_host));
 		macsurf_profile_stamp("tls-handshake-start");
 		return;
 	}

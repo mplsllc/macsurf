@@ -61,10 +61,8 @@
 
 #include "html/html.h"
 #include "macsurf_debug.h"
-#include "macsurf_diag.h"	/* MacSurf Trace 1c: doc_id + render-stage records */
-#include "frontends/macos9/macos9_transition.h"
 #ifdef __MACOS9__
-#include <Timer.h>
+#include "macsurf_diag.h"
 #endif
 
 /* fixes518: frontend scheduler cancellation (forward-declared here, Mac-only
@@ -74,8 +72,15 @@
  * styles, ...) before any parser/content state is torn down. */
 #ifdef __MACOS9__
 extern void macos9_schedule_cancel_owner(void *p);
+extern int macos9_content_is_live(struct content *c);
+extern unsigned long macos9_content_token(struct content *c);
+extern int macos9_content_token_valid(struct content *c, unsigned long token);
+extern nserror macos9_schedule(int t, void (*callback)(void *p), void *p);
 #else
 #define macos9_schedule_cancel_owner(p) ((void)0)
+#define macos9_content_is_live(c) (1)
+#define macos9_content_token(c) (1UL)
+#define macos9_content_token_valid(c, t) (1)
 #endif
 
 long macos9_html_bytes_processed = 0;
@@ -102,6 +107,16 @@ unsigned int macos9_html_head_len = 0;
 #include <libcss/font_face.h>
 #include "html/private.h"
 #include "html/dom_event.h"
+
+#ifdef __MACOS9__
+static void html_diag_document_open(html_content *html)
+{
+	if (html != NULL && html->document != NULL && html->ms_diag_doc_id == 0)
+		html->ms_diag_doc_id = ms_diag_document_open(0,
+			ms_diag_frame_get(html->bw));
+}
+#endif
+
 #include "html/css.h"
 
 /* Count parsed Facebook data-sjs nodes directly from libdom at the instant
@@ -386,14 +401,6 @@ static void html_box_convert_done(html_content *c, bool success)
 
 	c->box_conversion_context = NULL;
 
-	/* MacSurf Trace 1c: the INITIAL layout pass (opened in dom_to_box) is
-	 * complete. A reconvert closes its own pass in macos9_reconvert_cb. */
-	if (c->last_layout_pass_id != 0) {
-		ms_diag_render_close(c->last_layout_pass_id,
-			success ? MS_RRES_DONE : MS_RRES_FAIL, 0);
-		c->last_layout_pass_id = 0;
-	}
-
 	/* Clean up and report error if unsuccessful or aborted */
 	if ((success == false) || (c->aborted)) {
 		html_object_free_objects(c);
@@ -561,7 +568,7 @@ static void html_box_convert_done(html_content *c, bool success)
  *
  * Capped at 40 dumps, one per section, so it is a handful of lines rather than
  * a firehose. Turn it off again once the hero is understood. */
-/* #define MACSURF_PAGEMAP 1 */
+#define MACSURF_PAGEMAP 1
 #define MACSURF_PAGEMAP_MAX_DUMPS 40
 
 static long macsurf_pagemap_dumps = 0;
@@ -1064,12 +1071,6 @@ void html_slider_probe(html_content *c, const char *when)
 		if (si != NULL) dom_node_unref(si);
 		dom_node_unref((dom_node *)root2);
 
-		/* JS half of the probe: what do the page's OWN scripts see --
-		 * jQuery and jQuery.fn.slick existence, plus the same featured
-		 * classes answered through the engine's querySelector (which can
-		 * differ from a libdom walk if script rebuilt the tree). */
-		if (c->js_thread != NULL)
-			js_fire_slider_probe(c->js_thread, when);
 		return;
 	}
 
@@ -1081,10 +1082,6 @@ void html_slider_probe(html_content *c, const char *when)
 	macsurf_debug_log_writef("LIFE SLIDER[%s] ---- end", when);
 	dom_node_unref(slider);
 
-	/* JS half of the probe, also when the subtree IS present: the widget
-	 * can be in the DOM and still dead if jQuery.fn.slick never landed. */
-	if (c->js_thread != NULL)
-		js_fire_slider_probe(c->js_thread, when);
 }
 /* ====================================================================== */
 
@@ -1387,7 +1384,7 @@ html_proceed_to_done(html_content *html)
 			 * degrade the page (truncated articles, collapsed
 			 * slider, a 1s re-truncation ticker). Re-enable in the
 			 * round that ships forced layout. */
-#ifdef MACSURF_JS_FIRE_LOAD
+#if MACSURF_JS_FIRE_LOAD
 			if (html->js_thread != NULL) {
 				js_fire_window_load(html->js_thread,
 						html->document);
@@ -1918,6 +1915,9 @@ html_create_html_data(html_content *c, const http_parameter *params)
 	error = dom_hubbub_parser_create(&parse_params,
 					 &c->parser,
 					 &c->document);
+#ifdef __MACOS9__
+	if (error == DOM_HUBBUB_OK) html_diag_document_open(c);
+#endif
 	if ((error != DOM_HUBBUB_OK) && (c->encoding != NULL)) {
 		/* Ok, we don't support the declared encoding. Bailing out
 		 * isn't exactly user-friendly, so fall back to autodetect */
@@ -1929,6 +1929,9 @@ html_create_html_data(html_content *c, const http_parameter *params)
 		error = dom_hubbub_parser_create(&parse_params,
 						 &c->parser,
 						 &c->document);
+#ifdef __MACOS9__
+		if (error == DOM_HUBBUB_OK) html_diag_document_open(c);
+#endif
 	}
 	if (error != DOM_HUBBUB_OK) {
 		nsurl_unref(c->base_url);
@@ -2156,6 +2159,12 @@ html_process_encoding_change(struct content *c,
 	html->parser = NULL;
 
 	if (html->document != NULL) {
+#ifdef __MACOS9__
+		if (html->ms_diag_doc_id != 0) {
+			ms_diag_document_close(html->ms_diag_doc_id);
+			html->ms_diag_doc_id = 0;
+		}
+#endif
 		dom_node_unref(html->document);
 	}
 
@@ -2171,6 +2180,9 @@ html_process_encoding_change(struct content *c,
 	error = dom_hubbub_parser_create(&parse_params,
 					 &html->parser,
 					 &html->document);
+#ifdef __MACOS9__
+	if (error == DOM_HUBBUB_OK) html_diag_document_open(html);
+#endif
 	if (error != DOM_HUBBUB_OK) {
 		/* Ok, we don't support the declared encoding. Bailing out
 		 * isn't exactly user-friendly, so fall back to Windows-1252 */
@@ -2184,18 +2196,14 @@ html_process_encoding_change(struct content *c,
 		error = dom_hubbub_parser_create(&parse_params,
 						 &html->parser,
 						 &html->document);
+#ifdef __MACOS9__
+		if (error == DOM_HUBBUB_OK) html_diag_document_open(html);
+#endif
 
 		if (error != DOM_HUBBUB_OK) {
 			return libdom_hubbub_error_to_nserror(error);
 		}
 
-	}
-
-	/* MacSurf Trace 1c: the parser just replaced html->document. Retire the
-	 * old DOM-document id; html_begin_conversion opens a fresh one. */
-	if (html->doc_id != 0) {
-		ms_diag_document_close(html->doc_id);
-		html->doc_id = 0;
 	}
 
 	source_data = content__get_source_data(c, &source_size);
@@ -2257,23 +2265,15 @@ html_process_data(struct content *c, const char *data, unsigned int size)
 		extern double macos9_micros(void);
 		extern void macsurf_profile_accum_parse(long us);
 		extern long macsurf_profile_get_js_us(void);
-		extern int macos9_debug_integrations_enabled(void);
-		int profile = macos9_debug_integrations_enabled();
-		double t_parse = 0.0;
-		long js_before = 0;
+		double t_parse = macos9_micros();
+		long js_before = macsurf_profile_get_js_us();
 		long parse_us;
-		if (profile) {
-			t_parse = macos9_micros();
-			js_before = macsurf_profile_get_js_us();
-		}
 		dom_ret = dom_hubbub_parser_parse_chunk(html->parser,
 						      (const uint8_t *) data,
 						      size);
-		if (profile) {
-			parse_us = (long)(macos9_micros() - t_parse)
-					- (macsurf_profile_get_js_us() - js_before);
-			macsurf_profile_accum_parse(parse_us);
-		}
+		parse_us = (long)(macos9_micros() - t_parse)
+				- (macsurf_profile_get_js_us() - js_before);
+		macsurf_profile_accum_parse(parse_us);
 	}
 
 	err = libdom_hubbub_error_to_nserror(dom_ret);
@@ -2391,19 +2391,11 @@ html_begin_conversion(html_content *htmlc)
 	dom_hubbub_error error;
 
 	MS_LOG("html begin conversion");
-
-	/* MacSurf Trace 1c: register this DOM document. Idempotent -- this
-	 * function re-enters while the parser flushes late style/script nodes;
-	 * the doc_id == 0 guard opens exactly one id per DOM lifetime.
-	 * html_process_encoding_change() clears doc_id when it replaces
-	 * htmlc->document, so a reparse gets a fresh id. */
-	if (htmlc->doc_id == 0) {
-		htmlc->frame_id = browser_window_get_frame_id(htmlc->bw);
-		htmlc->doc_id = ms_diag_document_open(
-			content_get_nav_id((struct content *) htmlc),
-			htmlc->frame_id);
-	}
-
+#ifdef __MACOS9__
+	if (htmlc->ms_diag_doc_id == 0 && htmlc->document != NULL)
+		htmlc->ms_diag_doc_id = ms_diag_document_open(0,
+			ms_diag_frame_get(htmlc->bw));
+#endif
 	/* fixes848 (#167 perf investigation) -- see html_box_convert_done's
 	 * comment; this is the matching "about to start" bracket. */
 	macsurf_debug_log_writef("WORK pipeline: begin_conversion c=%p url=%s",
@@ -3702,14 +3694,6 @@ int html_reconvert_fast_style(struct content *base_c, void *vnode)
 	if (new_styles == NULL) return -1;
 
 	if (css_computed_style_is_paint_only_diff(box->style, new_styles->styles[CSS_PSEUDO_ELEMENT_NONE])) {
-		/* 2B-2 opacity: A->B transition check before style replacement */
-		{
-			uint32_t now = 0;
-#ifdef __MACOS9__
-			now = (uint32_t)TickCount();
-#endif
-			macsurf_transition_handle_style_change(c, node, box->style, new_styles->styles[CSS_PSEUDO_ELEMENT_NONE], now);
-		}
 		if (box->custom_env != NULL && !(box->flags & CLONE))
 			css_custom_env_unref(box->custom_env);
 		if (!(box->flags & CLONE)) box->custom_env = new_env;
@@ -3753,7 +3737,7 @@ struct inherited_color_candidate {
 struct inherited_color_frame {
 	struct box *box;
 	css_computed_style *parent_style;	/* parent's post-recascade style */
-	const css_computed_style *parent_style_old;	/* pointer children currently borrow */
+	css_computed_style *parent_style_old;	/* pointer children currently borrow */
 	css_custom_env *parent_env;
 };
 
@@ -3833,7 +3817,7 @@ html_reconvert_fast_inherited_color(struct content *base_c, void *vnode)
 		struct inherited_color_frame frame;
 		struct box *box;
 		css_computed_style *style_for_children;
-		const css_computed_style *style_for_children_old;
+		css_computed_style *style_for_children_old;
 		css_custom_env *env_for_children;
 		struct box *child;
 
@@ -3845,17 +3829,10 @@ html_reconvert_fast_inherited_color(struct content *base_c, void *vnode)
 		/* Descendant boxes with no style of their own borrow this
 		 * pointer; track it so the anonymous-borrow test below compares
 		 * against what the child actually holds, not the recascaded
-		 * replacement. Anonymous containers (style == NULL) pass through
-		 * their enclosing parent's style. */
-		if (box->style != NULL) {
-			style_for_children_old = box->style;
-			style_for_children = box->style;
-			env_for_children = box->custom_env;
-		} else {
-			style_for_children_old = frame.parent_style_old;
-			style_for_children = frame.parent_style;
-			env_for_children = frame.parent_env;
-		}
+		 * replacement. */
+		style_for_children_old = box->style;
+		style_for_children = box->style;
+		env_for_children = box->custom_env;
 		if (box->flags & CLONE) {
 			struct box *owner = box->prev;
 
@@ -3945,20 +3922,6 @@ html_reconvert_fast_inherited_color(struct content *base_c, void *vnode)
 					css_computed_style_debug_bits0(ns));
 				macsurf_debug_log_writef(
 					"LIFE INHERITEDCOLOR classifier bits0=%s", b0);
-				/* MacSurf Trace 1c: the structured record. Join keys
-				 * (pass/batch/doc/task) come from the live render
-				 * scope the reconvert callback pushed; this is the
-				 * only place the bits + tag + detail are in scope. */
-				ms_diag_render_stage(MS_STAGE_INHERITED_COLOR,
-					MS_SRES_DECLINE,
-					MS_SREASON_BORDER_WIDTH_BITS_DIFFER,
-					(int) decline_detail,
-					(unsigned long)
-						css_computed_style_debug_bits0(own_old),
-					(unsigned long)
-						css_computed_style_debug_bits0(ns),
-					decline_tag[0] != '\0' ? decline_tag : "-",
-					candidate_count);
 				css_select_results_destroy(styles);
 				if (env != NULL) css_custom_env_unref(env);
 				goto done;
@@ -3972,9 +3935,8 @@ html_reconvert_fast_inherited_color(struct content *base_c, void *vnode)
 			candidate[candidate_count].clone_owner = NULL;
 			candidate_count++;
 			style_for_children = styles->styles[CSS_PSEUDO_ELEMENT_NONE];
-			style_for_children_old = own_old;
 			env_for_children = env;
-		} else if (box->style != NULL && box->style == frame.parent_style_old) {
+		} else if (box->style == frame.parent_style_old) {
 			/* Anonymous/text boxes borrow their parent's computed style. Keep
 			 * their pointer change in the candidate set as well: text boxes
 			 * otherwise continue to paint the old inherited foreground.
@@ -3995,8 +3957,6 @@ html_reconvert_fast_inherited_color(struct content *base_c, void *vnode)
 			candidate[candidate_count].clone_owner = NULL;
 			candidate_count++;
 			style_for_children = frame.parent_style;
-			style_for_children_old = frame.parent_style_old;
-			env_for_children = frame.parent_env;
 		}
 
 		for (child = box->children; child != NULL; child = child->next) {
@@ -4075,28 +4035,7 @@ done:
 			"cand=%d",
 			decline, decline_tag[0] != '\0' ? decline_tag : "-",
 			decline_detail, candidate_count);
-		/* MacSurf Trace 1c: structured decline for reasons other than
-		 * classifier_other (which already recorded its own, richer one
-		 * with the border-width bits before jumping here). */
-		if (decline == NULL || strcmp(decline, "classifier_other") != 0) {
-			int reason_e = MS_SREASON_NONE;
-			if (decline != NULL && strcmp(decline, "structural") == 0)
-				reason_e = MS_SREASON_STRUCTURAL_IN_BATCH;
-			else if (decline != NULL &&
-				 strcmp(decline, "no_candidate") == 0)
-				reason_e = MS_SREASON_NO_CANDIDATE;
-			ms_diag_render_stage(MS_STAGE_INHERITED_COLOR,
-				MS_SRES_DECLINE, reason_e, (int) decline_detail,
-				0, 0,
-				decline_tag[0] != '\0' ? decline_tag : "-",
-				candidate_count);
-		}
 		html_inherited_color_discard(candidate, candidate_count);
-	} else {
-		ms_diag_render_stage(MS_STAGE_INHERITED_COLOR, MS_SRES_COMMIT,
-			MS_SREASON_NONE, 0, 0, 0,
-			decline_tag[0] != '\0' ? decline_tag : "-",
-			candidate_count);
 	}
 	if (candidate_select_ctx != NULL)
 		css_select_ctx_destroy(candidate_select_ctx);
@@ -4239,6 +4178,96 @@ static void html_reconvert_rollback(html_content *c)
 		(void *) c->layout, (void *) c->bctx, (long) rebound);
 }
 
+/* Rendering publishes stable C-side state only. Page-capable notifications
+ * cross this scheduler boundary with both content and realm generations, so a
+ * replaced document/realm can never receive stale work. */
+#define HTML_POST_RENDER_MAX 8
+enum html_post_render_kind {
+	HTML_POST_RENDER_RESIZE = 1,
+	HTML_POST_RENDER_LOAD,
+	HTML_POST_RENDER_MUTATIONS
+};
+struct html_post_render_note {
+	html_content *html;
+	unsigned long content_gen;
+	jsthread *thread;
+	unsigned long realm_gen;
+	unsigned long thread_gen;
+	int kind;
+};
+static struct html_post_render_note html_post_render[HTML_POST_RENDER_MAX];
+
+static void html_post_render_dispatch(void *p)
+{
+	int i;
+	html_content *html;
+	(void)p;
+	if (macsurf_reconvert_in_progress) {
+		(void)macos9_schedule(1, html_post_render_dispatch, NULL);
+		return;
+	}
+	for (i = 0; i < HTML_POST_RENDER_MAX; i++) {
+		html = html_post_render[i].html;
+		if (html == NULL) continue;
+		if (!macos9_content_is_live(&html->base) ||
+			!macos9_content_token_valid(&html->base,
+				html_post_render[i].content_gen) ||
+			html->js_thread != html_post_render[i].thread ||
+			!js_thread_valid_for_content(html_post_render[i].thread,
+				html_post_render[i].thread_gen,
+				&html->base, html_post_render[i].realm_gen)) {
+			html_post_render[i].html = NULL;
+			continue;
+		}
+		switch (html_post_render[i].kind) {
+		case HTML_POST_RENDER_RESIZE:
+			(void)js_fire_event(html_post_render[i].thread, "resize",
+				html->document, NULL);
+			break;
+		case HTML_POST_RENDER_LOAD:
+			(void)js_fire_event(html_post_render[i].thread, "load",
+				html->document, NULL);
+			break;
+		case HTML_POST_RENDER_MUTATIONS:
+			js_fire_mutation_batch(html_post_render[i].thread);
+			break;
+		}
+		html_post_render[i].html = NULL;
+	}
+}
+
+static void html_post_render_queue(html_content *html, int kind)
+{
+	int i;
+	int free_slot = -1;
+	unsigned long realm_gen;
+	if (html == NULL || html->js_thread == NULL) return;
+	realm_gen = js_realm_generation(html->js_thread);
+	if (realm_gen == 0) return;
+	for (i = 0; i < HTML_POST_RENDER_MAX; i++) {
+		if (html_post_render[i].html == html &&
+			html_post_render[i].thread == html->js_thread &&
+			html_post_render[i].kind == kind)
+			return;
+		if (html_post_render[i].html == NULL && free_slot < 0)
+			free_slot = i;
+	}
+	if (free_slot < 0) return;
+	html_post_render[free_slot].html = html;
+	html_post_render[free_slot].content_gen =
+		macos9_content_token(&html->base);
+	html_post_render[free_slot].thread = html->js_thread;
+	html_post_render[free_slot].realm_gen = realm_gen;
+	html_post_render[free_slot].thread_gen =
+		js_thread_generation(html->js_thread);
+	if (html_post_render[free_slot].thread_gen == 0) {
+		html_post_render[free_slot].html = NULL;
+		return;
+	}
+	html_post_render[free_slot].kind = kind;
+	(void)macos9_schedule(0, html_post_render_dispatch, NULL);
+}
+
 static void html_reconvert_done(html_content *c, bool success)
 {
 	nserror err;
@@ -4365,7 +4394,7 @@ static void html_reconvert_done(html_content *c, bool success)
  * of ping-ponging with the reconvert debounce, and a page that never
  * reconverts never sees it at all. */
 #ifndef MACSURF_JS_RECONVERT_RESIZE
-#define MACSURF_JS_RECONVERT_RESIZE 1
+#define MACSURF_JS_RECONVERT_RESIZE 0
 #endif
 #if MACSURF_JS_RECONVERT_RESIZE
 	{
@@ -4384,8 +4413,7 @@ static void html_reconvert_done(html_content *c, bool success)
 			macsurf_debug_log_writef(
 				"LIFE reconvert height %d -> resize fired",
 				(int)c->base.height);
-			(void) js_fire_event(c->js_thread, "resize",
-					c->document, NULL);
+			html_post_render_queue(c, HTML_POST_RENDER_RESIZE);
 			/* fixes1090b - `resize` alone was still a no-op for the
 			 * hackaday slider: the REAL slick.js (harness/
 			 * hackaday-bundle.js:933-942) gates its resize handler on
@@ -4409,8 +4437,7 @@ static void html_reconvert_done(html_content *c, bool success)
 			 * fire above, so it carries the same safety argument
 			 * fixes1090 already made and does not reopen the
 			 * MACSURF_JS_FIRE_LOAD switch or its history. */
-			(void) js_fire_event(c->js_thread, "load",
-					c->document, NULL);
+			html_post_render_queue(c, HTML_POST_RENDER_LOAD);
 		}
 	}
 #endif
@@ -4423,9 +4450,12 @@ static void html_reconvert_done(html_content *c, bool success)
 	 * batch's own comment (macsurf_qjs.c) for why this cannot introduce a
 	 * new feedback-loop frequency beyond what reconvert's debounce/floor
 	 * already bounds. */
-	if (c->js_thread != NULL) {
-		js_fire_mutation_batch(c->js_thread);
-	}
+#ifndef MACSURF_JS_MUTATION_OBSERVER_DELIVERY
+#define MACSURF_JS_MUTATION_OBSERVER_DELIVERY 0
+#endif
+#if MACSURF_JS_MUTATION_OBSERVER_DELIVERY
+	html_post_render_queue(c, HTML_POST_RENDER_MUTATIONS);
+#endif
 	macsurf_reconv_pos_set("reconvert-idle", (long) macsurf_reconvert_seq,
 			0, "");
 	macsurf_reconv_pos_flush();
@@ -4756,13 +4786,6 @@ nserror html_reconvert(html_content *c)
 			"WORK reconvert #%ld: CSS reset -- node_data cleared=%ld,"
 			" root_style=NULL", (long) macsurf_reconvert_seq, ncleared);
 	}
-
-	/* CSS Transitions 2B-2: full reconstruction normally replaces the box
-	 * tree wholesale, bypassing html_reconvert_fast_style's old/new style
-	 * comparison. Re-cascade the still-live old tree first so it can start
-	 * presentation effects from each genuine Style A -> Style B pair. The
-	 * normal reconstruction below still owns geometry and installs Style B. */
-	(void)html_recascade_tree(c);
 
 	/* fixes896 - pin the DOM's live text-node dom_strings across the rebuild
 	 * window. Was fixes843, which walked c->layout (the box tree) for BOX_TEXT
@@ -5921,14 +5944,6 @@ static void html_reformat(struct content *c, int width, int height)
 	htmlc->reflowing = false;
 	htmlc->had_initial_layout = true;
 
-	/* The completed layout now owns the same css_media state author CSS used.
-	 * Let MediaQueryLists compare their prior value only at this safe boundary;
-	 * a listener-induced DOM mutation will follow the ordinary reconvert path. */
-#ifdef WITH_QUICKJS
-	if (htmlc->js_thread != NULL)
-		js_media_state_changed(htmlc->js_thread);
-#endif
-
 	/* calculate next reflow time at three times what it took to reflow */
 	nsu_getmonotonic_ms(&ms_after);
 
@@ -6072,14 +6087,15 @@ static void html_destroy(struct content *c)
 	html_content *html = (html_content *) c;
 	struct form *f, *g;
 
+#ifdef __MACOS9__
+	if (html->ms_diag_doc_id != 0) {
+		ms_diag_document_close(html->ms_diag_doc_id);
+		html->ms_diag_doc_id = 0;
+	}
+#endif
+
 	macsurf_debug_log_writef("html_destroy: htmlc=%p content=%p", (void*)html, (void*)c);
 	NSLOG(netsurf, INFO, "content %p", c);
-
-	/* MacSurf Trace 1c: this DOM document's lifetime ends here. */
-	if (html->doc_id != 0) {
-		ms_diag_document_close(html->doc_id);
-		html->doc_id = 0;
-	}
 
 	/* fixes502: set aborted before cancel so that if convert_xml_to_box
 	 * was already dequeued by the scheduler (cancel_dom_to_box is then a
@@ -6140,6 +6156,12 @@ static void html_destroy(struct content *c)
 	}
 
 	if (html->document != NULL) {
+#ifdef __MACOS9__
+		if (html->ms_diag_doc_id != 0) {
+			ms_diag_document_close(html->ms_diag_doc_id);
+			html->ms_diag_doc_id = 0;
+		}
+#endif
 		dom_node_unref(html->document);
 		html->document = NULL;
 	}
@@ -6226,18 +6248,13 @@ html_open(struct content *c,
 	html_content *html = (html_content *) c;
 
 	html->bw = bw;
+#ifdef __MACOS9__
+	if (html->ms_diag_doc_id != 0)
+		ms_diag_document_set_frame(html->ms_diag_doc_id,
+			ms_diag_frame_get(bw));
+	html->ms_diag_frame_id = ms_diag_frame_get(bw);
+#endif
 	html->page = (html_content *) page;
-
-	/* MacSurf Trace 1c: the browsing context is now known. Copy its stable
-	 * frame_id and backfill the document record (an iframe's doc is often
-	 * opened before its child browser_window attaches). */
-	if (bw != NULL) {
-		html->frame_id = browser_window_get_frame_id(bw);
-		if (html->doc_id != 0) {
-			ms_diag_document_set_frame(html->doc_id,
-				html->frame_id);
-		}
-	}
 
 	html->drag_type = HTML_DRAG_NONE;
 	html->drag_owner.no_owner = true;
@@ -6251,6 +6268,27 @@ html_open(struct content *c,
 
 	return NSERROR_OK;
 }
+
+#ifdef __MACOS9__
+void html_content_get_diag_identity(struct content *c, unsigned long *doc,
+	unsigned long *frame)
+{
+	html_content *html = (html_content *)c;
+	if (doc != NULL) *doc = (html == NULL) ? 0 : html->ms_diag_doc_id;
+	if (frame != NULL) *frame = (html == NULL) ? 0 : html->ms_diag_frame_id;
+}
+void html_content_set_diag_context(struct content *c, unsigned long nav,
+	void *bw)
+{
+	html_content *html = (html_content *)c;
+	if (html != NULL && html->ms_diag_doc_id != 0) {
+		ms_diag_document_set_nav(html->ms_diag_doc_id, nav);
+		ms_diag_document_set_frame(html->ms_diag_doc_id,
+			ms_diag_frame_get(bw));
+		html->ms_diag_frame_id = ms_diag_frame_get(bw);
+	}
+}
+#endif
 
 
 /**
@@ -6310,8 +6348,7 @@ static nserror html_close(struct content *c)
 			     s->type == HTML_SCRIPT_ASYNC ||
 			     s->type == HTML_SCRIPT_DEFER) &&
 			    s->data.handle != NULL) {
-				hlcache_handle_release(s->data.handle);
-				s->data.handle = NULL;
+				safe_hlcache_handle_release(&s->data.handle);
 			}
 		}
 	}
@@ -6909,24 +6946,6 @@ dom_document *html_get_document(hlcache_handle *h)
 	assert(c != NULL);
 
 	return c->document;
-}
-
-/* MacSurf Trace 1c: read the document / frame id off an HTML content. Used by
- * the frontend reconvert path, which only has `struct content *` in scope. The
- * DOM-mutation callers only ever operate on the page's HTML document, so a
- * NULL guard is sufficient. New uniquely-named symbols: no existing signature
- * widened. */
-unsigned long html_content_get_doc_id(struct content *c)
-{
-	if (c == NULL)
-		return 0;
-	return ((html_content *) c)->doc_id;
-}
-unsigned long html_content_get_frame_id(struct content *c)
-{
-	if (c == NULL)
-		return 0;
-	return ((html_content *) c)->frame_id;
 }
 
 /**

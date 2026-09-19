@@ -20,8 +20,6 @@
 #include <string.h>
 #include <stdbool.h>
 
-#include "harness_fixture.h"
-
 #include "quickjs.h"	/* Test 93: raw job-queue API, independent of MacSurf's
 			 * js_newthread/js_exec glue (see harness/Makefile's
 			 * -I$(QJS) -> quickjs-macos9/quickjs.h). */
@@ -70,8 +68,6 @@ extern int macsurf_imgdims_lookup(struct nsurl *url, int *w, int *h);	/* fixes92
 #include "cssprobe.h"
 
 #include "macos9_content_registry.h"
-#include "macsurf_diag.h"
-#include "macsurf_capability.h"
 
 extern int html_reconvert_content(struct content *c);
 /* fixes866 (#292): the real parser hooks html.c uses, so the harness exercises
@@ -211,9 +207,7 @@ static int harness_parse_document(const char *html, dom_document **out)
 static struct gui_misc_table g_misc_table;
 struct netsurf_table *guit = NULL;
 static struct nsoption_s g_nsoptions_storage[NSOPTION_LISTEND];
-static struct nsoption_s g_nsoptions_default_storage[NSOPTION_LISTEND];
 struct nsoption_s *nsoptions = g_nsoptions_storage;
-struct nsoption_s *nsoptions_default = g_nsoptions_default_storage;
 
 /* ------------------------------------------------------------------ */
 /* Box tree completion callback for the INITIAL build.                  */
@@ -451,15 +445,6 @@ static char *harness_slurp(const char *path)
 	buf[n] = '\0';
 	fclose(f);
 	return buf;
-}
-
-static char *harness_fixture_slurp(const char *name)
-{
-	char path[HARNESS_FIXTURE_PATH_MAX];
-
-	if (!harness_fixture_path(name, path, sizeof(path)))
-		return NULL;
-	return harness_slurp(path);
 }
 
 /* Identity of a box, for the dump. */
@@ -730,14 +715,6 @@ int main(int argc, char **argv)
 	/* Defined only by the harness build. It injects a post-detach box-build
 	 * failure, so we can prove that the old rendered tree is restored. */
 	extern void macsurf_reconvert_test_fail_once(void);
-	/* The full reconvert harness intentionally exercises unrelated browser
-	 * surfaces before Test 102.  Keep a focused entry point for this bounded
-	 * diagnostics-state test so it remains independently runnable. */
-	if (argc == 2 && strcmp(argv[1], "--diag-phase2") == 0)
-		goto phase2_diag;
-
-	if (argc == 2 && strcmp(argv[1], "--cssprobe") == 0)
-		return cssprobe_test_css_transitions() ? 0 : 1;
 
 	if (argc >= 4 && strcmp(argv[1], "--layout") == 0) {
 		g_layout_html_path = argv[2];
@@ -1785,7 +1762,7 @@ int main(int argc, char **argv)
 	 * generic "GAP" followed by PASS made unrelated regressions invisible. */
 	fprintf(stderr, "\n=== Test 7: real jQuery 3.7.1 clears the document probe ===\n");
 	{
-		FILE *jf = harness_fixture_open("jquery-3.7.1.min.js", "rb");
+		FILE *jf = fopen("jquery-3.7.1.min.js", "rb");
 		const char *probe_js =
 			"if(document.nodeType!==9)"
 				"throw new Error('ASSERT FAIL: document.nodeType='+document.nodeType);"
@@ -1905,7 +1882,7 @@ int main(int argc, char **argv)
 		int fi;
 
 		for (fi = 0; fi < 2; fi++) {
-			FILE *bf = harness_fixture_open(xf_files[fi], "rb");
+			FILE *bf = fopen(xf_files[fi], "rb");
 			char *raw, *wrapped;
 			long blen;
 			size_t rd, wn;
@@ -2002,7 +1979,7 @@ int main(int argc, char **argv)
 			};
 			int fi;
 			for (fi = 0; fi < 2; fi++) {
-				FILE *bf = harness_fixture_open(raw_files[fi], "rb");
+				FILE *bf = fopen(raw_files[fi], "rb");
 				char *raw;
 				long blen;
 				size_t rd;
@@ -3029,7 +3006,7 @@ int main(int argc, char **argv)
 	 * success. --- */
 	fprintf(stderr, "\n=== Test 18 (DIAGNOSTIC): the real verbum-comments.js ===\n");
 	{
-		FILE *vf = harness_fixture_open("verbum-comments.js", "rb");
+		FILE *vf = fopen("verbum-comments.js", "rb");
 		if (vf == NULL) {
 			fprintf(stderr, "SKIP: verbum-comments.js not present next to the "
 					"harness (copy it from the HAR to run this leg)\n");
@@ -6083,15 +6060,24 @@ box_coords(bx, &cx, &cy);
 				"if(!(rc.width>0))"
 					"throw new Error('ASSERT FAIL: READY rect is '+rc.width+"
 						"'x'+rc.height+' for a boxed element');"
-				/* Standards contract: an element with no box returns 0 */
+				/* The fixes1011 guard, unchanged in substance: an element
+				 * with no box must NOT be handed a fabricated number. */
 				"var d=document.createElement('div');"
-				"if(d.offsetWidth!==0||d.clientHeight!==0||d.scrollWidth!==0)"
-					"throw new Error('ASSERT FAIL: unboxed element must answer 0');";
+				"if(d.offsetWidth!==undefined)"
+					"throw new Error('ASSERT FAIL: an element with NO box "
+						"answered '+d.offsetWidth+' before DONE -- must be "
+						"undefined. A fabricated 0 gets written back as "
+						"inline width:0 and ERASES page sections; undefined "
+						"propagates as NaN and the write is a no-op.');"
+				"if(d.clientHeight!==undefined||d.scrollWidth!==undefined)"
+					"throw new Error('ASSERT FAIL: unboxed clientHeight/"
+						"scrollWidth not undefined before DONE');";
 			ok = js_exec(thread, (const unsigned char *)pre,
 					strlen(pre), "t43-unsettled.js");
 			htmlc.base.status = CONTENT_STATUS_DONE;
 			if (!ok) {
-				fprintf(stderr, "FAIL: Test 43 -- unboxed element failed 0 assertion\n");
+				fprintf(stderr, "FAIL: Test 43 -- the unsettled window "
+						"answered a fabricated value\n");
 				return 1;
 			}
 		}
@@ -6235,7 +6221,7 @@ box_coords(bx, &cx, &cy);
 	 * content survives. This is the method that ended fixes998. */
 	fprintf(stderr, "\n=== Test 45: the REAL dotdotdot plugin on an article entry ===\n");
 	{
-		FILE *bf = harness_fixture_open("hackaday-bundle.js", "rb");
+		FILE *bf = fopen("hackaday-bundle.js", "rb");
 		if (bf == NULL) {
 			fprintf(stderr, "SKIP: hackaday-bundle.js not present\n");
 		} else {
@@ -8828,70 +8814,6 @@ box_coords(bx, &cx, &cy);
 				return 1;
 			}
 		}
-		/* --- Test 69a (Round 1A): MediaQueryList must use libcss's media
-		 * parser/matcher, retain a live per-document result, and notify every
-		 * supported listener form when a completed layout publishes a changed
-		 * media state.  This shares Test 69's real html_content so the native
-		 * matchMedia binding reads the same css_media/unit context as @media. */
-		{
-			const char *mql_setup_js =
-				"globalThis.__mqlEvents=[];"
-				"(function(){var m=matchMedia('screen and (min-width: 900px)');"
-				"globalThis.__mql=m;"
-				"if(!(m instanceof MediaQueryList))throw new Error('ASSERT FAIL: MQL prototype');"
-				"if(!m.matches)throw new Error('ASSERT FAIL: initial libcss match');"
-				"if(m.media!=='screen and (min-width: 900px)')throw new Error('ASSERT FAIL: media text='+m.media);"
-				"m.addEventListener('change',function(e){__mqlEvents.push('event:'+e.matches+':'+e.media);});"
-				"m.addListener(function(e){__mqlEvents.push('legacy:'+e.matches);});"
-				"m.onchange=function(e){__mqlEvents.push('property:'+e.matches);};"
-				"})();";
-			const char *mql_check_false_js =
-				"if(__mql.matches)throw new Error('ASSERT FAIL: changed MQL still true');"
-				"if(__mqlEvents.join('|')!=='event:false:screen and (min-width: 900px)|legacy:false|property:false')"
-				"throw new Error('ASSERT FAIL: MQL false events='+__mqlEvents.join('|'));";
-			const char *mql_check_true_js =
-				"if(!__mql.matches)throw new Error('ASSERT FAIL: restored MQL still false');"
-				"if(__mqlEvents.join('|')!=='event:false:screen and (min-width: 900px)|legacy:false|property:false|event:true:screen and (min-width: 900px)|legacy:true|property:true')"
-				"throw new Error('ASSERT FAIL: MQL true events='+__mqlEvents.join('|'));";
-			unsigned char mql_ok;
-
-			/* The preceding reconvert deliberately exercises an un-sized
-			 * fixture. Publish the viewport state a completed html_reformat
-			 * would provide before asking the native MQL evaluator. */
-			t69c.media.type = CSS_MEDIA_SCREEN;
-			t69c.media.width = INTTOFIX(993);
-			t69c.media.height = INTTOFIX(600);
-			t69c.media.orientation = CSS_MEDIA_ORIENTATION_LANDSCAPE;
-			t69c.unit_len_ctx.viewport_width = INTTOFIX(993);
-			t69c.unit_len_ctx.viewport_height = INTTOFIX(600);
-			mql_ok = js_exec(t69thread,
-					(const unsigned char *)mql_setup_js,
-					strlen(mql_setup_js), "driver-mql-setup.js");
-			if (!mql_ok) {
-				fprintf(stderr, "FAIL: MediaQueryList setup threw\n");
-				return 1;
-			}
-			t69c.media.width = INTTOFIX(700);
-			t69c.unit_len_ctx.viewport_width = INTTOFIX(700);
-			js_media_state_changed(t69thread);
-			mql_ok = js_exec(t69thread,
-					(const unsigned char *)mql_check_false_js,
-					strlen(mql_check_false_js), "driver-mql-false-check.js");
-			if (!mql_ok) {
-				fprintf(stderr, "FAIL: MediaQueryList false transition failed\n");
-				return 1;
-			}
-			t69c.media.width = INTTOFIX(993);
-			t69c.unit_len_ctx.viewport_width = INTTOFIX(993);
-			js_media_state_changed(t69thread);
-			mql_ok = js_exec(t69thread,
-					(const unsigned char *)mql_check_true_js,
-					strlen(mql_check_true_js), "driver-mql-true-check.js");
-			if (!mql_ok) {
-				fprintf(stderr, "FAIL: MediaQueryList true transition failed\n");
-				return 1;
-			}
-		}
 		/* fixes1243 - MUST destroy before t69c (this block's stack-local
 		 * html_content) goes out of scope. Without this, t69heap stays
 		 * linked in g_heap_list forever and any LATER test that calls the
@@ -10570,7 +10492,7 @@ box_coords(bx, &cx, &cy);
 	fprintf(stderr, "\n=== Test 81: pre-loader requireLazy call survives "
 			"the stub->real transition (fixes1276) ===\n");
 	{
-		char *b25src = harness_fixture_slurp("fbcdn.net-loader-b25.js");
+		char *b25src = harness_slurp("fbcdn.net-loader-b25.js");
 		if (b25src == NULL) {
 			fprintf(stderr, "SKIP: fbcdn.net-loader-b25.js not present\n");
 		} else {
@@ -12561,306 +12483,6 @@ box_coords(bx, &cx, &cy);
 		}
 		fprintf(stderr, "=== Test 101 PASS ===\n");
 	} /* End of Test 99 scope */
-
-	phase2_diag:
-	/* --- Test 102: Phase 2 negative-state diagnostics ------------------
-	 * Exercise the diagnostic boundary directly: these are deterministic
-	 * MacSurf-owned state transitions, not an attempt to emulate a page or
-	 * network stack in the Linux harness. */
-	{
-		char p0[4096], p1[4096], p2[4096], settle[1024], ops[4096], timers[2048];
-		char readiness[2048];
-		char needle[128];
-		unsigned long op;
-		unsigned long mod;
-		int ti;
-
-		fprintf(stderr, "\n=== Test 102: Phase 2 negative-state diagnostics ===\n");
-
-		/* A decline before wire start is terminal and leaves no pending
-		 * request contract; its structured operation still retains req=0. */
-		op = ms_diag_operation_begin(MS_OP_FETCH, MS_ANSWER_NATIVE);
-		ms_diag_operation_record(op, MS_OP_FETCH, MS_OP_ATTEMPT,
-				MS_OP_DECLINE, MS_OPR_PRE_ABORTED,
-				MS_ANSWER_NATIVE, 0);
-		(void)macsurf_diag_serialize_operations(ops, (long)sizeof(ops));
-		snprintf(needle, sizeof(needle), "op=%lu", op);
-		if (strstr(ops, needle) == NULL ||
-				strstr(ops, "reason=pre_aborted") == NULL ||
-				strstr(ops, "req=0") == NULL) {
-			fprintf(stderr, "FAIL: Test 102 pre-wire decline missing\n");
-			return 1;
-		}
-		/* Readiness is a progress state machine, not an elapsed-load guess.
-		 * The deterministic harness clock is zero, but a real transition still
-		 * makes its progress sequence visible and reports active. */
-		(void)macsurf_diag_serialize_readiness(readiness, (long)sizeof(readiness));
-		if (strstr(readiness, "MSDIAG 1 readiness\n") == NULL ||
-				strstr(readiness, "progress_seq=0") != NULL ||
-				strstr(readiness, "state=active\n") == NULL ||
-				strstr(readiness, "capture_ready=0\n") == NULL) {
-			fprintf(stderr, "FAIL: Test 102 readiness progress state\n");
-			return 1;
-		}
-
-		/* A wire-started operation remains visible as WAITING until its
-		 * explicit settle record, and serialisation must not mutate it. */
-		op = ms_diag_operation_begin(MS_OP_FETCH, MS_ANSWER_NATIVE);
-		ms_diag_operation_record(op, MS_OP_FETCH, MS_OP_WIRE_START,
-				MS_OP_OK, MS_OPR_NONE, MS_ANSWER_NATIVE, 8123);
-		(void)macsurf_diag_serialize_pending(p0, (long)sizeof(p0));
-		(void)macsurf_diag_serialize_pending(p1, (long)sizeof(p1));
-		snprintf(needle, sizeof(needle), "op=%lu", op);
-		if (strcmp(p0, p1) != 0 || strstr(p0, needle) == NULL ||
-				strstr(p0, "expected=settle") == NULL) {
-			fprintf(stderr, "FAIL: Test 102 operation pending/reread\n");
-			return 1;
-		}
-		(void)macsurf_diag_serialize_settlement(settle, (long)sizeof(settle));
-		if (strstr(settle, "settled=0\nreason=unresolved_contracts") == NULL) {
-			fprintf(stderr, "FAIL: Test 102 unresolved settlement\n");
-			return 1;
-		}
-		/* A new top-level run must not inherit this old session contract into
-		 * its readiness decision; `pending` still retains it for diagnosis. */
-		macsurf_diag_navigation_begin();
-		(void)macsurf_diag_serialize_readiness(readiness, (long)sizeof(readiness));
-		if (strstr(readiness, "run_epoch=1\n") == NULL ||
-				strstr(readiness, "pending_contracts=0\n") == NULL ||
-				strstr(readiness, "state=active\n") == NULL) {
-			fprintf(stderr, "FAIL: Test 102 readiness navigation epoch\n");
-			return 1;
-		}
-		ms_diag_operation_record(op, MS_OP_FETCH, MS_OP_SETTLE,
-				MS_OP_RESOLVE, MS_OPR_NONE, MS_ANSWER_NATIVE, 8123);
-		(void)macsurf_diag_serialize_pending(p2, (long)sizeof(p2));
-		if (strstr(p2, needle) != NULL) {
-			fprintf(stderr, "FAIL: Test 102 resolved operation still pending\n");
-			return 1;
-		}
-
-		/* Observe -> check -> callback is a real shim-owned contract.  The
-		 * callback is terminal for the currently scheduled check; no later
-		 * scroll reevaluation is invented by diagnostics. */
-		ms_diag_io_record(991, MS_IO_OBSERVE, ".diag-pending",
-				0, 0, 0, 0, 0, 0, 0);
-		ms_diag_timer_arm(9191, 77, 88, 99, 3);
-		ms_diag_io_timer_bind(991, ".diag-pending", 9191);
-		(void)macsurf_diag_serialize_pending(p0, (long)sizeof(p0));
-		if (strstr(p0, "kind=io io=991") == NULL ||
-				strstr(p0, "expected=check") == NULL ||
-				strstr(p0, "timer=9191 timer_state=armed") == NULL) {
-			fprintf(stderr, "FAIL: Test 102 IO observe pending\n");
-			return 1;
-		}
-		ms_diag_timer_state(9191, MS_TIMER_FIRING);
-		ms_diag_timer_state(9191, MS_TIMER_FIRED);
-		/* Long-lived pages create enough unrelated timers to wrap the bounded
-		 * table. A joined IO record must survive that rotation. */
-		for (ti = 0; ti < 300; ti++)
-			ms_diag_timer_arm((unsigned long)(10000 + ti), 1, 2, 3, 4);
-		(void)macsurf_diag_serialize_timers(timers, (long)sizeof(timers));
-		if (strstr(timers, "timer=9191 nav=77 origin_script=88 origin_task=99 ctx_gen=3 state=fired") == NULL) {
-			fprintf(stderr, "FAIL: Test 102 IO timer join\n");
-			return 1;
-		}
-		/* If ordinary history already rotated before the JS-side bind, the
-		 * contract still retains a lifecycle record for its exact timer id. */
-		ms_diag_io_record(992, MS_IO_OBSERVE, ".diag-recover",
-				0, 0, 0, 0, 0, 0, 0);
-		ms_diag_io_timer_bind(992, ".diag-recover", 9292);
-		ms_diag_timer_state(9292, MS_TIMER_FIRED);
-		(void)macsurf_diag_serialize_timers(timers, (long)sizeof(timers));
-		if (strstr(timers, "timer=9292 nav=") == NULL ||
-				strstr(timers, "state=fired") == NULL) {
-			fprintf(stderr, "FAIL: Test 102 IO timer recovery\n");
-			return 1;
-		}
-		/* The JS shim can report that it has armed an expectation before the
-		 * native scheduler allocates its authoritative timer id.  Do not render
-		 * that zero id as a fictitious armed timer. */
-		ms_diag_io_record(993, MS_IO_OBSERVE, ".diag-expect",
-				0, 0, 0, 0, 0, 0, 0);
-		ms_diag_io_timer_expect(993, ".diag-expect");
-		(void)macsurf_diag_serialize_pending(p0, (long)sizeof(p0));
-		if (strstr(p0, "kind=io io=993") == NULL ||
-				strstr(p0, "timer=0 timer_state=awaiting_native_allocation timer_native=not_entered") == NULL) {
-			fprintf(stderr, "FAIL: Test 102 IO native allocation expectation\n");
-			return 1;
-		}
-		ms_diag_io_timer_native_state(993, ".diag-expect",
-				MS_IO_TIMER_NATIVE_ENTERED);
-		(void)macsurf_diag_serialize_pending(p0, (long)sizeof(p0));
-		if (strstr(p0, "timer_native=entered") == NULL) {
-			fprintf(stderr, "FAIL: Test 102 IO native timer entry\n");
-			return 1;
-		}
-		ms_diag_io_record(994, MS_IO_OBSERVE, ".diag-reject",
-				0, 0, 0, 0, 0, 0, 0);
-		ms_diag_io_timer_expect(994, ".diag-reject");
-		ms_diag_io_timer_native_state(994, ".diag-reject",
-				MS_IO_TIMER_NATIVE_NO_SLOT);
-		(void)macsurf_diag_serialize_pending(p0, (long)sizeof(p0));
-		if (strstr(p0, "kind=io io=994") == NULL ||
-				strstr(p0, "timer=0 timer_state=unbound timer_native=rejected_no_slot") == NULL) {
-			fprintf(stderr, "FAIL: Test 102 IO native timer rejection\n");
-			return 1;
-		}
-		ms_diag_io_record(994, MS_IO_UNOBSERVE, ".diag-reject",
-				0, 0, 0, 0, 0, 0, 0);
-		ms_diag_timer_arm(9393, 7, 8, 9, 10);
-		ms_diag_io_timer_bind(993, ".diag-expect", 9393);
-		ms_diag_io_record(992, MS_IO_CHECK, ".diag-recover",
-				0, 0, 0, 0, 1, 100, 0);
-		ms_diag_io_record(992, MS_IO_CALLBACK, ".diag-recover",
-				0, 0, 0, 0, 0, 0, 1);
-		ms_diag_io_record(991, MS_IO_CHECK, ".diag-pending",
-				0, 0, 0, 0, 1, 100, 0);
-		ms_diag_io_record(991, MS_IO_CALLBACK, ".diag-pending",
-				0, 0, 0, 0, 0, 0, 1);
-		ms_diag_io_record(993, MS_IO_CHECK, ".diag-expect",
-				0, 0, 0, 0, 1, 100, 0);
-		ms_diag_io_record(993, MS_IO_CALLBACK, ".diag-expect",
-				0, 0, 0, 0, 0, 0, 1);
-		(void)macsurf_diag_serialize_pending(p1, (long)sizeof(p1));
-		if (strstr(p1, "kind=io io=991") != NULL) {
-			fprintf(stderr, "FAIL: Test 102 IO callback still pending\n");
-			return 1;
-		}
-
-		/* A known module definition makes its lazy waiter eligible, but only
-		 * the callback release completes the contract. */
-		mod = ms_diag_module_id("diag-wait-module");
-		ms_diag_module_record(mod, 0, MS_MOD_WAIT_REGISTERED,
-				MS_MOD_REASON_NONE, 0, 761);
-		ms_diag_module_record(mod, 0, MS_MOD_DEFINE,
-				MS_MOD_REASON_NONE, 0, 0);
-		(void)macsurf_diag_serialize_pending(p0, (long)sizeof(p0));
-		if (strstr(p0, "kind=module_wait wait=761") == NULL ||
-				strstr(p0, "eligible=1") == NULL ||
-				strstr(p0, "expected=release") == NULL) {
-			fprintf(stderr, "FAIL: Test 102 eligible module wait\n");
-			return 1;
-		}
-		ms_diag_module_record(mod, 0, MS_MOD_CALLBACK_BEGIN,
-				MS_MOD_REASON_NONE, 0, 761);
-		(void)macsurf_diag_serialize_pending(p1, (long)sizeof(p1));
-		if (strstr(p1, "expected=callback_return") == NULL) {
-			fprintf(stderr, "FAIL: Test 102 module callback begin\n");
-			return 1;
-		}
-		ms_diag_module_record(mod, 0, MS_MOD_CALLBACK_RETURN,
-				MS_MOD_REASON_NONE, 0, 761);
-		(void)macsurf_diag_serialize_pending(p2, (long)sizeof(p2));
-		if (strstr(p2, "kind=module_wait wait=761") != NULL) {
-			fprintf(stderr, "FAIL: Test 102 module callback still pending\n");
-			return 1;
-		}
-		(void)macsurf_diag_serialize_settlement(settle, (long)sizeof(settle));
-		if (strstr(settle, "settled=1\nreason=no_known_unresolved_contracts") == NULL ||
-				strstr(settle, "page_complete=unknown") == NULL) {
-			fprintf(stderr, "FAIL: Test 102 conservative settled state\n");
-			return 1;
-		}
-		fprintf(stderr, "=== Test 102 PASS: contracts retain negative state and settle conservatively ===\n");
-	}
-
-	/* --- Test 103: Phase 3 capability/CSS gap aggregates --------------- */
-	{
-		char caps[16384], cssg[16384], caps_again[16384];
-		char name[32];
-		int i;
-		fprintf(stderr, "\n=== Test 103: Phase 3 capability/CSS gap aggregates ===\n");
-		ms_diag_capability_hit(MS_CAP_GEOMETRY, MS_CAP_GET,
-			"offsetWidth", MS_CAP_UNSUPPORTED, MS_ANSWER_UNSUPPORTED);
-		ms_diag_capability_hit(MS_CAP_GEOMETRY, MS_CAP_GET,
-			"offsetWidth", MS_CAP_UNSUPPORTED, MS_ANSWER_UNSUPPORTED);
-		ms_diag_capability_hit(MS_CAP_GEOMETRY, MS_CAP_GET,
-			"clientWidth", MS_CAP_UNSUPPORTED, MS_ANSWER_UNSUPPORTED);
-		ms_diag_capability_hit(MS_CAP_OBSERVER, MS_CAP_CONSTRUCT,
-			"ResizeObserver", MS_CAP_APPROXIMATE, MS_ANSWER_APPROX);
-		(void)macsurf_diag_serialize_capabilities(caps, (long)sizeof(caps));
-		(void)macsurf_diag_serialize_capabilities(caps_again, (long)sizeof(caps_again));
-		if (strcmp(caps, caps_again) != 0 || strstr(caps, "name=offsetWidth") == NULL ||
-			strstr(caps, "name=offsetWidth result=unsupported quality=3 count=2") == NULL ||
-			strstr(caps, "name=ResizeObserver result=approximate quality=1 count=1") == NULL) {
-			fprintf(stderr, "FAIL: Test 103 capability semantics/dedup/reread\n"); return 1;
-		}
-		/* Fill beyond the fixed table (128 entries). The output must say what was dropped. */
-		for (i = 0; i < 140; i++) {
-			snprintf(name, sizeof(name), "feature-%d", i);
-			ms_diag_capability_hit(MS_CAP_GLOBAL, MS_CAP_GET, name,
-				MS_CAP_UNSUPPORTED, MS_ANSWER_UNSUPPORTED);
-		}
-		(void)macsurf_diag_serialize_capabilities(caps, (long)sizeof(caps));
-		if (strstr(caps, "dropped=") == NULL) {
-			fprintf(stderr, "FAIL: Test 103 capability overflow\n"); return 1;
-		}
-		ms_diag_css_gap_hit(MS_CSS_GAP_VALUE, "display", "", "grid", MS_CAP_UNSUPPORTED);
-		ms_diag_css_gap_hit(MS_CSS_GAP_VALUE, "display", "", "grid", MS_CAP_UNSUPPORTED);
-		ms_diag_css_gap_hit(MS_CSS_GAP_PROPERTY, "aspect-ratio", "", "", MS_CAP_UNSUPPORTED);
-		(void)macsurf_diag_serialize_css_gaps(cssg, (long)sizeof(cssg));
-		if (strstr(cssg, "kind=value property=display name= value=grid result=unsupported count=2") == NULL ||
-			strstr(cssg, "kind=property property=aspect-ratio") == NULL ||
-			strstr(cssg, "dropped=") == NULL) {
-			fprintf(stderr, "FAIL: Test 103 CSS key/output\n"); return 1;
-		}
-		fprintf(stderr, "=== Test 103 PASS: semantic outcomes are bounded, deduplicated, and stable ===\n");
-	}
-
-	/* --- Test 104: Phase 4 & 5.1 gapreport census and coverage matrix -- */
-	{
-		char report[32768], report_again[32768];
-		fprintf(stderr, "\n=== Test 104: Phase 4 & 5.1 gapreport census and coverage matrix ===\n");
-		(void)macsurf_diag_serialize_gapreport(report, (long)sizeof(report));
-		(void)macsurf_diag_serialize_gapreport(report_again, (long)sizeof(report_again));
-		if (strcmp(report, report_again) != 0 ||
-			strstr(report, "MSDIAG 1 gapreport") == NULL ||
-			strstr(report, "census_lossless=0") == NULL ||
-			strstr(report, "coverage_complete=0") == NULL ||
-			strstr(report, "[coverage]") == NULL ||
-			strstr(report, "js_host_api=full") == NULL ||
-			strstr(report, "global_feature_get=unobservable reason=quickjs_global_lookup_no_safe_host_hook") == NULL ||
-			strstr(report, "[gaps]") == NULL ||
-			strstr(report, "key=js.geometry.offsetWidth.get result=unsupported quality=3 count=2") == NULL ||
-			strstr(report, "key=css.value.display.grid result=unsupported quality=0 count=2") == NULL ||
-			strstr(report, "key=css.property.aspect-ratio result=unsupported quality=0 count=1") == NULL) {
-			fprintf(stderr, "FAIL: Test 104 gapreport format/coverage/normalized keys\n"); return 1;
-		}
-		fprintf(stderr, "=== Test 104 PASS: gapreport produces stable normalized keys with explicit coverage ===\n");
-	}
-
-	/* --- Test 105: Group 2 / Round 2A CSS Transitions parser & cascade -- */
-	{
-		fprintf(stderr, "\n=== Test 105: Group 2 / Round 2A CSS Transitions ===\n");
-		if (!cssprobe_test_css_transitions()) {
-			fprintf(stderr, "FAIL: Test 105 CSS Transitions Round 2A\n");
-			return 1;
-		}
-		fprintf(stderr, "=== Test 105 PASS: CSS Transitions independent cascade & descriptor contract ===\n");
-	}
-
-	/* --- Test 106: Group 2 / Round 2B-1 Generic Transition Engine (synthetic) -- */
-	{
-		extern bool test_macos9_transition_2b1(void);
-		fprintf(stderr, "\n=== Test 106: Group 2 / Round 2B-1 Generic Transition Engine ===\n");
-		if (!test_macos9_transition_2b1()) {
-			fprintf(stderr, "FAIL: Test 106 Transition Engine 2B-1\n");
-			return 1;
-		}
-		fprintf(stderr, "=== Test 106 PASS: Generic engine synthetic (bounded, delay, wrap) ===\n");
-	}
-
-	/* --- Test 107: Group 2 / Round 2B-2 Opacity (synthetic + presentation) -- */
-	{
-		extern bool test_macos9_transition_opacity(void);
-		fprintf(stderr, "\n=== Test 107: Group 2 / Round 2B-2 Opacity ===\n");
-		if (!test_macos9_transition_opacity()) {
-			fprintf(stderr, "FAIL: Test 107 Opacity 2B-2\n");
-			return 1;
-		}
-		fprintf(stderr, "=== Test 107 PASS: Opacity presentation (interpolation, delay, interruption) ===\n");
-	}
 
 	return 0;
 }

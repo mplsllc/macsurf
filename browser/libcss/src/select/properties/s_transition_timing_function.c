@@ -125,3 +125,4 @@ uint32_t destroy_transition_timing_function(void *bytecode)
 	(void)bytecode;
 	return 0;
 }
+

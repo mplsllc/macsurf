@@ -107,4 +107,3 @@ const char *hubbub_parser_read_charset(hubbub_parser *parser,
 #endif
 
 #endif
-

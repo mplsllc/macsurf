@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Inline-Block Pseudo-Elements (GAP-001)</title>
+<style>
+body { font-family: Geneva, sans-serif; margin: 8px; background: #fff; color: #000; font-size: 12px; }
+.label { font-size: 10px; color: #888; margin: 12px 0 2px 0; }
+
+/* Test 1: Empty content inline-block separator (XenForo breadcrumb pattern) */
+.crumbs { list-style: none; margin: 0; padding: 0; }
+.crumbs > li { float: left; }
+.crumbs > li:after {
+  display: inline-block;
+  content: "";
+  width: 16px;
+  height: 12px;
+  background-color: #88c;
+  margin: 0 4px;
+}
+.crumbs > li:last-child:after { display: none; }
+
+/* Test 2: Inline element with empty inline-block pseudo (XenForo nav icon pattern) */
+.icon-holder { display: inline; border: 1px solid #ccc; padding: 2px; }
+.icon-holder:after {
+  display: inline-block;
+  content: "";
+  width: 14px;
+  height: 14px;
+  background-color: #e67e22;
+  vertical-align: middle;
+}
+
+/* Test 3: Inline-block pseudo with text content */
+.badge:before {
+  display: inline-block;
+  content: "TAG";
+  background-color: #27ae60;
+  color: #fff;
+  padding: 1px 4px;
+  margin-right: 6px;
+  font-size: 10px;
+}
+
+/* Test 4: Pseudo with display: none must generate nothing */
+.hidden-pseudo:after {
+  display: none;
+  content: "SHOULD_NOT_APPEAR";
+}
+</style>
+</head>
+<body>
+
+<div class="label">Test 1: Empty inline-block pseudo separators between floated list items</div>
+<ul class="crumbs">
+  <li><a href="#">Home</a></li>
+  <li><a href="#">Forums</a></li>
+  <li><a href="#">Hardware</a></li>
+  <li><span>Topic</span></li>
+</ul>
+<div style="clear: both;"></div>
+
+<div class="label">Test 2: Inline element with empty inline-block pseudo icon</div>
+<p>User Menu: <span class="icon-holder">Profile</span> Actions</p>
+
+<div class="label">Test 3: Inline-block pseudo with text content</div>
+<p class="badge">Important Announcement</p>
+
+<div class="label">Test 4: Pseudo with display: none (must not show text)</div>
+<p class="hidden-pseudo">This text should NOT have SHOULD_NOT_APPEAR after it.</p>
+
+</body>
+</html>

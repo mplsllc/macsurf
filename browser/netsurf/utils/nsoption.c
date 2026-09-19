@@ -537,7 +537,7 @@ get_key_value(char *line, int linelen, char **key_out, char **value_out)
 
 	/* skip leading whitespace for start of key */
 	for (key = line; *key != 0; key++) {
-		if ((*key != ' ') && (*key != '\t') && (*key != '\n')) {
+		if ((*key != ' ') && (*key != '\t') && (*key != '\n') && (*key != '\r')) {
 			break;
 		}
 	}
@@ -567,7 +567,7 @@ get_key_value(char *line, int linelen, char **key_out, char **value_out)
 	}
 
 	/* remove delimiter from value */
-	if (line[linelen - 1] == '\n') {
+	while (linelen > 0 && (line[linelen - 1] == '\n' || line[linelen - 1] == '\r')) {
 		linelen--;
 		line[linelen] = 0;
 	}

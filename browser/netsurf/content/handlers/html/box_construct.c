@@ -106,12 +106,7 @@ static unsigned long    g_walk_gen     = 0;
 #include "html/form_internal.h"
 
 #include "macsurf_debug.h"
-#include "macsurf_diag.h"	/* MacSurf Trace 1c: layout_pass provenance */
 #include "macos9_deathrow.h"
-#include "frontends/macos9/macos9_transition.h"
-#ifdef __MACOS9__
-#include <Timer.h>
-#endif
 
 /* fixes553 - extend the fixes552 writer-side free guard from the single walked
  * content to its ENTIRE tree.  The box walk dereferences not just the
@@ -209,13 +204,6 @@ struct box_construct_ctx {
 	 * list to choose which pair of opening/closing strings to emit
 	 * for the current nesting level. */
 	int32_t quote_depth;
-
-	/** MacSurf Trace 1c: frozen causal descriptor for the INITIAL layout
-	 * pass. Filled in dom_to_box() (cold load only -- a reconvert's scope is
-	 * owned by macos9_reconvert_cb); each self-rescheduled convert_xml_to_box
-	 * slice re-establishes the ambient scope from this. pass==0 means "not an
-	 * instrumented initial pass". */
-	struct ms_diag_provenance ms_prov;
 };
 
 /**
@@ -662,6 +650,8 @@ box_construct_generate(struct box_construct_ctx *ctx,
 	enum css_display_e computed_display;
 	const css_computed_content_item *c_item;
 
+	bool is_after = false;
+
 	/* fixes140: previously the function bailed unless box was
 	 * BOX_BLOCK, which silently killed every q::before /
 	 * q::after rule because <q> is BOX_INLINE by default. Now
@@ -676,6 +666,17 @@ box_construct_generate(struct box_construct_ctx *ctx,
 			box->type != BOX_INLINE_FLEX)
 		return;
 
+	/* fixes140f: inline parent dispatched before it was added
+	 * to its inline_container has box->parent == NULL. Bail
+	 * now -- before counter and quote-depth mutations -- so
+	 * the after-time re-dispatch can run them cleanly. Block
+	 * parents and inline parents that ARE wired drop through. */
+	if ((box->type == BOX_INLINE ||
+			box->type == BOX_INLINE_BLOCK ||
+			box->type == BOX_INLINE_FLEX) &&
+			box->parent == NULL)
+		return;
+
 	/* To determine if an element has a pseudo element, we select
 	 * for it and test to see if the returned style's content
 	 * property is set to normal. */
@@ -686,11 +687,21 @@ box_construct_generate(struct box_construct_ctx *ctx,
 		return;
 	}
 
-	/* create box for this element */
+	/* CSS 2.1 §12.1: If display computes to none, pseudo-element is not generated */
 	computed_display = ns_computed_display(style, box_is_root(n));
+	if (computed_display == CSS_DISPLAY_NONE) {
+		return;
+	}
+
+	if (box->styles != NULL &&
+			box->styles->styles[CSS_PSEUDO_ELEMENT_AFTER] == style) {
+		is_after = true;
+	}
+
+	/* create box for this element */
 	if (computed_display == CSS_DISPLAY_BLOCK ||
 			computed_display == CSS_DISPLAY_TABLE) {
-		/* currently only support block level boxes */
+		/* block level boxes */
 
 		/** \todo Not wise to drop const from the computed style */
 		gen = box_create(NULL, (css_computed_style *) style,
@@ -700,40 +711,90 @@ box_construct_generate(struct box_construct_ctx *ctx,
 		}
 
 		/* set box type from computed display */
-		gen->type = box_map[ns_computed_display(
-				style, box_is_root(n))];
+		gen->type = box_map[computed_display];
 
 		box_add_child(box, gen);
+	} else if (computed_display == CSS_DISPLAY_INLINE_BLOCK) {
+		/* GAP-001: Support inline-block pseudo elements (e.g. breadcrumb
+		 * separators, action icons, badges with content: "" or text). */
+		gen = box_create(NULL, (css_computed_style *) style,
+				false, NULL, NULL, NULL, NULL, content->bctx);
+		if (gen == NULL) {
+			return;
+		}
+		gen->type = BOX_INLINE_BLOCK;
 
-		/* fixes347 - fetch background-image on the pseudo box. The
-		 * existing element-level fetch at the bottom of
-		 * box_construct_element fires for elements but NEVER for
-		 * pseudos, so `gen->background` stays NULL forever and the
-		 * texture (e.g. mactrove's --header-tile cloth pattern via
-		 * `.page__header--has-tile::before { background-image:
-		 * var(--header-tile); }`) is silently never painted. */
-		{
-			lwc_string *bgimage_uri = NULL;
-			uint8_t bgimg_kind = css_computed_background_image(
-				gen->style, &bgimage_uri);
-			if (bgimg_kind == CSS_BACKGROUND_IMAGE_IMAGE &&
-					bgimage_uri != NULL &&
-					nsoption_bool(background_images)
-					== true) {
-				nsurl *url = NULL;
-				nserror error = nsurl_create(
-					lwc_string_data(bgimage_uri),
-					&url);
-				if (error == NSERROR_OK) {
-					if (html_fetch_object(ctx->content,
-							url, gen,
-							image_types,
-							true) == false) {
-						nsurl_unref(url);
-						return;
-					}
-					nsurl_unref(url);
+		if (box->type == BOX_INLINE) {
+			if (is_after) {
+				box_add_child(box->parent, gen);
+			} else {
+				box_insert_sibling(box, gen);
+			}
+		} else {
+			struct box *container;
+			if (is_after && box->last != NULL &&
+					box->last->type == BOX_INLINE_CONTAINER) {
+				container = box->last;
+			} else if (!is_after && box->children != NULL &&
+					box->children->type == BOX_INLINE_CONTAINER) {
+				container = box->children;
+			} else {
+				container = box_create(NULL, NULL, false,
+						NULL, NULL, NULL, NULL,
+						content->bctx);
+				if (container == NULL) {
+					box_free(gen);
+					return;
 				}
+				container->type = BOX_INLINE_CONTAINER;
+				if (!is_after && box->children != NULL) {
+					container->parent = box;
+					container->next = box->children;
+					box->children->prev = container;
+					box->children = container;
+				} else {
+					box_add_child(box, container);
+				}
+			}
+			if (!is_after && container->children != NULL) {
+				gen->parent = container;
+				gen->next = container->children;
+				container->children->prev = gen;
+				container->children = gen;
+			} else {
+				box_add_child(container, gen);
+			}
+		}
+	}
+
+	/* fixes347 - fetch background-image on the pseudo box. The
+	 * existing element-level fetch at the bottom of
+	 * box_construct_element fires for elements but NEVER for
+	 * pseudos, so `gen->background` stays NULL forever and the
+	 * texture (e.g. mactrove's --header-tile cloth pattern via
+	 * `.page__header--has-tile::before { background-image:
+	 * var(--header-tile); }`) is silently never painted. */
+	if (gen != NULL) {
+		lwc_string *bgimage_uri = NULL;
+		uint8_t bgimg_kind = css_computed_background_image(
+			gen->style, &bgimage_uri);
+		if (bgimg_kind == CSS_BACKGROUND_IMAGE_IMAGE &&
+				bgimage_uri != NULL &&
+				nsoption_bool(background_images)
+				== true) {
+			nsurl *url = NULL;
+			nserror error = nsurl_create(
+				lwc_string_data(bgimage_uri),
+				&url);
+			if (error == NSERROR_OK) {
+				if (html_fetch_object(ctx->content,
+						url, gen,
+						image_types,
+						true) == false) {
+					nsurl_unref(url);
+					return;
+				}
+				nsurl_unref(url);
 			}
 		}
 	}
@@ -1010,6 +1071,20 @@ box_construct_generate(struct box_construct_ctx *ctx,
 		text_box->type = BOX_TEXT;
 		text_box->text = text;
 		text_box->length = pos;
+
+		if (gen != NULL) {
+			/* Materialise text inside the generated inline-block box */
+			struct box *gen_ic = box_create(NULL, NULL, false,
+					NULL, NULL, NULL, NULL, content->bctx);
+			if (gen_ic != NULL) {
+				gen_ic->type = BOX_INLINE_CONTAINER;
+				box_add_child(gen, gen_ic);
+				box_add_child(gen_ic, text_box);
+			} else {
+				box_free(text_box);
+			}
+			return;
+		}
 
 		if ((box->type == BOX_INLINE ||
 				box->type == BOX_INLINE_BLOCK ||
@@ -2749,13 +2824,6 @@ static void convert_xml_to_box_inner(struct box_construct_ctx *ctx)
 static void convert_xml_to_box(struct box_construct_ctx *ctx)
 {
 	struct content *c;
-	/* MacSurf Trace 1c: re-establish the ambient render scope for this
-	 * self-rescheduled slice of the COLD load walk. Copied out of ctx BEFORE
-	 * _inner runs because _inner may free ctx. A reconvert's scope is owned
-	 * by macos9_reconvert_cb, so skip when reconvert is in progress. */
-	struct ms_diag_render_scope ms_rs;
-	struct ms_diag_provenance ms_prov_local;
-	int ms_pushed = 0;
 
 	if (ctx == NULL || ctx->content == NULL) {
 		convert_xml_to_box_inner(ctx);
@@ -2765,17 +2833,7 @@ static void convert_xml_to_box(struct box_construct_ctx *ctx)
 	g_walk_content = c;
 	g_walk_gen = macos9_content_token(c);
 
-	if (!macsurf_reconvert_in_progress && ctx->ms_prov.pass != 0) {
-		ms_prov_local = ctx->ms_prov;
-		ms_diag_render_slice_push(&ms_rs, &ms_prov_local);
-		ms_pushed = 1;
-	}
-
 	convert_xml_to_box_inner(ctx);   /* may free ctx and/or reschedule */
-
-	if (ms_pushed) {
-		ms_diag_render_slice_pop(&ms_rs);
-	}
 
 	g_walk_content = NULL;
 	g_walk_gen = 0;
@@ -2890,17 +2948,6 @@ html_recascade_tree(html_content *c)
 					use_parent, use_root, box->node,
 					use_parent_env, &new_env);
 			if (new_styles != NULL) {
-				uint32_t now = 0;
-				/* Start presentation effects before replacing the old
-				 * computed style. This also covers the full-reconstruction
-				 * path, which re-cascades this still-live old box tree just
-				 * before it constructs the replacement. */
-#ifdef __MACOS9__
-				now = (uint32_t)TickCount();
-#endif
-				macsurf_transition_handle_style_change(c, box->node,
-						old_self_style,
-						new_styles->styles[CSS_PSEUDO_ELEMENT_NONE], now);
 				/* fixes1268c - replace, releasing the
 				 * environment from the previous cascade. */
 				if (box->custom_env != NULL && !(box->flags & CLONE))
@@ -3051,22 +3098,6 @@ dom_to_box(dom_node *n,
 	ctx->bctx = c->bctx;
 	ctx->counters = NULL;	/* fixes134b: empty counter table */
 	ctx->quote_depth = 0;	/* fixes140a: quote nesting starts at 0 */
-
-	/* MacSurf Trace 1c: open the INITIAL layout pass here (cold load only --
-	 * a reconvert's render scope is owned by macos9_reconvert_cb, which
-	 * calls dom_to_box synchronously at line ~3046 with a scope already
-	 * pushed). ctx is malloc'd, so ms_prov must be zeroed on every path. */
-	memset(&ctx->ms_prov, 0, sizeof(ctx->ms_prov));
-	if (!macsurf_reconvert_in_progress) {
-		extern unsigned long content_get_nav_id(struct content *c);
-		ctx->ms_prov.nav = content_get_nav_id((struct content *) c);
-		ctx->ms_prov.frame = c->frame_id;
-		ctx->ms_prov.doc = c->doc_id;
-		ctx->ms_prov.script = ms_diag_cur_script();
-		ctx->ms_prov.task = ms_diag_cur_task();
-		(void) ms_diag_render_open(&ctx->ms_prov, MS_RENDER_INITIAL);
-		c->last_layout_pass_id = ctx->ms_prov.pass;
-	}
 
 	*box_conversion_context = ctx;
 

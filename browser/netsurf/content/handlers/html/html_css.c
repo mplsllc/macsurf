@@ -161,8 +161,6 @@ html_stylesheet_from_domnode(html_content *c,
 
 	child.charset = c->encoding;
 	child.quirks = c->base.quirks;
-	child.nav_id = content_get_nav_id(&c->base);	/* MacSurf Trace 1a */
-	child.doc_id = 0;
 
 	exc = dom_node_get_text_content(node, &style);
 	if ((exc != DOM_NO_ERR) || (style == NULL)) {
@@ -517,8 +515,6 @@ bool html_css_process_link(html_content *htmlc, dom_node *node)
 	/* start fetch */
 	child.charset = htmlc->encoding;
 	child.quirks = htmlc->base.quirks;
-	child.nav_id = content_get_nav_id(&htmlc->base);	/* MacSurf Trace 1a */
-	child.doc_id = 0;
 
 	ns_error = hlcache_handle_retrieve(joined, 0,
 			content_get_url(&htmlc->base),
@@ -625,8 +621,6 @@ nserror html_css_quirks_stylesheets(html_content *c)
 	if (c->quirks == DOM_DOCUMENT_QUIRKS_MODE_FULL) {
 		child.charset = c->encoding;
 		child.quirks = c->base.quirks;
-		child.nav_id = content_get_nav_id(&c->base);	/* MacSurf Trace 1a */
-		child.doc_id = 0;
 
 		ns_error = hlcache_handle_retrieve(html_quirks_stylesheet_url,
 				0, content_get_url(&c->base), NULL,
@@ -673,8 +667,6 @@ nserror html_css_new_stylesheets(html_content *c)
 
 	child.charset = c->encoding;
 	child.quirks = c->base.quirks;
-	child.nav_id = content_get_nav_id(&c->base);	/* MacSurf Trace 1a */
-	child.doc_id = 0;
 
 	ns_error = hlcache_handle_retrieve(html_default_stylesheet_url, 0,
 			content_get_url(&c->base), NULL,

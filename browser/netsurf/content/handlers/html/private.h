@@ -248,17 +248,8 @@ typedef struct html_content {
 	 * so a reconvert (budget already 0) defers everything, as it should.
 	 */
 	int img_eager_budget;
-
-	/* MacSurf Trace (Milestone 1c). Appended at END -- html_content is a
-	 * leaf content subtype (nothing derives from it) so this shifts no other
-	 * struct's layout, unlike a field on struct content (fixes1179). */
-	unsigned long doc_id;		/* one DOM-document lifetime; set at
-					 * html_begin_conversion, re-set if the
-					 * parser replaces c->document */
-	unsigned long frame_id;		/* copied from bw's frame-id accessor when the
-					 * browsing context is attached */
-	unsigned long last_layout_pass_id;	/* most recent render pass over
-						 * this document (paint join) */
+	unsigned long ms_diag_doc_id;
+	unsigned long ms_diag_frame_id;
 
 } html_content;
 

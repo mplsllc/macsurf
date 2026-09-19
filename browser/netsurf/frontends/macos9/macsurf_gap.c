@@ -128,3 +128,4 @@ const char *macsurf_gap_slug(int id)
 {
 	return (id >= 0 && id < MS_GAP__N) ? g_gap_slug[id] : "?";
 }
+

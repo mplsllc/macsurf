@@ -271,3 +271,4 @@ css_error css__parse_transition_timing_function(css_language *c,
 
 	return CSS_OK;
 }
+

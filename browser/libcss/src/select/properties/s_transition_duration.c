@@ -107,3 +107,4 @@ uint32_t destroy_transition_duration(void *bytecode)
 	(void)bytecode;
 	return 0;
 }
+

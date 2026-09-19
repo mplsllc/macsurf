@@ -514,6 +514,7 @@ static inline bool layout_flex__base_and_main_sizes(
 	int content_min_width = b->min_width;
 	int content_max_width = b->max_width;
 	int delta_outer_main = lh__delta_outer_main(ctx->flex, b);
+	int target_width;
 
 	NSLOG(flex, DEEPDEBUG, "box %p: delta_outer_main: %i",
 			b, delta_outer_main);
@@ -618,9 +619,33 @@ static inline bool layout_flex__base_and_main_sizes(
 
 	if (ctx->horizontal == false) {
 		if (b->width == AUTO) {
-			b->width = min(max(content_min_width, available_width),
-					content_max_width);
-			b->width -= lh__delta_outer_width(b);
+			/* fixes1174 (GAP-006): in a column flex container, the cross
+			 * axis is width. If the item has align-self: stretch (default)
+			 * and is not a replaced element with intrinsic aspect ratio,
+			 * its cross size stretches to available cross space rather than
+			 * being clamped to content_max_width (b->max_width, which is
+			 * only the un-wrapped line-breaking max-content width). Clamping
+			 * to b->max_width crushed .p-body to 566px instead of 973px,
+			 * inflating measured height to 10,000+ px and leaving a giant
+			 * 8,000px empty space before the footer. */
+			if (lh__box_align_self(ctx->flex, b) == CSS_ALIGN_SELF_STRETCH &&
+					b->object == NULL && available_width > 0) {
+				target_width = available_width - lh__delta_outer_width(b);
+			} else {
+				target_width = min(max(content_min_width, available_width),
+						content_max_width);
+				target_width -= lh__delta_outer_width(b);
+			}
+			if (item->max_cross != -1 && target_width > item->max_cross) {
+				target_width = item->max_cross;
+			}
+			if (target_width < item->min_cross) {
+				target_width = item->min_cross;
+			}
+			if (target_width < 0) {
+				target_width = 0;
+			}
+			b->width = target_width;
 		}
 
 		if (!layout_flex_item(ctx, item, b->width)) {

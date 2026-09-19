@@ -11,7 +11,7 @@
 #include "macsurf_config.h"
 #include "macsurf_debug.h"
 #include "macsurf_diag.h"
-#include "macsurf_trace.h"	/* MacSurf Trace 1c: universal event ring */
+#include "macsurf_trace.h"
 #include "macsurf_memory.h"    /* macsurf_recon_mem() */
 #include "macsurf_timebase.h"
 #include "macsurf_osver.h"     /* fixes936 -- macsurf_os_is_osx() */
@@ -22,22 +22,16 @@
 #include <Movies.h>
 #include <Processes.h>   /* fixes983 -- our own FSSpec, for the icon claim */
 #include <Files.h>       /* fixes983 -- FSpGetFInfo / FSpSetFInfo */
-/* AppleEvent handling (GURL + the required suite). The AppleEvent Manager
- * itself arrives via <Carbon.h> (macos9.h); Universal Interfaces 3.4.1 just
- * has no URL-suite constants, so declare the two we need. Apple's kAEGetURL
- * and kInternetEventClass are both 'GURL'. */
+/* AppleEvent Manager arrives through Carbon.h.  Universal Interfaces 3.4.1
+ * lacks these URL-suite constants, although both are the four-char GURL. */
 #ifndef kInternetEventClass
 #define kInternetEventClass 'GURL'
 #endif
 #ifndef kAEGetURL
 #define kAEGetURL 'GURL'
 #endif
-
-/* MacSurf Trace: on-demand diagnostic query. `MSdg`/`GET ` (trailing space),
- * direct object = a typeChar verb ("summary" / "gaps"); reply = typeChar text.
- * See frontends/macos9/macsurf_diag.c. */
-#define kMacSurfDiagEventClass  'MSdg'
-#define kMacSurfDiagGet         'GET '
+#define kMacSurfDiagEventClass 'MSdg'
+#define kMacSurfDiagGet 'GET '
 OTClientContextPtr macos9_ot_context = NULL;
 /* macTLS expects this symbol; aliased to our OT context after init. */
 OTClientContextPtr g_ostls_ot_context = NULL;
@@ -95,14 +89,7 @@ extern void   macos9_deathrow_drain(void);
  * InitTSMAwareApplication / NewTSMDocument call, the Text Services Manager
  * has no document state and _TSMEvent crashed writing a near-zero pointer
  * (00010DE0, low-memory) during event delivery. We never consumed these
- * events; not requesting them keeps the Toolbox off that code path.
- *
- * AppleEvent support - highLevelEventMask is BACK (0x0400), and the switch
- * now has a kHighLevelEvent case that calls AEProcessAppleEvent, so MacSurf
- * can be driven by a 'GURL' / required-suite AppleEvent (remote test harness,
- * and a real 'quit' handler). osMask stays OUT - suspend/resume is unrelated
- * and keeping it out narrows the fixes507 TSM surface. If the _TSMEvent crash
- * returns, pulling THIS bit again is the first thing to try. */
+ * events; not requesting them keeps the Toolbox off that code path. */
 #define MACOS9_EVENT_MASK (mDownMask | mUpMask | keyDownMask | autoKeyMask | \
 	updateMask | activMask | highLevelEventMask)
 #else
@@ -213,15 +200,29 @@ static void draw_status_bar(struct gui_window *gw) {
 	line.left = r.left; line.right = r.right;
 	line.top = r.top; line.bottom = (short)(r.top + 1);
 	RGBForeColor(&top); PaintRect(&line);
-	/* fixes627: pin a small chrome font (Geneva 9) before drawing status /
-	 * hover-URL text so it doesn't inherit a huge content-plot size. */
-	TextFont(kFontIDGeneva); TextSize(9); TextFace(0);
+	/* Geneva 10pt caption font per UI Design Guide (UI-DESIGN-GUIDE.md:34-38). */
+	TextFont(kFontIDGeneva); TextSize(10); TextFace(0);
 	RGBForeColor(&text);
-	MoveTo((short)(r.left+6), (short)(r.bottom-4));
-	if (gw->status[0]) {
-		unsigned char p[128]; size_t l = strlen(gw->status);
-		if(l>127) l=127; p[0]=(unsigned char)l; memcpy(p+1, gw->status, l);
-		DrawString(p);
+
+	{
+		RgnHandle saved_clip = NewRgn();
+		if (saved_clip != NULL) {
+			Rect clip_r = r;
+			GetClip(saved_clip);
+			clip_r.left = (short)(r.left + 4);
+			clip_r.right = (short)(r.right - 4);
+			ClipRect(&clip_r);
+		}
+		MoveTo((short)(r.left+6), (short)(r.bottom-4));
+		if (gw->status[0]) {
+			unsigned char p[128]; size_t l = strlen(gw->status);
+			if(l>127) l=127; p[0]=(unsigned char)l; memcpy(p+1, gw->status, l);
+			DrawString(p);
+		}
+		if (saved_clip != NULL) {
+			SetClip(saved_clip);
+			DisposeRgn(saved_clip);
+		}
 	}
 #endif
 }
@@ -230,8 +231,8 @@ static void macos9_init_menus(void) {
 #ifdef __MACOS9__
 	MenuHandle apple_menu, file_menu, edit_menu, go_menu;
 	apple_menu = NewMenu(MENU_APPLE, "\p\024");
-	AppendMenu(apple_menu, "\pAbout MacSurf...");
-	AppendMenu(apple_menu, "\pPreferences.../,");   /* item 2 - Cmd-, */
+	AppendMenu(apple_menu, "\pAbout MacSurf\311");
+	AppendMenu(apple_menu, "\pPreferences\311/,");   /* item 2 - Cmd-, */
 	AppendMenu(apple_menu, "\p(-");
 	/* fixes753 (#228) - do NOT AppendResMenu('DRVR') here. Under Carbon /
 	 * CarbonLib the Menu Manager auto-populates the Apple menu with the
@@ -244,7 +245,8 @@ static void macos9_init_menus(void) {
 
 	file_menu = NewMenu(MENU_FILE, "\pFile");
 	AppendMenu(file_menu, "\pNew Window/N");
-	AppendMenu(file_menu, "\pOpen Location.../L");
+	AppendMenu(file_menu, "\pNew Tab/T");
+	AppendMenu(file_menu, "\pOpen Location\311/L");
 	AppendMenu(file_menu, "\pClose/W");
 	AppendMenu(file_menu, "\pSend Debug Log");   /* fixes720 (item 4) */
 	AppendMenu(file_menu, "\p(-");
@@ -275,7 +277,7 @@ static void macos9_init_menus(void) {
 		MenuHandle view_menu = NewMenu(MENU_VIEW, "\pView");
 		AppendMenu(view_menu, "\pView Source/U");
 		AppendMenu(view_menu, "\p(-");
-		AppendMenu(view_menu, "\pFind.../F");
+		AppendMenu(view_menu, "\pFind\311/F");
 		/* fixes883 - Zoom and Downloads: both already worked, neither was
 		 * discoverable. Page zoom was reachable only through Cmd -/+/0
 		 * keystrokes that appeared in no menu, and the download-manager
@@ -286,7 +288,7 @@ static void macos9_init_menus(void) {
 		AppendMenu(view_menu, "\pZoom Out/-");            /* 6 */
 		AppendMenu(view_menu, "\pActual Size/0");         /* 7 */
 		AppendMenu(view_menu, "\p(-");                    /* 8 */
-		AppendMenu(view_menu, "\pDownloads");             /* 9 */
+		AppendMenu(view_menu, "\pDownloads\311/J");       /* 9 */
 		InsertMenu(view_menu, 0);
 	}
 
@@ -307,9 +309,9 @@ static void macos9_init_menus(void) {
 	 * macos9_history_init below and rebuilt on each menu-bar click. */
 	{
 		MenuHandle history_menu = NewMenu(MENU_HISTORY, "\pHistory");
-		AppendMenu(history_menu, "\pShow All History/H");
-		AppendMenu(history_menu, "\pClear History");
-		AppendMenu(history_menu, "\pClear Cache");
+		AppendMenu(history_menu, "\pShow All History\311/Y");
+		AppendMenu(history_menu, "\pClear History\311");
+		AppendMenu(history_menu, "\pClear Cache\311");
 		AppendMenu(history_menu, "\p(-");
 		InsertMenu(history_menu, 0);
 	}
@@ -446,6 +448,13 @@ static void macos9_handle_menu(short menu_id, short item) {
 				nsurl_unref(home);
 			}
 		} break;
+		case ITEM_FILE_NEWTAB: {
+			/* Cmd-T: open a new tab in the current scaffold window.
+			 * If no window exists, create one (same as File > New). */
+			WindowRef wfront = FrontWindow();
+			struct gui_window *gcur = wfront ? macos9_find_window(wfront) : NULL;
+			macos9_new_tab(gcur);
+		} break;
 		case ITEM_FILE_LOCATION: {
 			/* fixes109 - Cmd+L focuses the URL bar and selects all so
 			 * the next keystroke replaces the existing URL. Was a
@@ -464,16 +473,32 @@ static void macos9_handle_menu(short menu_id, short item) {
 			}
 		} break;
 		case ITEM_FILE_CLOSE:
-			/* fixes641 (#189): Cmd-W / File>Close closes ONLY the front
-			 * window (was a dead menu item - no case existed). Same
-			 * per-window teardown as the go-away box. */
+			/* Cmd-W / File>Close: tab-aware close.
+			 * If the window has >1 tab, close just the active tab.
+			 * If it has 1 tab (or no scaffold), close the window. */
 			front = FrontWindow();
+			if (macos9_download_mgr_is(front)) {
+				macos9_download_mgr_hide();
+				break;
+			}
 			gw = front ? macos9_find_window(front) : NULL;
 			if (gw != NULL) {
-				if (gw->bw != NULL)
-					browser_window_destroy(gw->bw);
-				else
-					macos9_window_destroy(gw);
+				if (gw->mw != NULL && gw->mw->tab_count > 1) {
+					/* Multiple tabs: close only the active tab.
+					 * browser_window_destroy triggers
+					 * macos9_window_destroy which unlinks the
+					 * tab from the scaffold. */
+					if (gw->bw != NULL)
+						browser_window_destroy(gw->bw);
+					else
+						macos9_window_destroy(gw);
+				} else {
+					/* Single tab or no scaffold: close the window. */
+					if (gw->bw != NULL)
+						browser_window_destroy(gw->bw);
+					else
+						macos9_window_destroy(gw);
+				}
 				if (macos9_window_list_head() == NULL)
 					macos9_done = (bool)1;
 			}
@@ -549,16 +574,18 @@ static void macos9_handle_menu(short menu_id, short item) {
 		 * to run with an uninitialized `gw`). */
 		front = FrontWindow();
 		gw = front ? macos9_find_window(front) : NULL;
-		if (gw == NULL) break;
+		if (gw == NULL) gw = macos9_window_list_head();
 		/* fixes645 (#48) - item 1 adds the current page; items >= 3 are
 		 * saved bookmarks (item 2 is the separator, never selectable) and
 		 * navigate the front window to their URL. */
 		if (item == ITEM_BMK_ADD) {
-			extern void macos9_bookmark_add(struct gui_window *g);
-			macos9_bookmark_add(gw);
+			if (gw != NULL) {
+				extern void macos9_bookmark_add(struct gui_window *g);
+				macos9_bookmark_add(gw);
+			}
 		} else if (item == ITEM_BMK_MANAGE) {
 			macos9_bookmark_window_show(gw);
-		} else if (item >= ITEM_BMK_FIRST) {
+		} else if (item >= ITEM_BMK_FIRST && gw != NULL) {
 			macos9_bookmark_navigate(gw, item);
 		}
 		break;
@@ -568,14 +595,15 @@ static void macos9_handle_menu(short menu_id, short item) {
 		 * and navigate the front window. Menu refreshed on menu-bar click. */
 		front = FrontWindow();
 		gw = front ? macos9_find_window(front) : NULL;
-		if (gw == NULL) break;
+		if (gw == NULL) gw = macos9_window_list_head();
 		if (item == ITEM_HIST_SHOW_ALL) {
 			macos9_history_window_show(gw);
 		} else if (item == ITEM_HIST_CLEAR) {
-			macos9_history_clear();
+			if (macos9_chrome_confirm_delete("Clear entire browsing history?"))
+				macos9_history_clear();
 		} else if (item == ITEM_HIST_CLEAR_CACHE) {
 			macos9_cache_clear_ui();
-		} else if (item >= ITEM_HIST_FIRST) {
+		} else if (item >= ITEM_HIST_FIRST && gw != NULL) {
 			macos9_history_navigate(gw, item);
 		}
 		break;
@@ -701,7 +729,6 @@ void macos9_handle_update(const EventRecord *event) {
 	if (vr != NULL) {
 		GetPortVisibleRegion(GetWindowPort(win), vr);
 		GetRegionBounds(vr, &update_bounds);
-		DisposeRgn(vr); vr = NULL;
 	} else {
 		/* Last-resort fallback: assume whole content area is dirty. */
 		update_bounds = gw->content_rect;
@@ -745,6 +772,9 @@ void macos9_handle_update(const EventRecord *event) {
 		Boolean fb_bot_dirty = (Boolean)(update_bounds.bottom > gw->content_rect.bottom);
 		macos9_erase_content_base(&gw->content_rect);
 		if (fb_top_dirty) {
+			if (gw->mw != NULL && gw->mw->tab_count > 1) {
+				macos9_tab_strip_draw(gw->mw);
+			}
 			macos9_window_draw_toolbar_bg(gw);
 			draw_url_bar(gw);
 			DrawControls(win);
@@ -754,21 +784,8 @@ void macos9_handle_update(const EventRecord *event) {
 			draw_status_bar(gw);
 		}
 	}
-	{ extern struct hlcache_handle *browser_window_get_content(struct browser_window *);
-	  struct hlcache_handle *cur = gw->bw ? browser_window_get_content(gw->bw) : NULL;
-	  macsurf_debug_log_writef("update: bw=%p current_content=%p ready=%d",
-	    gw->bw, cur,
-	    (gw->bw && browser_window_redraw_ready(gw->bw)) ? 1 : 0); }
 	if (gw->bw && browser_window_redraw_ready(gw->bw)) {
 		struct rect clip; struct redraw_context ctx;
-		macsurf_debug_log_writef(
-			"update: redraw_ready, bw=%p scroll=(%d,%d) crect=(%d,%d,%d,%d) ub=(%d,%d,%d,%d) gw=%d",
-			gw->bw, gw->scroll_x, gw->scroll_y,
-			(int)gw->content_rect.left, (int)gw->content_rect.top,
-			(int)gw->content_rect.right, (int)gw->content_rect.bottom,
-			(int)update_bounds.left, (int)update_bounds.top,
-			(int)update_bounds.right, (int)update_bounds.bottom,
-			(int)gworld_active);
 		/* Clip = update_bounds (the dirty bbox), in window coords.
 		 * NetSurf's box-tree walker prunes branches outside this. */
 		clip.x0 = update_bounds.left; clip.y0 = update_bounds.top;
@@ -791,27 +808,18 @@ void macos9_handle_update(const EventRecord *event) {
 			 * update event. clip = dirty rect (small when only a textarea line
 			 * changed); boxes = how many the walk visited regardless of clip
 			 * (if ~all page boxes, the tree walk isn't pruning to the clip). */
-			int profile = macos9_debug_integrations_enabled();
-			double t_paint = 0.0;
+			double t_paint = macos9_micros();
 			extern long macos9_hrb_visits;
-			long _v0 = 0, _pdt = 0;
-			if (profile) {
-				t_paint = macos9_micros();
-				_v0 = macos9_hrb_visits;
-			}
+			long _v0 = macos9_hrb_visits, _pdt;
 			browser_window_redraw(gw->bw,
 				gw->content_rect.left - gw->scroll_x,
 				gw->content_rect.top  - gw->scroll_y,
 				&clip, &ctx);
-			if (profile) {
-				_pdt = (long)(macos9_micros() - t_paint);
-				macsurf_profile_accum_paint(_pdt);
-				macsurf_debug_log_writef(
-					"RECON PAINT dt=%ldus clip=%dx%d boxes=%ld",
-					_pdt, (int)(clip.x1 - clip.x0),
-					(int)(clip.y1 - clip.y0),
-					(long)(macos9_hrb_visits - _v0));
-			}
+			_pdt = (long)(macos9_micros() - t_paint);
+			macsurf_profile_accum_paint(_pdt);
+			macsurf_debug_log_writef("RECON PAINT dt=%ldus clip=%dx%d boxes=%ld",
+				_pdt, (int)(clip.x1 - clip.x0), (int)(clip.y1 - clip.y0),
+				(long)(macos9_hrb_visits - _v0));
 		}
 		{ extern int macos9_op_depth; macos9_op_depth--; }
 		{ extern struct gui_window *macos9_paint_gw;
@@ -873,9 +881,28 @@ void macos9_handle_update(const EventRecord *event) {
 		 * Bottom chrome = status bar.  Gradient bg paints first so
 		 * the URL bar and button icons sit on top of it. */
 		{
-			Boolean top_dirty = (Boolean)(update_bounds.top < gw->content_rect.top);
-			Boolean bot_dirty = (Boolean)(update_bounds.bottom > gw->content_rect.bottom);
-			if (top_dirty) {
+			Rect tab_strip_r, tb_r, status_r;
+			short tab_top = (gw->mw != NULL && gw->mw->tab_count > 1) ? MACOS9_TAB_STRIP_H : 0;
+			Boolean tab_dirty = (Boolean)0;
+			Boolean tb_dirty = (Boolean)0;
+			Boolean bot_dirty = (Boolean)0;
+
+			if (tab_top > 0) {
+				SetRect(&tab_strip_r, 0, 0, (short)(gw->content_rect.right + 15), tab_top);
+				tab_dirty = (vr != NULL) ? RectInRgn(&tab_strip_r, vr) : (update_bounds.top < tab_top);
+			}
+			SetRect(&tb_r, 0, tab_top, (short)(gw->content_rect.right + 15), (short)(gw->content_rect.top));
+			tb_dirty = (vr != NULL) ? RectInRgn(&tb_r, vr) : (update_bounds.top < gw->content_rect.top && update_bounds.bottom > tab_top);
+
+			SetRect(&status_r, 0, (short)(gw->content_rect.bottom), (short)(gw->content_rect.right + 15), (short)(gw->content_rect.bottom + 16));
+			bot_dirty = (vr != NULL) ? RectInRgn(&status_r, vr) : (update_bounds.bottom > gw->content_rect.bottom);
+
+			if (tab_dirty) {
+				if (gw->mw != NULL && gw->mw->tab_count > 1) {
+					macos9_tab_strip_draw(gw->mw);
+				}
+			}
+			if (tb_dirty) {
 				macos9_window_draw_toolbar_bg(gw);
 				draw_url_bar(gw);
 				DrawControls(win);
@@ -937,6 +964,7 @@ void macos9_handle_update(const EventRecord *event) {
 			if (savedClip != NULL) { SetClip(savedClip); DisposeRgn(savedClip); }
 		}
 	}
+	if (vr != NULL) { DisposeRgn(vr); vr = NULL; }
 	EndUpdate(win);
 	macos9_urlsug_draw(gw);   /* fixes763 - redraw dropdown atop fresh content */
 	/* fixes738 - viewport-gated image loading. After the content is
@@ -987,20 +1015,15 @@ void macos9_handle_mouse_down(const EventRecord *event) {
 			}
 			break;
 		case inGoAway:
-			/* fixes641 (#189): close ONLY the clicked window, not the
-			 * whole app. The old code set the global macos9_done quit
-			 * flag, so closing a 2nd window (or either window) exited
-			 * the run loop and netsurf_exit tore down BOTH OS windows.
-			 * browser_window_destroy cascades through the gui destroy
-			 * vtable into macos9_window_destroy, which unlinks just this
-			 * one gui_window and cancels its scheduled callbacks. Quit
-			 * only when the LAST window is gone (Mac convention). */
+			/* Tab-aware close: if multiple tabs, close only the active
+			 * tab; if single tab, close the window. */
 			if (win && TrackGoAway(win, event->where)) {
 				struct gui_window *cgw = macos9_find_window(win);
-				if (cgw != NULL && cgw->bw != NULL) {
-					browser_window_destroy(cgw->bw);
-				} else if (cgw != NULL) {
-					macos9_window_destroy(cgw);
+				if (cgw != NULL) {
+					if (cgw->bw != NULL)
+						browser_window_destroy(cgw->bw);
+					else
+						macos9_window_destroy(cgw);
 				}
 				if (macos9_window_list_head() == NULL)
 					macos9_done = (bool)1;
@@ -1087,11 +1110,44 @@ void macos9_handle_mouse_down(const EventRecord *event) {
 					Point p = event->where;
 					ControlRef ctrl;
 					short cpart;
+					struct gui_window *tab;
 					gw = macos9_find_window(win);
 					if (gw) {
 						macsurf_debug_log_writef("LIFE GWOK p=%d,%d content=%d,%d,%d,%d url=%d,%d,%d,%d", (int)p.h, (int)p.v, (int)gw->content_rect.left, (int)gw->content_rect.top, (int)gw->content_rect.right, (int)gw->content_rect.bottom, (int)gw->url_rect.left, (int)gw->url_rect.top, (int)gw->url_rect.right, (int)gw->url_rect.bottom);
 						SetPortWindowPort(win);
 						GlobalToLocal(&p);
+						/* Tab strip hit-test: if the click is in the
+						 * tab strip area (top MACOS9_TAB_STRIP_H pixels),
+						 * handle close button, + button, or tab switch. */
+						if (gw->mw != NULL && gw->mw->tab_count > 1) {
+							extern struct gui_window *macos9_tab_strip_hittest(struct macos9_window *mw, Point p);
+							extern struct gui_window *macos9_tab_close_at_point(struct macos9_window *mw, Point p);
+							extern int macos9_tab_plus_hit(struct macos9_window *mw, Point p);
+							/* Check close button first */
+							struct gui_window *close_tab = macos9_tab_close_at_point(gw->mw, p);
+							if (close_tab != NULL) {
+								/* Close the tab via the core; it invokes
+								 * macos9_window_destroy callback. */
+								if (close_tab->bw != NULL) {
+									browser_window_destroy(close_tab->bw);
+								}
+								break;
+							}
+							/* Check + button */
+							if (macos9_tab_plus_hit(gw->mw, p)) {
+								macos9_new_tab(gw);
+								break;
+							}
+							/* Check tab body */
+							tab = macos9_tab_strip_hittest(gw->mw, p);
+							if (tab != NULL) {
+								macos9_tab_switch(gw->mw, tab);
+								break;
+							}
+							if (p.v >= 0 && p.v < MACOS9_TAB_STRIP_H) {
+								break;
+							}
+						}
 						/* fixes298b - user-pane buttons aren't visible to
 						 * FindControl (the default user-pane hit-test
 						 * returns kControlNoPart, and Carbon interprets
@@ -1297,8 +1353,16 @@ void macos9_handle_key_down(const EventRecord *event) {
 	WindowRef win = FrontWindow();
 	struct gui_window *gw = win ? macos9_find_window(win) : NULL;
 	char ch = (char)(event->message & charCodeMask);
+	long sel;
 	if (event->modifiers & cmdKey) {
-		long sel;
+		/* Explicit Cmd-T handling: intercept before MenuKey() so it works
+		 * reliably on Mac OS 9 regardless of CarbonLib/MenuKey quirks.
+		 * Must come before URL field / page key handling so Cmd-T in the
+		 * URL bar creates a tab, not a 't' character. */
+		if ((ch == 't' || ch == 'T') && gw != NULL) {
+			macos9_new_tab(gw);
+			return;
+		}
 		/* fixes621: Cmd -/+/0 page zoom. NetSurf's scale sets the
 		 * layout viewport to (window / scale), so zooming OUT lays the
 		 * page out at a WIDER effective width -- the desktop layout --
@@ -1443,7 +1507,9 @@ static void macos9_handle_activate(const EventRecord *event) {
 	if (becoming_active) {
 		if (gw->url_field_active && gw->url_te) TEActivate(gw->url_te);
 	} else {
-		if (gw->url_te) TEDeactivate(gw->url_te);
+		if (gw->url_field_active) macos9_window_te_deactivate_url(gw);
+		else if (gw->url_te) TEDeactivate(gw->url_te);
+		macos9_urlsug_hide(gw);
 	}
 	macos9_window_update_button_states(gw);
 	macos9_window_invalidate_all(gw);
@@ -1504,9 +1570,6 @@ void macos9_poll(void) {
 			case mouseDown:   macos9_handle_mouse_down(&ev); break;
 			case keyDown: case autoKey: macos9_handle_key_down(&ev); break;
 			case activateEvt: macos9_handle_activate(&ev); break;
-			/* AppleEvents (kHighLevelEvent, what=23) all arrive here and
-			 * are dispatched by class/ID inside AEProcessAppleEvent to
-			 * whichever handler macos9_install_ae_handlers registered. */
 			case kHighLevelEvent: AEProcessAppleEvent(&ev); break;
 			default: break;
 		}
@@ -1526,7 +1589,12 @@ void macos9_poll(void) {
 		 * front window's toolbar (cheap; only repaints on a hover change). */
 		{ WindowRef hfw = FrontWindow();
 		  struct gui_window *hfg = hfw ? macos9_find_window(hfw) : NULL;
-		  if (hfg != NULL) macos9_window_update_hover(hfg); }
+		  if (hfg != NULL) {
+			  macos9_window_update_hover(hfg);
+			  if (hfg->mw != NULL && hfg->mw->tab_count > 1) {
+				  macos9_tab_strip_update_hover(hfg->mw);
+			  }
+		  } }
 		/* fixes640 - emit the PERFACC phase summary ONCE, at the real
 		 * load-complete edge (browser_window_stop_available true->false),
 		 * so the post-first-paint reflow/settle passes are included (they
@@ -1619,14 +1687,6 @@ void macos9_poll_mouse_hover(void) {
 #endif
 }
 
-/* Set to 1 only while the startup home-page callback is actually armed (see
- * the macos9_schedule call in main). macos9_poll dispatches the WNE event
- * BEFORE macos9_schedule_run, so a 'GURL' AppleEvent arriving on the very
- * first poll pass would navigate and then be overwritten by the home load in
- * the same pass. Both the callback and the GURL handler clear this before
- * they navigate; whichever runs first wins and the other stands down. */
-static int macos9_startup_home_pending = 0;
-
 /* fixes531: deferred initial navigation.
  *
  * Firing the home-page fetch synchronously from main() BEFORE the
@@ -1649,6 +1709,8 @@ static int macos9_startup_home_pending = 0;
  * causes (clock-baseline-not-ready and pump-not-cycling) at once by
  * removing the precondition that makes either bite.
  */
+static int macos9_startup_home_pending = 0;
+
 static void macos9_deferred_home_load(void *pw)
 {
 	struct browser_window *bw = (struct browser_window *)pw;
@@ -1692,69 +1754,94 @@ static void macos9_deferred_home_load(void *pw)
 	 * synchronous path did (fixes366a). */
 	macsurf_profile_reset();
 	macsurf_profile_stamp("nav: launch home (deferred)");
-	macsurf_diag_navigation_begin();
 	browser_window_navigate(bw, home, NULL, BW_NAVIGATE_HISTORY,
 		NULL, NULL, NULL);
 	nsurl_unref(home);
 }
 
-
 #ifdef __MACOS9__
-/* ------------------------------------------------------------------ */
-/* AppleEvent handlers                                                 */
-/*                                                                    */
-/* MacSurf had none: the Finder's 'quit' went nowhere (Shut Down would */
-/* stall), and there was no way to drive it from a script. This adds   */
-/* the classic required suite (oapp/odoc/pdoc/quit) + rapp + the URL   */
-/* suite's 'GURL', following the idiom in macIRC's ui_app.c: a bare    */
-/* file-static reach-back rather than a refCon pointer round-trip,     */
-/* handlers return through the WNE loop (AEProcessAppleEvent is called  */
-/* from the kHighLevelEvent case), never ExitToShell.                  */
-/* ------------------------------------------------------------------ */
-
-static pascal OSErr macos9_ae_get_url(const AppleEvent *ae, AppleEvent *reply,
+/* Read-only, on-demand diagnostic endpoint.  Serialisation happens only in
+ * this AppleEvent handler; browser hot paths continue to record integers. */
+static pascal OSErr macos9_ae_diag(const AppleEvent *ae, AppleEvent *reply,
 		long refcon)
 {
 	DescType rt;
 	Size actual = 0;
 	OSErr err;
-	char buf[2048];
+	char verb[32];
+	static char out[16384];
+	long n;
+
+	(void)refcon;
+	err = AEGetParamPtr(ae, keyDirectObject, typeChar, &rt,
+			(Ptr)verb, (Size)(sizeof(verb) - 1), &actual);
+	if (err != noErr) return err;
+	if (actual < 0 || (unsigned long)actual >
+			(unsigned long)(sizeof(verb) - 1)) return errAEEventNotHandled;
+	verb[actual] = '\0';
+
+	if (strcmp(verb, "summary") == 0) n = macsurf_diag_serialize_summary(out, (long)sizeof(out));
+	else if (strcmp(verb, "prefs") == 0) n = macsurf_diag_serialize_prefs(out, (long)sizeof(out));
+	else if (strcmp(verb, "gaps") == 0) n = macsurf_diag_serialize_gaps(out, (long)sizeof(out));
+	else if (strcmp(verb, "network") == 0) n = macsurf_diag_serialize_network(out, (long)sizeof(out));
+	else if (strcmp(verb, "scripts") == 0) n = macsurf_diag_serialize_scripts(out, (long)sizeof(out));
+	else if (strcmp(verb, "tasks") == 0) n = macsurf_diag_serialize_tasks(out, (long)sizeof(out));
+	else if (strcmp(verb, "documents") == 0) n = macsurf_diag_serialize_documents(out, (long)sizeof(out));
+	else if (strcmp(verb, "mutations") == 0) n = macsurf_diag_serialize_mutations(out, (long)sizeof(out));
+	else if (strcmp(verb, "layout") == 0) n = macsurf_diag_serialize_layout(out, (long)sizeof(out));
+	else if (strcmp(verb, "modules") == 0) n = macsurf_diag_serialize_modules(out, (long)sizeof(out));
+	else if (strcmp(verb, "io") == 0) n = macsurf_diag_serialize_io(out, (long)sizeof(out));
+	else if (strcmp(verb, "operations") == 0) n = macsurf_diag_serialize_operations(out, (long)sizeof(out));
+	else if (strcmp(verb, "errors") == 0) n = macsurf_diag_serialize_errors(out, (long)sizeof(out));
+	else if (strcmp(verb, "pending") == 0) n = macsurf_diag_serialize_pending(out, (long)sizeof(out));
+	else if (strcmp(verb, "settlement") == 0) n = macsurf_diag_serialize_settlement(out, (long)sizeof(out));
+	else if (strcmp(verb, "timers") == 0) n = macsurf_diag_serialize_timers(out, (long)sizeof(out));
+	else if (strcmp(verb, "readiness") == 0) n = macsurf_diag_serialize_readiness(out, (long)sizeof(out));
+	else if (strcmp(verb, "trace") == 0) n = macsurf_trace_serialize(out, (long)sizeof(out));
+	else if (strcmp(verb, "tracestart") == 0) {
+		macsurf_trace_arm(0UL, 2);
+		n = macsurf_trace_serialize(out, (long)sizeof(out));
+	} else if (strcmp(verb, "tracestop") == 0) {
+		macsurf_trace_disarm();
+		n = macsurf_trace_serialize(out, (long)sizeof(out));
+	} else {
+		return errAEEventNotHandled;
+	}
+	if (n <= 0) return errAECorruptData;
+	macsurf_debug_log_writef("LIFE AE MSdg GET %s -> %ld bytes", verb, n);
+	if (reply != NULL) {
+		err = AEPutParamPtr(reply, keyDirectObject, typeChar, (Ptr)out,
+			(Size)n);
+		if (err != noErr) return err;
+	}
+	return noErr;
+}
+
+static pascal OSErr macos9_ae_get_url(const AppleEvent *ae,
+		AppleEvent *reply, long refcon)
+{
+	DescType rt;
+	Size actual = 0;
+	OSErr err;
+	char url[2048];
 	WindowRef fw;
 	struct gui_window *g;
 
 	(void)reply;
 	(void)refcon;
-
-	err = AEGetParamPtr(ae, keyDirectObject, typeChar, &rt,
-			(Ptr)buf, (Size)(sizeof(buf) - 1), &actual);
-	if (err != noErr) {
-		macsurf_debug_log_writef("LIFE AE GURL param err=%d", (int)err);
-		return err;
-	}
-	if (actual < 0 || (unsigned long)actual > (unsigned long)(sizeof(buf) - 1)) {
-		macsurf_debug_log_writef("LIFE AE GURL reject len=%ld",
-			(long)actual);
-		return errAEEventNotHandled;
-	}
-	buf[actual] = '\0';
-	macsurf_debug_log_writef("LIFE AE GURL received len=%ld", (long)actual);
-
-	/* macos9_poll dispatches this event BEFORE macos9_schedule_run, so on a
-	 * cold launch we may beat the deferred home load - claim the slot. */
+	err = AEGetParamPtr(ae, keyDirectObject, typeChar, &rt, (Ptr)url,
+			(Size)(sizeof(url) - 1), &actual);
+	if (err != noErr) return err;
+	if (actual < 0 || (unsigned long)actual >
+			(unsigned long)(sizeof(url) - 1)) return errAEEventNotHandled;
+	url[actual] = '\0';
 	macos9_startup_home_pending = 0;
-
 	fw = FrontWindow();
-	g = (fw != NULL) ? macos9_find_window(fw) : NULL;
-	if (g == NULL)
-		g = macos9_window_list_head();
-	if (g == NULL)
-		g = macos9_create_initial_window();
-	if (g == NULL) {
-		macsurf_debug_log_writef("LIFE AE GURL no window");
-		return errAEEventNotHandled;
-	}
-	macsurf_debug_log_writef("LIFE AE GURL navigate url=%s", buf);
-	macos9_window_navigate(g, buf);
+	g = (fw != NULL) ? macos9_find_window(fw) : macos9_window_list_head();
+	if (g == NULL) g = macos9_create_initial_window();
+	if (g == NULL) return errAEEventNotHandled;
+	macsurf_debug_log_writef("LIFE AE GURL navigate url=%s", url);
+	macos9_window_navigate(g, url);
 	return noErr;
 }
 
@@ -1770,184 +1857,30 @@ static pascal OSErr macos9_ae_quit(const AppleEvent *ae, AppleEvent *reply,
 	return noErr;
 }
 
-static pascal OSErr macos9_ae_open_app(const AppleEvent *ae, AppleEvent *reply,
+static pascal OSErr macos9_ae_noop(const AppleEvent *ae, AppleEvent *reply,
 		long refcon)
 {
 	(void)ae;
 	(void)reply;
 	(void)refcon;
-	/* The first window is already open by the time any event can arrive; the
-	 * handler must still exist or the Finder reports the app as broken. */
-	return noErr;
-}
-
-static pascal OSErr macos9_ae_reopen(const AppleEvent *ae, AppleEvent *reply,
-		long refcon)
-{
-	WindowRef fw;
-	struct gui_window *g;
-
-	(void)ae;
-	(void)reply;
-	(void)refcon;
-
-	fw = FrontWindow();
-	if (fw != NULL) {
-		ShowWindow(fw);
-		SelectWindow(fw);
-		return noErr;
-	}
-	g = macos9_window_list_head();
-	if (g != NULL && g->window != NULL) {
-		ShowWindow(g->window);
-		SelectWindow(g->window);
-		return noErr;
-	}
-	macos9_create_initial_window();
-	return noErr;
-}
-
-static pascal OSErr macos9_ae_open_docs(const AppleEvent *ae, AppleEvent *reply,
-		long refcon)
-{
-	(void)ae;
-	(void)reply;
-	(void)refcon;
-	/* MacSurf owns no document type yet. errAEEventNotHandled is honest -
-	 * noErr would tell the Finder the files opened. */
-	return errAEEventNotHandled;
-}
-
-static pascal OSErr macos9_ae_print_docs(const AppleEvent *ae, AppleEvent *reply,
-		long refcon)
-{
-	(void)ae;
-	(void)reply;
-	(void)refcon;
-	return errAEEventNotHandled;
-}
-
-/* MacSurf Trace: `MSdg`/`GET ` -- serialise a FROZEN diagnostic snapshot into
- * the reply. Deliberately stupid: read the verb, pick a serialiser, emit text.
- * No hlcache / fetch-ring / window traversal, no state mutation. Runs on the
- * main thread from the WNE loop, same context as macos9_ae_get_url. */
-static pascal OSErr macos9_ae_diag(const AppleEvent *ae, AppleEvent *reply,
-		long refcon)
-{
-	DescType rt;
-	Size actual = 0;
-	OSErr err;
-	char verb[32];
-	/* static: `layout` / `trace` replies run to ~16 KB and the OS 9 main
-	 * stack should not carry that. The AE handler is only entered from the
-	 * cooperative event loop, one query at a time -- no reentrancy. */
-	static char out[16384];
-	long n;
-
-	(void)refcon;
-
-	err = AEGetParamPtr(ae, keyDirectObject, typeChar, &rt,
-			(Ptr)verb, (Size)(sizeof(verb) - 1), &actual);
-	if (err != noErr) {
-		return err;
-	}
-	if (actual < 0 || (unsigned long)actual > (unsigned long)(sizeof(verb) - 1)) {
-		return errAEEventNotHandled;
-	}
-	verb[actual] = '\0';
-
-	if (strcmp(verb, "summary") == 0) {
-		n = macsurf_diag_serialize_summary(out, (long)sizeof(out));
-	} else if (strcmp(verb, "prefs") == 0) {
-		n = macsurf_diag_serialize_prefs(out, (long)sizeof(out));
-	} else if (strcmp(verb, "gaps") == 0) {
-		n = macsurf_diag_serialize_gaps(out, (long)sizeof(out));
-	} else if (strcmp(verb, "network") == 0) {
-		n = macsurf_diag_serialize_network(out, (long)sizeof(out));
-	} else if (strcmp(verb, "scripts") == 0) {
-		n = macsurf_diag_serialize_scripts(out, (long)sizeof(out));
-	} else if (strcmp(verb, "tasks") == 0) {
-		n = macsurf_diag_serialize_tasks(out, (long)sizeof(out));
-	} else if (strcmp(verb, "documents") == 0) {
-		n = macsurf_diag_serialize_documents(out, (long)sizeof(out));
-	} else if (strcmp(verb, "mutations") == 0) {
-		n = macsurf_diag_serialize_mutations(out, (long)sizeof(out));
-	} else if (strcmp(verb, "layout") == 0) {
-		n = macsurf_diag_serialize_layout(out, (long)sizeof(out));
-	} else if (strcmp(verb, "trace") == 0) {
-		n = macsurf_trace_serialize(out, (long)sizeof(out));
-	} else if (strcmp(verb, "modules") == 0) {
-		n = macsurf_diag_serialize_modules(out, (long)sizeof(out));
-	} else if (strcmp(verb, "io") == 0) {
-		n = macsurf_diag_serialize_io(out, (long)sizeof(out));
-	} else if (strcmp(verb, "capabilities") == 0) {
-		n = macsurf_diag_serialize_capabilities(out, (long)sizeof(out));
-	} else if (strcmp(verb, "cssgaps") == 0) {
-		n = macsurf_diag_serialize_css_gaps(out, (long)sizeof(out));
-	} else if (strcmp(verb, "gapreport") == 0) {
-		n = macsurf_diag_serialize_gapreport(out, (long)sizeof(out));
-	} else if (strcmp(verb, "operations") == 0) {
-		n = macsurf_diag_serialize_operations(out, (long)sizeof(out));
-	} else if (strcmp(verb, "errors") == 0) {
-		n = macsurf_diag_serialize_errors(out, (long)sizeof(out));
-	} else if (strcmp(verb, "pending") == 0) {
-		n = macsurf_diag_serialize_pending(out, (long)sizeof(out));
-	} else if (strcmp(verb, "settlement") == 0) {
-		n = macsurf_diag_serialize_settlement(out, (long)sizeof(out));
-	} else if (strcmp(verb, "timers") == 0) {
-		n = macsurf_diag_serialize_timers(out, (long)sizeof(out));
-	} else if (strcmp(verb, "readiness") == 0) {
-		n = macsurf_diag_serialize_readiness(out, (long)sizeof(out));
-	} else if (strcmp(verb, "tracestart") == 0) {
-		macsurf_trace_arm(0UL, 2);	/* all categories, level 2 */
-		n = macsurf_trace_serialize(out, (long)sizeof(out));
-	} else if (strcmp(verb, "tracestop") == 0) {
-		macsurf_trace_disarm();
-		n = macsurf_trace_serialize(out, (long)sizeof(out));
-	} else {
-		macsurf_debug_log_writef("LIFE AE MSdg unknown verb=%s", verb);
-		return errAEEventNotHandled;
-	}
-
-	if (n <= 0) {
-		return errAECorruptData;
-	}
-	macsurf_debug_log_writef("LIFE AE MSdg GET %s -> %ld bytes", verb, n);
-	if (reply != NULL) {
-		err = AEPutParamPtr(reply, keyDirectObject, typeChar,
-				(Ptr)out, (Size)n);
-		if (err != noErr) {
-			return err;
-		}
-	}
 	return noErr;
 }
 
 static void macos9_install_ae_handlers(void)
 {
-	OSErr e_oapp, e_odoc, e_pdoc, e_quit, e_rapp, e_gurl, e_diag;
-
-	e_oapp = AEInstallEventHandler(kCoreEventClass, kAEOpenApplication,
-			NewAEEventHandlerUPP(macos9_ae_open_app), 0, false);
-	e_odoc = AEInstallEventHandler(kCoreEventClass, kAEOpenDocuments,
-			NewAEEventHandlerUPP(macos9_ae_open_docs), 0, false);
-	e_pdoc = AEInstallEventHandler(kCoreEventClass, kAEPrintDocuments,
-			NewAEEventHandlerUPP(macos9_ae_print_docs), 0, false);
-	e_quit = AEInstallEventHandler(kCoreEventClass, kAEQuitApplication,
+	OSErr e1, e2, e3;
+	e1 = AEInstallEventHandler(kCoreEventClass, kAEQuitApplication,
 			NewAEEventHandlerUPP(macos9_ae_quit), 0, false);
-	e_rapp = AEInstallEventHandler(kCoreEventClass, kAEReopenApplication,
-			NewAEEventHandlerUPP(macos9_ae_reopen), 0, false);
-	e_gurl = AEInstallEventHandler(kInternetEventClass, kAEGetURL,
+	e2 = AEInstallEventHandler(kInternetEventClass, kAEGetURL,
 			NewAEEventHandlerUPP(macos9_ae_get_url), 0, false);
-	e_diag = AEInstallEventHandler(kMacSurfDiagEventClass, kMacSurfDiagGet,
+	e3 = AEInstallEventHandler(kMacSurfDiagEventClass, kMacSurfDiagGet,
 			NewAEEventHandlerUPP(macos9_ae_diag), 0, false);
-
-	macsurf_debug_log_writef(
-		"LIFE AE install oapp=%d odoc=%d pdoc=%d quit=%d rapp=%d GURL=%d MSdg=%d",
-		(int)e_oapp, (int)e_odoc, (int)e_pdoc,
-		(int)e_quit, (int)e_rapp, (int)e_gurl, (int)e_diag);
+	(void)AEInstallEventHandler(kCoreEventClass, kAEOpenApplication,
+			NewAEEventHandlerUPP(macos9_ae_noop), 0, false);
+	macsurf_debug_log_writef("LIFE AE install quit=%d GURL=%d MSdg=%d",
+		(int)e1, (int)e2, (int)e3);
 }
-#endif /* __MACOS9__ */
+#endif
 
 
 /* fixes983 -- claim the custom-icon bit on our own application file.
@@ -2025,8 +1958,7 @@ int main(void) {
 	 * baseline from the first JS eval.  Two TickCount boundaries
 	 * (~33 ms) elapse here at startup; acceptable cost. */
 	macsurf_tb_calibrate();
-	/* Diagnostics are opt-in and preferences are not available yet. The
-	 * logger is opened after the saved settings have been loaded below. */
+	macsurf_debug_log_init();
 	/* fixes936 (OS X tier 1): settle OS 9 vs Mac OS X BEFORE anything consumes
 	 * the answer. macsurf_heap_bounds_init() below is the FIRST consumer -- on
 	 * OS X the Process Manager partition window it reads is fiction and must
@@ -2171,7 +2103,7 @@ int main(void) {
 
 	macos9_init_menus();
 	MS_LOG("BOOT menus installed");
-	macos9_install_ae_handlers();   /* 'GURL' + required suite + real 'quit' */
+	macos9_install_ae_handlers();
 	MS_LOG("BOOT AppleEvent handlers installed");
 	/* fixes294 - decode the baked-in default favicon PNG into a GWorld
 	 * that lives for the life of the process.  Must happen AFTER
@@ -2214,9 +2146,6 @@ int main(void) {
 	MS_LOG("BOOT nsoption_init done");
 	macos9_prefs_load();
 	MS_LOG("BOOT prefs file loaded");
-	macsurf_debug_log_init();
-	if (macos9_debug_integrations_enabled())
-		MS_LOG("BOOT debug integrations enabled");
 	/* fixes1189 - the line this replaces ("images enabled, author_css on,
 	 * fetcher 128/16, mem cache 32MB") was a hardcoded claim left over
 	 * from before macos9_prefs_load existed, and stayed accurate only by
@@ -2289,17 +2218,9 @@ int main(void) {
 				"launch home: clock_ms=%ld (startup, pre-loop)",
 				(long)macsurf_monotonic_ms());
 			if (bw != NULL) {
-				/* arm the home-load guard just before scheduling; a
-				 * GURL AppleEvent on the first poll pass clears it so
-				 * this callback stands down. */
 				macos9_startup_home_pending = 1;
-				if (macos9_schedule(0, macos9_deferred_home_load, bw)
-						!= NSERROR_OK) {
-					macos9_startup_home_pending = 0;
-					MS_LOG("BOOT launch: home nav schedule FAILED");
-				} else {
-					MS_LOG("BOOT launch: home nav scheduled (deferred)");
-				}
+				macos9_schedule(0, macos9_deferred_home_load, bw);
+				MS_LOG("BOOT launch: home nav scheduled (deferred)");
 			}
 		}
 		if (bw == NULL) {

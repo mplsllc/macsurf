@@ -10,6 +10,7 @@
 
 #ifdef WITH_QUICKJS
 #  include "content/handlers/javascript/js.h"
+struct content;
 /* MacSurf GATE 3 extension: fire DOMContentLoaded+load into the JS document's
  * registered listeners once the initial box tree exists (drains XF.ready and
  * runs XF.activate(document)).  Implemented in javascript/macsurf_qjs.c. */
@@ -39,11 +40,6 @@ unsigned char js_fire_script_load(jsthread *thread, struct dom_node *node,
  * getElementsByTagName("script") fallback both come up empty - which kills the
  * bundle on its own prologue, before any application code. */
 void js_set_current_script(jsthread *thread, struct dom_node *node);
-/* fixes1096  -  slider DOM probe: eval a JS-side probe in the page realm,
- * emitting LIFE lines through __msLife. Called from html.c's
- * html_slider_probe at the ready/done/reconvert points. Implemented in
- * macsurf_qjs.c. */
-void js_fire_slider_probe(jsthread *thread, const char *when);
 /* fixes1235 (#167)  -  deliver a batch of MutationObserver records after a
  * reconvert completes successfully. Rides the EXISTING debounce/floor
  * reconvert already self-limits (called once from html_reconvert_done, the
@@ -54,9 +50,15 @@ void js_fire_slider_probe(jsthread *thread, const char *when);
  * (no precise target/subtree filtering yet -- see macsurf_qjs.c). Implemented
  * in macsurf_qjs.c. */
 void js_fire_mutation_batch(jsthread *thread);
-/* Re-evaluate per-document MediaQueryLists after layout has published a new
- * css_media viewport state. Implemented by the QuickJS frontend. */
-void js_media_state_changed(jsthread *thread);
+/* Post-render work holds a realm identity across a scheduler turn.  These
+ * helpers validate both the realm generation and its owning content before
+ * anything page-capable is dispatched. */
+unsigned long js_realm_generation(jsthread *thread);
+unsigned long js_thread_generation(jsthread *thread);
+int js_realm_valid_for_content(jsthread *thread, struct content *content,
+		unsigned long generation);
+int js_thread_valid_for_content(jsthread *thread, unsigned long thread_token,
+		struct content *content, unsigned long realm_generation);
 #else
 
 #ifndef NETSURF_JAVASCRIPT_JS_H_
@@ -91,12 +93,6 @@ unsigned char js_exec(jsthread *thread,
 unsigned char js_fire_event(jsthread *thread, const char *type,
 		struct dom_document *doc, struct dom_node *target);
 unsigned char js_fire_dom_ready(jsthread *thread, struct dom_document *doc);
-
-/* fixes1096  -  slider DOM probe: eval a JS-side probe in the page realm,
- * emitting LIFE lines through __msLife. Called from html.c's
- * html_slider_probe at the ready/done/reconvert points. Implemented in
- * macsurf_qjs.c. */
-void js_fire_slider_probe(jsthread *thread, const char *when);
 
 /* fixes869 (#295)  -  fire `load` (ok!=0) or `error` (ok==0) at a <script>
  * element once its fetch+execute completes.  The dynamic-loader idiom

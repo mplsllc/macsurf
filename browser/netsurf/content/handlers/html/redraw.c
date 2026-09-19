@@ -87,10 +87,6 @@ extern void macsurf_recon_clamp(const char *field, long value);
 #include "html/private.h"
 #include "html/layout.h"
 #include "html/macsurf_dom_compat.h"
-#include "frontends/macos9/macos9_transition.h"
-#ifdef __MACOS9__
-#include <Timer.h>
-#endif
 #include "html/layout_safe.h"
 
 /* fixes195 - inline SVG renderer lives in the macos9 frontend so it
@@ -119,7 +115,6 @@ static int grad_seen_c = 0;
 static int grad_seen_d = 0;
 static int grad_seen_e = 0;
 static int grad_seen_f = 0;
-static int transition_opacity_diag_seen = 0;
 
 void macos9_redraw_diag_counters_reset(void)
 {
@@ -133,7 +128,6 @@ void macos9_redraw_diag_counters_reset(void)
 	grad_seen_d = 0;
 	grad_seen_e = 0;
 	grad_seen_f = 0;
-	transition_opacity_diag_seen = 0;
 }
 #endif
 
@@ -1622,39 +1616,10 @@ static bool html_redraw_background(int x, int y, struct box *box, float scale,
 	         * fixes76 -- if -macsurf-animation-opacity is SET, the
 	         * animated value overrides the static one. */
 	        if (css_computed_opacity(background->style, &op_fixed) ==
-					CSS_OPACITY_SET) {
-				pstyle_fill_bg.opacity = (plot_style_fixed)op_fixed;
-				pstyle_fill_bg.opacity_set = true;
+	                        CSS_OPACITY_SET) {
+	                pstyle_fill_bg.opacity = (plot_style_fixed)op_fixed;
 	        } else {
 	                pstyle_fill_bg.opacity = (plot_style_fixed)PLOT_STYLE_SCALE;
-	        }
-	        /* 2B-2 opacity transition presentation overlay */
-	        {
-	            css_fixed presented = 0;
-	            uint32_t now = 0;
-#ifdef __MACOS9__
-	            now = (uint32_t)TickCount();
-#endif
-	            if (background->node != NULL) {
-	                css_fixed target = 0;
-	                uint8_t ttype = css_computed_opacity(background->style, &target);
-	                bool overlay = false;
-	                if (ttype != CSS_OPACITY_SET) target = 1024;
-	                if (macsurf_transition_get_opacity(background->node, target, now, &presented)) {
-	                    overlay = true;
-			    pstyle_fill_bg.opacity = (plot_style_fixed)presented;
-			    pstyle_fill_bg.opacity_set = true;
-	                }
-#ifdef __MACOS9__
-                if ((overlay || target != 1024) && transition_opacity_diag_seen < 32) {
-                    transition_opacity_diag_seen++;
-                    macsurf_debug_log_writef(
-                        "LIFE 2B2 redraw bg node=%p target=%d overlay=%d presented=%d pstyle=%d",
-                        (void *)background->node, (int)target, overlay ? 1 : 0,
-                        (int)presented, (int)pstyle_fill_bg.opacity);
-                }
-#endif
-	            }
 	        }
 	        {
 	                int32_t anim_packed = 0;
@@ -1664,8 +1629,7 @@ static bool html_redraw_background(int x, int y, struct box *box, float scale,
 	                        int rw, rh;
 	                        pstyle_fill_bg.opacity = (plot_style_fixed)
 	                                macsurf_anim_opacity_resolve_plot_fixed(
-									anim_packed);
-					pstyle_fill_bg.opacity_set = true;
+	                                        anim_packed);
 	                        /* fixes76b -- queue a per-box rect invalidate
 	                         * so the tick refreshes only this badge, not
 	                         * the whole page. */
@@ -2451,39 +2415,10 @@ static bool html_redraw_inline_background(int x, int y, struct box *box,
 	        /* fixes49 -- opacity mirror for inline path.
 	         * fixes76 -- animation override (inline path). */
 	        if (css_computed_opacity(box->style, &op_fixed) ==
-						CSS_OPACITY_SET) {
-					pstyle_fill_bg.opacity = (plot_style_fixed)op_fixed;
-					pstyle_fill_bg.opacity_set = true;
+	                        CSS_OPACITY_SET) {
+	                pstyle_fill_bg.opacity = (plot_style_fixed)op_fixed;
 	        } else {
 	                pstyle_fill_bg.opacity = (plot_style_fixed)PLOT_STYLE_SCALE;
-	        }
-	        /* 2B-2 opacity transition presentation overlay (inline) */
-	        {
-	            css_fixed presented = 0;
-	            uint32_t now = 0;
-#ifdef __MACOS9__
-	            now = (uint32_t)TickCount();
-#endif
-	            if (box->node != NULL) {
-	                css_fixed target = 0;
-	                uint8_t ttype = css_computed_opacity(box->style, &target);
-	                bool overlay = false;
-	                if (ttype != CSS_OPACITY_SET) target = 1024;
-	                if (macsurf_transition_get_opacity(box->node, target, now, &presented)) {
-	                    overlay = true;
-			    pstyle_fill_bg.opacity = (plot_style_fixed)presented;
-			    pstyle_fill_bg.opacity_set = true;
-	                }
-#ifdef __MACOS9__
-                if ((overlay || target != 1024) && transition_opacity_diag_seen < 32) {
-                    transition_opacity_diag_seen++;
-                    macsurf_debug_log_writef(
-                        "LIFE 2B2 redraw inline node=%p target=%d overlay=%d presented=%d pstyle=%d",
-                        (void *)box->node, (int)target, overlay ? 1 : 0,
-                        (int)presented, (int)pstyle_fill_bg.opacity);
-                }
-#endif
-	            }
 	        }
 	        {
 	                int32_t anim_packed_il = 0;
@@ -2492,8 +2427,7 @@ static bool html_redraw_inline_background(int x, int y, struct box *box,
 	                                CSS_MACSURF_ANIMATION_OPACITY_SET) {
 	                        pstyle_fill_bg.opacity = (plot_style_fixed)
 	                                macsurf_anim_opacity_resolve_plot_fixed(
-									anim_packed_il);
-					pstyle_fill_bg.opacity_set = true;
+	                                        anim_packed_il);
 	                        /* fixes76b -- queue a per-box rect invalidate.
 	                         * `b` is the border edge rect in page coords. */
 	                        macos9_animation_register_rect(b.x0, b.y0,

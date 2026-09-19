@@ -289,3 +289,4 @@ long macsurf_diag_serialize_gapreport(char *b, long c)
 	}
 	return n;
 }
+

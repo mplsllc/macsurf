@@ -1,36 +1,24 @@
 /*
  * MacSurf - Preferences window + persistence (macos9_prefs.c)
  *
- * Every browser setting was hardcoded at boot in main.c with no
- * user-adjustable UI. This module is the Preferences feature:
+ * Provides user configuration and persistent options storage:
  *
- *   1. macos9_prefs_set_defaults() - the nsoption_init callback.
- *      The boot baseline (the old main.c hardcoded block) is applied
- *      here, INTO THE DEFAULT TABLE (nsoption_init temporarily
- *      redirects the global nsoptions onto the defaults table before
- *      calling it). Persistence then stores only USER DELTAS, so a
- *      choice that equals the factory default (e.g. JavaScript OFF)
- *      is still written and survives relaunch.
+ *   1. macos9_prefs_apply_defaults() / macos9_prefs_set_defaults()
+ *      Establishes factory default baseline into the nsoptions_default
+ *      table. Persistence stores only user deltas vs defaults.
  *
- *   2. macos9_prefs_load()/macos9_prefs_save() - the "MacSurf
- *      Preferences" file in MacSurfData via the nsoption key:value
- *      file format (nsoption_read/nsoption_write). The full
- *      "Volume:...:MacSurfData:MacSurf Preferences" path is built
- *      with the FSMakeFSSpec + macos9_fsspec_to_path pattern
- *      (fixes838 - colon-relative paths do not round-trip through
- *      MSL fopen).
+ *   2. macos9_prefs_load() / macos9_prefs_save()
+ *      Reads/writes "MacSurf Preferences" in MacSurfData via nsoption_read
+ *      and nsoption_write.
  *
- *   3. macos9_prefs_show() - the Preferences window: programmatic
- *      Carbon controls only (no DLOG/DITL resources), mirroring
- *      macos9_chrome_extras.c. Gold gradient banner, category popup
- *      (General / Appearance / Content / Privacy / Network),
- *      per-category checkboxes, popup buttons, TextEdit fields and
- *      push buttons, Defaults / Cancel / OK. No action UPPs
- *      (TrackControl + GetControlValue), no live-track CDEFs
- *      (kControlScrollBarLiveProc crashes on real G3/G4 hardware).
+ *   3. macos9_prefs_show()
+ *      Programmatic native Carbon / Appearance Manager Preferences window.
+ *      Organized into General, Web Content, Appearance, Privacy, and
+ *      Advanced categories with descriptive explanations, reliable
+ *      checkbox and popup tracking, draft/cancel semantics, and homepage
+ *      helpers.
  *
- * C89 / CW8-clean: no inline, no // comments, declarations at the
- * top of every block.
+ * C89 / CW8-clean: no inline, no // comments, declarations at top of block.
  */
 
 #include <stdlib.h>
@@ -42,8 +30,9 @@
 #include "utils/nsoption.h"
 #include "utils/log.h"
 #include "utils/nsurl.h"
+#include "netsurf/browser_window.h"
 #include "macos9.h"
-#include "macsurf_config.h"	/* MACSURF_HOME_URL (macos9.h only references it) */
+#include "macsurf_config.h"	/* MACSURF_HOME_URL */
 #include "macsurf_debug.h"
 
 #ifdef __MACOS9__
@@ -51,71 +40,47 @@
 #endif
 
 /* ====================================================================
- * Boot baseline - the values main.c used to hardcode. Kept in ONE
- * function so the Defaults button and the factory first-run path are
- * provably identical.
+ * Boot baseline - factory defaults table.
+ * All user-adjustable options are reset to their intended compiled
+ * baseline here so that Restore Defaults + OK cleanly clears any stale
+ * deltas from the preferences file.
  */
 
 void macos9_prefs_apply_defaults(void)
 {
-	/* fixes78: the image content handler (QuickTime Graphics
-	 * Importers) is registered in macos9_image.c; enable image
-	 * fetches so <img> elements trigger network fetches. */
+	/* Web Content defaults */
 	nsoption_set_bool(foreground_images, true);
 	nsoption_set_bool(background_images, true);
-	/* Enable author CSS so inline <style>/<link> rules apply. */
+	nsoption_set_bool(animate_images, true);
 	nsoption_set_bool(author_level_css, true);
-	/* fixes319 (#115-#121) - inline <script> execution. NetSurf core
-	 * defaults to false; without this html_script_exec returns early
-	 * and the JS bridge is dead code from core's perspective. */
 	nsoption_set_bool(enable_javascript, true);
-	/* Diagnostic logging and phase profiling are deliberately opt-in for the
-	 * release build. They add formatting, timing and HFS I/O to page loads. */
-	nsoption_set_bool(macsurf_debug_integrations, false);
-	/* fixes1115b (#265) - <select> dropdown menus. The core
-	 * form-control <select> handler is gated on this option; without
-	 * it <select> elements render as empty rectangles. The Amiga and
-	 * framebuffer frontends set this true; the macos9 frontend never
-	 * did. */
-	nsoption_set_bool(core_select_menu, true);
-	/* fixes91: raise concurrent-fetch caps (NetSurf defaults are
-	 * max_fetchers=24 / max_fetchers_per_host=5). With our HTTP
-	 * fetcher's MFS_INIT-at-setup state machine, slots stay non-IDLE
-	 * past the point NetSurf's fetch_ring drains, so the caps must
-	 * never bite or the stub fetcher hangs. */
+	nsoption_set_bool(block_advertisements, false);
+	nsoption_set_bool(disable_popups, false);
+
+	/* Appearance defaults (120 = 12pt = 16 CSS px; min = 85 = 8.5pt) */
+	nsoption_set_int(font_size, 120);
+	nsoption_set_int(font_min_size, 85);
+
+	/* Privacy defaults */
+	nsoption_set_bool(accept_cookies, true);
+	nsoption_set_bool(send_referer, true);
+	nsoption_set_bool(do_not_track, false);
+
+	/* Network / Advanced defaults */
 	nsoption_set_int(max_fetchers, 128);
-	/* fixes232: dropped the per-host cap from 16 to 4 so the HTTPS
-	 * keep-alive pool (fixes231) actually catches reuses - only the
-	 * first N fetches per host are cold handshakes.
-	 *
-	 * fixes1251 (#167) - raised 4 -> 16. fixes232's own rationale no
-	 * longer holds for the host class that needed it most: fixes373
-	 * sends "Connection: close" for every facebook.com/fbcdn.net/
-	 * fbsbx.com/cdninstagram.com fetch (host_is_fb_asset), so those
-	 * origins get ZERO keep-alive reuse regardless of this cap - every
-	 * fetch is already a cold handshake. A real Facebook page issues
-	 * ~189 external <script src> tags, ~all on static.xx.fbcdn.net; at
-	 * 4 concurrent cold handshakes the vast majority (measured: 171 of
-	 * 189 on one page) are still queued or mid-fetch when the
-	 * navigation's own JS-profile census fires - not blocked, not
-	 * skipped (skipped=0/timed_out=0/failed=0 confirmed), just
-	 * throughput-starved. MAX_HTTPS_F (macos9_tls_fetcher.c) is a
-	 * static 128-slot array sized for max_fetchers=128 already; raising
-	 * this cap uses slots already provisioned; it does not allocate new
-	 * memory. Non-FB hosts keep normal keep-alive pooling and still
-	 * benefit from fewer cold handshakes once the pool warms. */
 	nsoption_set_int(max_fetchers_per_host, 16);
-	/* fixes106/160d/430/460-463/731 - memory cache size. History:
-	 * 2MB cap on 16MB partitions; 32MB on the 194MB partition; 4MB
-	 * after heap exhaustion; 0 while chasing the blank-page bug;
-	 * restored to 32MB once #207 was root-caused to the
-	 * pointer-ceiling guards, not the cache. */
 	nsoption_set_int(memory_cache_size, 32 * 1024 * 1024);
+
+	/* Core form-controls */
+	nsoption_set_bool(core_select_menu, true);
+
+	/* General window geometry (0 = automatic default) */
+	nsoption_set_int(window_width, 0);
+	nsoption_set_int(window_height, 0);
 }
 
 /* nsoption_init callback: mutates the DEFAULT table (nsoptions is
- * redirected onto defs for the duration of the call - see
- * nsoption.c nsoption_init). Must return NSERROR_OK. */
+ * redirected onto defs for the duration of the call). Must return NSERROR_OK. */
 nserror macos9_prefs_set_defaults(struct nsoption_s *defs)
 {
 	(void)defs;
@@ -129,10 +94,7 @@ nserror macos9_prefs_set_defaults(struct nsoption_s *defs)
 
 #define PREFS_LEAF "MacSurf Preferences"
 
-/* Build the absolute HFS path to the prefs file. 0 on success. The
- * ':MacSurfData:MacSurf Preferences' colon-relative path does NOT
- * round-trip through MSL fopen (proven on cookies, fixes838) - the
- * FSSpec-based absolute path does. */
+/* Build the absolute HFS path to the prefs file. 0 on success. */
 static int prefs_fullpath(char *out, long cap)
 {
 #ifdef __MACOS9__
@@ -149,23 +111,17 @@ static int prefs_fullpath(char *out, long cap)
 	fname[0] = (unsigned char)nlen;
 	memcpy(fname + 1, PREFS_LEAF, nlen);
 	err = FSMakeFSSpec(vRef, dirID, fname, &spec);
-	/* fnfErr = file not created yet, but the spec is valid for
-	 * fopen("w") - exactly the cookie-jar pattern. */
 	if (err != noErr && err != fnfErr) return -1;
 	if (macos9_fsspec_to_path(&spec, out, cap) != 0) return -1;
 	return 0;
 #else
-	/* Linux syntax-check / harness builds: plain cwd file. */
 	(void)cap;
 	strcpy(out, "macsurf_prefs.txt");
 	return 0;
 #endif
 }
 
-/* Load the persisted prefs file over the current option table (the
- * boot baseline). Missing file = first run = defaults stand. Called
- * from main.c right after nsoption_init, BEFORE netsurf_init, so the
- * fetchers/llcache see user values from the very first fetch. */
+/* Load persisted preferences file over the boot defaults. */
 void macos9_prefs_load(void)
 {
 	char path[1024];
@@ -179,18 +135,8 @@ void macos9_prefs_load(void)
 		(int)rc, path);
 }
 
-/* fixes1189 - log every option that differs from the compiled-in default,
- * right after boot loads the persisted prefs file. A stale/experimental
- * "MacSurf Preferences" file is otherwise INDISTINGUISHABLE in the debug
- * log from a real code regression: everything downstream (cascade, JS,
- * image fetch) just quietly does what the option says, with no marker
- * that the option itself isn't what the defaults say it should be. This
- * cost a full regression investigation once (author_level_css and
- * enable_javascript both silently OFF from a leftover test-session
- * prefs file, restored code just doing its job of loading it) before
- * the file was found by hand. One line per delta, LIFE-prefixed so it
- * survives the failures-only gate; a clean "no deltas" run logs exactly
- * one summary line so the check is a single grep either way. */
+/* Log every option that differs from the compiled-in default,
+ * followed by a single definitive LIFE PREF render line. */
 void macos9_prefs_log_deltas(void)
 {
 	int i;
@@ -241,29 +187,21 @@ void macos9_prefs_log_deltas(void)
 			}
 			break;
 		default:
-			/* OPTION_STRING - not compared; heap-string diffs are
-			 * lower stakes here (the regression class this guards
-			 * against is silently-disabled features, which are
-			 * bool/int switches, not string values). */
 			break;
 		}
 	}
 
-	/* The three switches below decide whether a page is permitted to request
-	 * author stylesheets and ordinary image objects at all.  Emit their
-	 * effective values unconditionally so a bare/unimaged page is diagnosable
-	 * from the first boot lines, even when the general delta list is missed. */
-	macsurf_debug_log_writef(
-		"LIFE PREF render css_author=%d fg_images=%d bg_images=%d debug=%d",
-		(int) nsoption_bool(author_level_css),
-		(int) nsoption_bool(foreground_images),
-		(int) nsoption_bool(background_images),
-		(int) nsoption_bool(macsurf_debug_integrations));
 	macsurf_debug_log_writef("LIFE prefsdelta summary n=%d", n);
+	macsurf_debug_log_writef(
+		"LIFE PREF render css_author=%d fg_images=%d bg_images=%d js=%d home=%s",
+		(int)nsoption_bool(author_level_css),
+		(int)nsoption_bool(foreground_images),
+		(int)nsoption_bool(background_images),
+		(int)nsoption_bool(enable_javascript),
+		macos9_home_url());
 }
 
-/* Persist only the user's deltas vs the default table (nsoption_write
- * emits just the CHANGED options). */
+/* Persist only user deltas vs default table. */
 void macos9_prefs_save(void)
 {
 	char path[1024];
@@ -278,11 +216,7 @@ void macos9_prefs_save(void)
 }
 
 /* ====================================================================
- * Home page - the user's homepage_url option, falling back to the
- * built-in MACSURF_HOME_URL (mactrove.com). This is the single source
- * of truth for all four home-URL sites: File > New Window, the
- * deferred launch-home load, the Home toolbar button and the URL
- * bar's initial text (main.c:408/1607, window.c:1223/1479).
+ * Home page - authoritative accessor.
  */
 
 const char *macos9_home_url(void)
@@ -294,52 +228,37 @@ const char *macos9_home_url(void)
 	return MACSURF_HOME_URL;
 }
 
-/* Reflow every open browser window so live settings (font sizes,
- * fetcher caps, image toggles) take effect immediately on OK. */
+/* Reflow open browser windows for live visual settings. */
 void macos9_prefs_apply_live(void)
 {
 	struct gui_window *g;
-	/* The logger opens only after the user opts in. Applying this live avoids
-	 * making a restart necessary for a focused diagnostic session, and closing
-	 * it immediately removes its file-I/O cost again. */
-	if (macos9_debug_integrations_enabled())
-		macsurf_debug_log_init();
-	else
-		macsurf_debug_log_close();
-	for (g = macos9_window_list_head(); g != NULL; g = g->next) {
+	for (g = macos9_window_list_head(); g != NULL; g = g->next_global) {
 		macos9_window_request_reformat(g);
 		macos9_window_invalidate_all(g);
 	}
 }
 
-int macos9_debug_integrations_enabled(void)
-{
-	return nsoptions != NULL &&
-		nsoption_bool(macsurf_debug_integrations) ? 1 : 0;
-}
-
 #ifdef __MACOS9__
 
 /* ====================================================================
- * Preferences window - programmatic Carbon controls.
+ * Preferences window - native Carbon / Appearance Manager UI.
  */
 
-#define PREFS_W_W 460
-#define PREFS_W_H 390
-#define PREFS_BANNER_H 34
-#define PREFS_PANEL_TOP 40
-#define PREFS_PANEL_BOT 330
+#define PREFS_W_W 480
+#define PREFS_W_H 420
+#define PREFS_BANNER_H 40
+#define PREFS_PANEL_TOP 48
+#define PREFS_PANEL_BOT 368
 
 enum {
 	PREFS_CAT_GENERAL = 0,
-	PREFS_CAT_APPEAR,
 	PREFS_CAT_CONTENT,
+	PREFS_CAT_APPEAR,
 	PREFS_CAT_PRIVACY,
 	PREFS_CAT_NETWORK,
 	PREFS_CAT_COUNT
 };
 
-/* Popup-button value tables (font_size is in 0.1pt - 120 = 12pt). */
 struct prefs_popup_def {
 	const char **labels;
 	const int *values;
@@ -347,7 +266,7 @@ struct prefs_popup_def {
 };
 
 static const char *s_lbl_cat[] = {
-	"General", "Appearance", "Content", "Privacy", "Network"
+	"General", "Web Content", "Appearance", "Privacy", "Advanced"
 };
 
 static const char *s_lbl_font[] = {
@@ -362,8 +281,7 @@ static const struct prefs_popup_def s_popup_font = {
 };
 
 static const char *s_lbl_minfont[] = {
-	"8 pt", "9 pt", "10 pt", "11 pt", "12 pt", "14 pt", "16 pt",
-	"20 pt"
+	"8 pt", "9 pt", "10 pt", "11 pt", "12 pt", "14 pt", "16 pt", "20 pt"
 };
 static const int s_val_minfont[] = { 80, 90, 100, 110, 120, 140, 160, 200 };
 static const struct prefs_popup_def s_popup_minfont = {
@@ -382,80 +300,98 @@ static const struct prefs_popup_def s_popup_perhost = {
 	s_lbl_perhost, s_val_perhost, 8
 };
 
-/* One prefs window at a time; Cmd-, while open just brings it up. */
 static WindowRef g_prefs_open_win = NULL;
 
 struct prefs_win {
 	WindowRef win;
-	/* category */
-	ControlRef pp_cat;
-	MenuHandle m_cat;
+	/* category selector tabs */
+	ControlRef tabs;
 	int cat;
 	/* General */
 	TEHandle te_home;
+	ControlRef btn_home_current;
+	ControlRef btn_home_default;
 	TEHandle te_ww;
 	TEHandle te_wh;
 	TEHandle active_te;
+	/* Web Content */
+	ControlRef ck_images;
+	ControlRef ck_anim;
+	ControlRef ck_css;
+	ControlRef ck_js;
+	ControlRef ck_popups;
+	ControlRef ck_ads;
 	/* Appearance */
 	ControlRef pp_font;
 	MenuHandle m_font;
 	ControlRef pp_minfont;
 	MenuHandle m_minfont;
-	ControlRef ck_fg;
-	ControlRef ck_bg;
-	ControlRef ck_anim;
-	/* Content */
-	ControlRef ck_js;
-	ControlRef ck_css;
-	ControlRef ck_ads;
-	ControlRef ck_popups;
-	ControlRef ck_debug;
 	/* Privacy */
-	ControlRef ck_dnt;
-	ControlRef ck_ref;
 	ControlRef ck_cookies;
+	ControlRef ck_ref;
+	ControlRef ck_dnt;
 	ControlRef btn_cache;
 	ControlRef btn_hist;
-	/* Network */
+	/* Advanced */
 	ControlRef pp_fetch;
 	MenuHandle m_fetch;
 	ControlRef pp_perhost;
 	MenuHandle m_perhost;
-	/* bottom row */
+	/* Bottom buttons */
 	ControlRef btn_defaults;
 	ControlRef btn_cancel;
 	ControlRef btn_ok;
 };
 
-/* Layout. Rect order is {top, left, bottom, right}. */
-static const Rect s_btn_ok_rect      = { 344, 336, 368, 452 };
-static const Rect s_btn_cancel_rect  = { 344, 236, 368, 316 };
-static const Rect s_btn_defaults_rect= { 344, 108, 368, 188 };
-static const Rect s_pp_cat_rect      = { 44, 340, 66, 440 };
-static const Rect s_te_home_rect     = { 84, 100, 106, 444 };
-static const Rect s_te_ww_rect       = { 122, 150, 144, 210 };
-static const Rect s_te_wh_rect       = { 152, 150, 174, 210 };
-static const Rect s_pp_font_rect     = { 84, 150, 106, 260 };
-static const Rect s_pp_minfont_rect  = { 114, 150, 136, 260 };
-static const Rect s_pp_fetch_rect    = { 84, 150, 106, 260 };
-static const Rect s_pp_perhost_rect  = { 114, 150, 136, 260 };
-static const Rect s_ck_fg_rect       = { 84, 24, 106, 340 };
-static const Rect s_ck_bg_rect       = { 114, 24, 136, 340 };
-static const Rect s_ck_anim_rect     = { 144, 24, 166, 340 };
-static const Rect s_ck_js_rect       = { 84, 24, 106, 340 };
-static const Rect s_ck_css_rect      = { 114, 24, 136, 340 };
-static const Rect s_ck_ads_rect      = { 144, 24, 166, 340 };
-static const Rect s_ck_popups_rect   = { 174, 24, 196, 340 };
-static const Rect s_ck_debug_rect    = { 204, 24, 226, 340 };
-static const Rect s_ck_dnt_rect      = { 84, 24, 106, 340 };
-static const Rect s_ck_ref_rect      = { 114, 24, 136, 340 };
-static const Rect s_ck_cookies_rect  = { 144, 24, 166, 340 };
-static const Rect s_btn_cache_rect   = { 206, 24, 230, 140 };
-static const Rect s_btn_hist_rect    = { 206, 148, 230, 256 };
+/* Layout bounds. Order: {top, left, bottom, right}. */
+static const Rect s_btn_defaults_rect     = { 358,  20, 382, 144 };
+static const Rect s_btn_cancel_rect       = { 358, 276, 382, 356 };
+static const Rect s_btn_ok_rect           = { 358, 372, 382, 460 };
+static const Rect s_tabs_rect             = {  42,  12, 348, 468 };
 
-/* Popup menu IDs - clear of the menu bar (128-134), the bookmark
- * submenus (200-231) and the bookmark move popup (250). */
-#define PREFS_MENU_ID_CAT     260
+/* General panel */
+static const Rect s_te_home_rect          = {  94,  24, 116, 456 };
+static const Rect s_btn_home_current_rect = { 124,  24, 146, 154 };
+static const Rect s_btn_home_default_rect = { 124, 164, 146, 284 };
+static const Rect s_te_ww_rect            = { 192,  76, 214, 140 };
+static const Rect s_te_wh_rect            = { 192, 216, 214, 280 };
+
+/* Web Content panel native checkbox glyph bounds (20x20 px at left edge) */
+static const Rect s_ck_images_ctrl_rect   = {  80,  24, 100,  44 };
+static const Rect s_ck_anim_ctrl_rect     = { 124,  24, 144,  44 };
+static const Rect s_ck_css_ctrl_rect      = { 168,  24, 188,  44 };
+static const Rect s_ck_js_ctrl_rect       = { 212,  24, 232,  44 };
+static const Rect s_ck_popups_ctrl_rect   = { 256,  24, 276,  44 };
+static const Rect s_ck_ads_ctrl_rect      = { 300,  24, 320,  44 };
+
+/* Web Content logical hit-test row bounds (full clickable width: 24..456) */
+static const Rect s_ck_images_row_rect    = {  80,  24, 100, 456 };
+static const Rect s_ck_anim_row_rect      = { 124,  24, 144, 456 };
+static const Rect s_ck_css_row_rect       = { 168,  24, 188, 456 };
+static const Rect s_ck_js_row_rect        = { 212,  24, 232, 456 };
+static const Rect s_ck_popups_row_rect    = { 256,  24, 276, 456 };
+static const Rect s_ck_ads_row_rect       = { 300,  24, 320, 456 };
+
+/* Appearance panel */
+static const Rect s_pp_font_rect          = {  88, 160, 110, 280 };
+static const Rect s_pp_minfont_rect       = { 152, 160, 174, 280 };
+
+/* Privacy panel native checkbox glyph bounds (20x20 px at left edge) */
+static const Rect s_ck_cookies_ctrl_rect  = {  74,  24,  94,  44 };
+static const Rect s_ck_ref_ctrl_rect      = { 122,  24, 142,  44 };
+static const Rect s_ck_dnt_ctrl_rect      = { 170,  24, 190,  44 };
+
+/* Privacy panel logical hit-test row bounds (full clickable width: 24..456) */
+static const Rect s_ck_cookies_row_rect   = {  74,  24,  94, 456 };
+static const Rect s_ck_ref_row_rect       = { 122,  24, 142, 456 };
+static const Rect s_ck_dnt_row_rect       = { 170,  24, 190, 456 };
+static const Rect s_btn_cache_rect        = { 230,  24, 254, 160 };
+static const Rect s_btn_hist_rect         = { 230, 175, 254, 310 };
+
+/* Advanced panel */
+static const Rect s_pp_fetch_rect         = {  88, 280, 110, 380 };
+static const Rect s_pp_perhost_rect       = { 152, 280, 174, 380 };
+
 #define PREFS_MENU_ID_FONT    261
 #define PREFS_MENU_ID_MINFONT 262
 #define PREFS_MENU_ID_FETCH   263
@@ -469,8 +405,7 @@ static void c_to_pstring(const char *src, unsigned char *dest)
 	memcpy(dest + 1, src, n);
 }
 
-/* Copy of chrome_vgrad (static in macos9_chrome_extras.c): vertical
- * per-row gradient for the banner. */
+/* Gradient banner for the Preferences header. */
 static void prefs_vgrad(const Rect *r, int r0, int g0, int b0,
 		int r1, int g1, int b1)
 {
@@ -495,8 +430,6 @@ static void prefs_vgrad(const Rect *r, int r0, int g0, int b0,
 	}
 }
 
-/* Three tiny slider glyphs in the banner (QuickDraw only - no PNG
- * resource needed). */
 static void prefs_slider_icon(short left, short top)
 {
 	RGBColor shade;
@@ -518,9 +451,6 @@ static void prefs_slider_icon(short left, short top)
 	}
 }
 
-/* Copy of chrome_mgr_header minus the PNG icon (replaced by
- * prefs_slider_icon): gold gradient band + dark amber accent line +
- * white bold title. */
 static void prefs_banner(const Rect *content, const char *title)
 {
 	Rect band;
@@ -541,24 +471,108 @@ static void prefs_banner(const Rect *content, const char *title)
 	RGBForeColor(&accent); PaintRect(&ln);
 	prefs_slider_icon((short)(band.left + 14), (short)(band.top + 11));
 	RGBForeColor(&white);
-	TextFont(1); TextFace(bold); TextSize(15);
-	MoveTo(52, (short)(band.top + 23));
+	TextFont(1); TextFace(bold); TextSize(14);
+	MoveTo(50, (short)(band.top + 22));
 	DrawText(title, 0, (short)strlen(title));
 	TextFace(normal);
 	RGBForeColor(&saved_fg);
 }
 
-/* One-shot macro: build a Pascal-string titled control.
- * CW8 requires the procID to be a literal enum constant at each call site
- * (a variable, even cast, fails the anonymous-enum type check) so there
- * is no shared helper - each caller inlines the two-step conversion. */
-#define PS_CTRL(ctrl, win, rect, ctitle, proc) \
-	do { unsigned char _ps[256]; c_to_pstring((ctitle), _ps); \
-	     (ctrl) = NewControl((win), (rect), _ps, 1, 0, 0, 0, (proc), 0); \
-	} while(0)
+/* Safe control creation helpers with valid min/max bounds */
+static ControlRef prefs_create_checkbox(WindowRef win, const Rect *r,
+		const char *title, int initial)
+{
+	/* Create checkbox WITHOUT title - we'll draw label manually to avoid
+	 * white background cutout on platinum window background. */
+	ControlRef c = NewControl(win, r, "\p", 1, (short)(initial ? 1 : 0), 0, 1,
+		kControlCheckBoxProc, 0);
+	if (c != NULL) AutoEmbedControl(c, win);
+	(void)title; /* Label drawn in prefs_paint */
+	return c;
+}
 
-static MenuHandle prefs_popup_menu(const struct prefs_popup_def *def,
-		short id)
+static ControlRef prefs_create_button(WindowRef win, const Rect *r,
+		const char *title)
+{
+	unsigned char pstr[256];
+	ControlRef c;
+	c_to_pstring(title, pstr);
+	c = NewControl(win, r, pstr, 1, 0, 0, 0,
+		kControlPushButtonProc, 0);
+	if (c != NULL) AutoEmbedControl(c, win);
+	return c;
+}
+
+static void prefs_popup_attach(ControlRef c, MenuHandle m)
+{
+	(void)SetControlData(c, kControlEntireControl,
+		kControlPopupButtonMenuHandleTag, sizeof(m), &m);
+}
+
+static ControlRef prefs_create_tabs(WindowRef win, const Rect *r,
+		const char **labels, int count, int initial_tab)
+{
+	ControlRef c;
+	int i;
+	if (initial_tab < 1) initial_tab = 1;
+	if (initial_tab > count) initial_tab = count;
+	c = NewControl(win, r, "\p", true, 0, 1, (short)count,
+		kControlTabLargeProc, 0);
+	if (c == NULL) return NULL;
+	for (i = 1; i <= count; i++) {
+		ControlTabInfoRec info;
+		info.version = kControlTabInfoVersionZero;
+		info.iconSuiteID = 0;
+		c_to_pstring(labels[i - 1], info.name);
+		SetControlData(c, (ControlPartCode)i, kControlTabInfoTag,
+			sizeof(info), (Ptr)&info);
+	}
+	SetControlValue(c, (short)initial_tab);
+	AutoEmbedControl(c, win);
+	return c;
+}
+
+static ControlRef prefs_create_popup(WindowRef win, const Rect *r,
+		MenuHandle m, int count, int initial_item)
+{
+	ControlRef c;
+	short m_id = 0;
+	if (initial_item < 1) initial_item = 1;
+	if (initial_item > count) initial_item = count;
+	if (m != NULL) {
+		InsertMenu(m, hierMenu);
+		m_id = GetMenuID(m);
+		CheckMenuItem(m, (short)initial_item, true);
+	}
+	c = NewControl(win, r, "\p", 1, (short)initial_item, m_id, 0,
+		popupMenuProc, 0);
+	if (c != NULL) {
+		if (m != NULL) {
+			SetControlPopupMenuHandle(c, m);
+			SetControlPopupMenuID(c, m_id);
+			SetControlMinimum(c, 1);
+			SetControlMaximum(c, (short)count);
+		}
+		AutoEmbedControl(c, win);
+	}
+	return c;
+}
+
+static void prefs_popup_set_item(ControlRef c, MenuHandle m, int item)
+{
+	short count, i;
+	if (m != NULL) {
+		count = CountMenuItems(m);
+		for (i = 1; i <= count; i++) {
+			CheckMenuItem(m, i, (i == item));
+		}
+	}
+	if (c != NULL) {
+		SetControlValue(c, (short)item);
+	}
+}
+
+static MenuHandle prefs_popup_menu(const struct prefs_popup_def *def, short id)
 {
 	MenuHandle m;
 	int i;
@@ -572,37 +586,16 @@ static MenuHandle prefs_popup_menu(const struct prefs_popup_def *def,
 	return m;
 }
 
-static MenuHandle prefs_cat_menu(void)
-{
-	MenuHandle m;
-	int i;
-	m = NewMenu(PREFS_MENU_ID_CAT, "\pShow:");
-	if (m == NULL) return NULL;
-	for (i = 0; i < PREFS_CAT_COUNT; i++) {
-		unsigned char pstr[256];
-		c_to_pstring(s_lbl_cat[i], pstr);
-		AppendMenu(m, pstr);
-	}
-	return m;
-}
 
-/* Best-effort attach of the popup's menu handle; without it the CDEF
- * has nothing to draw as the value text. Standard since the
- * Appearance Manager (Mac OS 8.5). */
-static void prefs_popup_attach(ControlRef c, MenuHandle m)
-{
-	(void)SetControlData(c, kControlEntireControl,
-		kControlPopupButtonMenuHandleTag, sizeof(m), &m);
-}
 
 static void prefs_set_val(ControlRef c, int v)
 {
 	if (c != NULL) SetControlValue(c, (short)v);
 }
 
-static int prefs_get_val(ControlRef c)
+static int prefs_get_val(ControlRef c, int fallback)
 {
-	if (c == NULL) return 0;
+	if (c == NULL) return fallback;
 	return GetControlValue(c);
 }
 
@@ -620,11 +613,12 @@ static void prefs_disp_ctrl(ControlRef c)
 
 static void prefs_disp_menu(MenuHandle m)
 {
-	if (m != NULL) DisposeMenu(m);
+	if (m != NULL) {
+		DeleteMenu(GetMenuID(m));
+		DisposeMenu(m);
+	}
 }
 
-/* Nearest entry index (1-based) for a value, so popups always show a
- * valid item even for values that fell between the offered steps. */
 static short prefs_popup_item(const struct prefs_popup_def *def, int value)
 {
 	int i;
@@ -638,35 +632,41 @@ static short prefs_popup_item(const struct prefs_popup_def *def, int value)
 	return (short)best;
 }
 
-static int prefs_popup_get(ControlRef c, const struct prefs_popup_def *def)
+static int prefs_popup_get(ControlRef c, const struct prefs_popup_def *def, int fallback)
 {
-	int idx = prefs_get_val(c) - 1;
+	int idx;
+	if (c == NULL) return fallback;
+	idx = GetControlValue(c) - 1;
 	if (idx < 0) idx = 0;
 	if (idx >= def->count) idx = def->count - 1;
 	return def->values[idx];
 }
 
-/* Show/hide the per-category control set. TEs are not controls: they
- * are simply not drawn/hit-tested off their panel. */
+/* Category visibility management */
 static void prefs_panel_vis(struct prefs_win *pw)
 {
-	prefs_set_vis(pw->ck_fg,     pw->cat == PREFS_CAT_APPEAR);
-	prefs_set_vis(pw->ck_bg,     pw->cat == PREFS_CAT_APPEAR);
-	prefs_set_vis(pw->ck_anim,   pw->cat == PREFS_CAT_APPEAR);
-	prefs_set_vis(pw->pp_font,   pw->cat == PREFS_CAT_APPEAR);
-	prefs_set_vis(pw->pp_minfont,pw->cat == PREFS_CAT_APPEAR);
-	prefs_set_vis(pw->ck_js,     pw->cat == PREFS_CAT_CONTENT);
-	prefs_set_vis(pw->ck_css,    pw->cat == PREFS_CAT_CONTENT);
-	prefs_set_vis(pw->ck_ads,    pw->cat == PREFS_CAT_CONTENT);
-	prefs_set_vis(pw->ck_popups, pw->cat == PREFS_CAT_CONTENT);
-	prefs_set_vis(pw->ck_debug,  pw->cat == PREFS_CAT_CONTENT);
-	prefs_set_vis(pw->ck_dnt,    pw->cat == PREFS_CAT_PRIVACY);
-	prefs_set_vis(pw->ck_ref,    pw->cat == PREFS_CAT_PRIVACY);
-	prefs_set_vis(pw->ck_cookies,pw->cat == PREFS_CAT_PRIVACY);
-	prefs_set_vis(pw->btn_cache, pw->cat == PREFS_CAT_PRIVACY);
-	prefs_set_vis(pw->btn_hist,  pw->cat == PREFS_CAT_PRIVACY);
-	prefs_set_vis(pw->pp_fetch,  pw->cat == PREFS_CAT_NETWORK);
-	prefs_set_vis(pw->pp_perhost,pw->cat == PREFS_CAT_NETWORK);
+	/* General */
+	prefs_set_vis(pw->btn_home_current, pw->cat == PREFS_CAT_GENERAL);
+	prefs_set_vis(pw->btn_home_default, pw->cat == PREFS_CAT_GENERAL);
+	/* Web Content */
+	prefs_set_vis(pw->ck_images,        pw->cat == PREFS_CAT_CONTENT);
+	prefs_set_vis(pw->ck_anim,          pw->cat == PREFS_CAT_CONTENT);
+	prefs_set_vis(pw->ck_css,           pw->cat == PREFS_CAT_CONTENT);
+	prefs_set_vis(pw->ck_js,            pw->cat == PREFS_CAT_CONTENT);
+	prefs_set_vis(pw->ck_popups,        pw->cat == PREFS_CAT_CONTENT);
+	prefs_set_vis(pw->ck_ads,           pw->cat == PREFS_CAT_CONTENT);
+	/* Appearance */
+	prefs_set_vis(pw->pp_font,          pw->cat == PREFS_CAT_APPEAR);
+	prefs_set_vis(pw->pp_minfont,       pw->cat == PREFS_CAT_APPEAR);
+	/* Privacy */
+	prefs_set_vis(pw->ck_cookies,       pw->cat == PREFS_CAT_PRIVACY);
+	prefs_set_vis(pw->ck_ref,           pw->cat == PREFS_CAT_PRIVACY);
+	prefs_set_vis(pw->ck_dnt,           pw->cat == PREFS_CAT_PRIVACY);
+	prefs_set_vis(pw->btn_cache,        pw->cat == PREFS_CAT_PRIVACY);
+	prefs_set_vis(pw->btn_hist,         pw->cat == PREFS_CAT_PRIVACY);
+	/* Advanced */
+	prefs_set_vis(pw->pp_fetch,         pw->cat == PREFS_CAT_NETWORK);
+	prefs_set_vis(pw->pp_perhost,       pw->cat == PREFS_CAT_NETWORK);
 }
 
 static void prefs_set_cat(struct prefs_win *pw, int cat)
@@ -675,16 +675,19 @@ static void prefs_set_cat(struct prefs_win *pw, int cat)
 	if (cat < 0 || cat >= PREFS_CAT_COUNT) return;
 	if (cat == pw->cat) return;
 	pw->cat = cat;
-	prefs_set_val(pw->pp_cat, cat + 1);
+	if (pw->tabs != NULL) {
+		SetControlValue(pw->tabs, (short)(cat + 1));
+	}
+	SetPortWindowPort(pw->win);
 	prefs_panel_vis(pw);
 	SetRect(&r, 0, PREFS_PANEL_TOP, PREFS_W_W, PREFS_PANEL_BOT);
 	InvalWindowRect(pw->win, &r);
 }
 
-/* Push every control's current state into the live option table. */
+/* Commit UI state to the live nsoptions table */
 static void prefs_apply_from_ui(struct prefs_win *pw)
 {
-	/* home page: empty field -> NULL -> built-in home */
+	/* Home page */
 	if (pw->te_home != NULL) {
 		long n = pw->te_home[0]->teLength;
 		char *buf;
@@ -692,81 +695,118 @@ static void prefs_apply_from_ui(struct prefs_win *pw)
 		buf = (char *)malloc((size_t)n + 1);
 		if (buf != NULL) {
 			if (n > 0)
-				memcpy(buf, pw->te_home[0]->hText, (size_t)n);
+				memcpy(buf, *pw->te_home[0]->hText, (size_t)n);
 			buf[n] = '\0';
-			/* takes ownership; empty string becomes NULL */
-			nsoption_set_charp(homepage_url, buf);
+			/* Trim whitespace */
+			{
+				char *start = buf;
+				char *end;
+				while (*start == ' ' || *start == '\t' || *start == '\r' || *start == '\n') start++;
+				end = start + strlen(start);
+				while (end > start && (*(end - 1) == ' ' || *(end - 1) == '\t' ||
+				       *(end - 1) == '\r' || *(end - 1) == '\n')) {
+					end--;
+					*end = '\0';
+				}
+				if (start != buf) {
+					memmove(buf, start, strlen(start) + 1);
+				}
+			}
+			/* Clear if matches default so delta file is clean */
+			if (buf[0] == '\0' || strcmp(buf, MACSURF_HOME_URL) == 0) {
+				nsoption_set_charp(homepage_url, NULL);
+			} else {
+				nsoption_set_charp(homepage_url, buf);
+			}
 		}
 	}
-	/* new-window size (0 = automatic; clamps live in window.c) */
-	{
-		long n;
+
+	/* Window dimensions */
+	if (pw->te_ww != NULL) {
+		long n = pw->te_ww[0]->teLength;
 		char num[16];
 		int v;
-		if (pw->te_ww != NULL) {
-			n = pw->te_ww[0]->teLength;
-			if (n <= 0 || n >= (long)sizeof num) v = nsoption_int(window_width);
-			else {
-				memcpy(num, pw->te_ww[0]->hText, (size_t)n);
-				num[n] = '\0';
-				v = atoi(num);
-			}
-			if (v < 0) v = 0;
-			if (v > 4096) v = 4096;
-			nsoption_set_int(window_width, v);
+		if (n <= 0 || n >= (long)sizeof num) v = nsoption_int(window_width);
+		else {
+			memcpy(num, *pw->te_ww[0]->hText, (size_t)n);
+			num[n] = '\0';
+			v = atoi(num);
 		}
-		if (pw->te_wh != NULL) {
-			n = pw->te_wh[0]->teLength;
-			if (n <= 0 || n >= (long)sizeof num) v = nsoption_int(window_height);
-			else {
-				memcpy(num, pw->te_wh[0]->hText, (size_t)n);
-				num[n] = '\0';
-				v = atoi(num);
-			}
-			if (v < 0) v = 0;
-			if (v > 4096) v = 4096;
-			nsoption_set_int(window_height, v);
-		}
+		if (v < 0) v = 0;
+		if (v > 4096) v = 4096;
+		nsoption_set_int(window_width, v);
 	}
-	/* checkboxes */
-	nsoption_set_bool(foreground_images,
-		prefs_get_val(pw->ck_fg) != 0);
-	nsoption_set_bool(background_images,
-		prefs_get_val(pw->ck_bg) != 0);
-	nsoption_set_bool(animate_images,
-		prefs_get_val(pw->ck_anim) != 0);
-	nsoption_set_bool(enable_javascript,
-		prefs_get_val(pw->ck_js) != 0);
-	nsoption_set_bool(author_level_css,
-		prefs_get_val(pw->ck_css) != 0);
-	nsoption_set_bool(block_advertisements,
-		prefs_get_val(pw->ck_ads) != 0);
-	nsoption_set_bool(disable_popups,
-		prefs_get_val(pw->ck_popups) != 0);
-	nsoption_set_bool(macsurf_debug_integrations,
-		prefs_get_val(pw->ck_debug) != 0);
-	nsoption_set_bool(do_not_track,
-		prefs_get_val(pw->ck_dnt) != 0);
-	nsoption_set_bool(send_referer,
-		prefs_get_val(pw->ck_ref) != 0);
-	nsoption_set_bool(accept_cookies,
-		prefs_get_val(pw->ck_cookies) != 0);
-	/* popups */
-	nsoption_set_int(font_size,
-		prefs_popup_get(pw->pp_font, &s_popup_font));
-	nsoption_set_int(font_min_size,
-		prefs_popup_get(pw->pp_minfont, &s_popup_minfont));
-	nsoption_set_int(max_fetchers,
-		prefs_popup_get(pw->pp_fetch, &s_popup_fetch));
-	nsoption_set_int(max_fetchers_per_host,
-		prefs_popup_get(pw->pp_perhost, &s_popup_perhost));
+	if (pw->te_wh != NULL) {
+		long n = pw->te_wh[0]->teLength;
+		char num[16];
+		int v;
+		if (n <= 0 || n >= (long)sizeof num) v = nsoption_int(window_height);
+		else {
+			memcpy(num, *pw->te_wh[0]->hText, (size_t)n);
+			num[n] = '\0';
+			v = atoi(num);
+		}
+		if (v < 0) v = 0;
+		if (v > 4096) v = 4096;
+		nsoption_set_int(window_height, v);
+	}
+
+	/* Web Content */
+	if (pw->ck_images != NULL) {
+		int img_val = (GetControlValue(pw->ck_images) != 0);
+		nsoption_set_bool(foreground_images, img_val);
+		nsoption_set_bool(background_images, img_val);
+	}
+	if (pw->ck_anim != NULL) {
+		nsoption_set_bool(animate_images, GetControlValue(pw->ck_anim) != 0);
+	}
+	if (pw->ck_css != NULL) {
+		nsoption_set_bool(author_level_css, GetControlValue(pw->ck_css) != 0);
+	}
+	if (pw->ck_js != NULL) {
+		nsoption_set_bool(enable_javascript, GetControlValue(pw->ck_js) != 0);
+	}
+	if (pw->ck_popups != NULL) {
+		nsoption_set_bool(disable_popups, GetControlValue(pw->ck_popups) != 0);
+	}
+	if (pw->ck_ads != NULL) {
+		nsoption_set_bool(block_advertisements, GetControlValue(pw->ck_ads) != 0);
+	}
+
+	/* Appearance */
+	if (pw->pp_font != NULL) {
+		nsoption_set_int(font_size, prefs_popup_get(pw->pp_font, &s_popup_font, nsoption_int(font_size)));
+	}
+	if (pw->pp_minfont != NULL) {
+		nsoption_set_int(font_min_size, prefs_popup_get(pw->pp_minfont, &s_popup_minfont, nsoption_int(font_min_size)));
+	}
+
+	/* Privacy */
+	if (pw->ck_cookies != NULL) {
+		nsoption_set_bool(accept_cookies, GetControlValue(pw->ck_cookies) != 0);
+	}
+	if (pw->ck_ref != NULL) {
+		nsoption_set_bool(send_referer, GetControlValue(pw->ck_ref) != 0);
+	}
+	if (pw->ck_dnt != NULL) {
+		nsoption_set_bool(do_not_track, GetControlValue(pw->ck_dnt) != 0);
+	}
+
+	/* Advanced */
+	if (pw->pp_fetch != NULL) {
+		nsoption_set_int(max_fetchers, prefs_popup_get(pw->pp_fetch, &s_popup_fetch, nsoption_int(max_fetchers)));
+	}
+	if (pw->pp_perhost != NULL) {
+		nsoption_set_int(max_fetchers_per_host, prefs_popup_get(pw->pp_perhost, &s_popup_perhost, nsoption_int(max_fetchers_per_host)));
+	}
 }
 
-/* Read the live option table into every control (open and Defaults). */
+/* Populate UI controls from live options */
 static void prefs_load_values(struct prefs_win *pw)
 {
 	char num[32];
 	const char *home = macos9_home_url();
+
 	if (pw->te_home != NULL) {
 		TESetText(home, (long)strlen(home), pw->te_home);
 		TESetSelect(0, 32767, pw->te_home);
@@ -781,28 +821,91 @@ static void prefs_load_values(struct prefs_win *pw)
 		TESetText(num, (long)strlen(num), pw->te_wh);
 		TESetSelect(0, 32767, pw->te_wh);
 	}
-	prefs_set_val(pw->pp_font,
-		prefs_popup_item(&s_popup_font, nsoption_int(font_size)));
-	prefs_set_val(pw->pp_minfont,
-		prefs_popup_item(&s_popup_minfont, nsoption_int(font_min_size)));
-	prefs_set_val(pw->pp_fetch,
-		prefs_popup_item(&s_popup_fetch, nsoption_int(max_fetchers)));
-	prefs_set_val(pw->pp_perhost,
-		prefs_popup_item(&s_popup_perhost,
-			nsoption_int(max_fetchers_per_host)));
-	prefs_set_val(pw->ck_fg, nsoption_bool(foreground_images) ? 1 : 0);
-	prefs_set_val(pw->ck_bg, nsoption_bool(background_images) ? 1 : 0);
-	prefs_set_val(pw->ck_anim, nsoption_bool(animate_images) ? 1 : 0);
-	prefs_set_val(pw->ck_js, nsoption_bool(enable_javascript) ? 1 : 0);
-	prefs_set_val(pw->ck_css, nsoption_bool(author_level_css) ? 1 : 0);
-	prefs_set_val(pw->ck_ads, nsoption_bool(block_advertisements) ? 1 : 0);
+
+	/* Web Content */
+	prefs_set_val(pw->ck_images, (nsoption_bool(foreground_images) || nsoption_bool(background_images)) ? 1 : 0);
+	prefs_set_val(pw->ck_anim,   nsoption_bool(animate_images) ? 1 : 0);
+	prefs_set_val(pw->ck_css,    nsoption_bool(author_level_css) ? 1 : 0);
+	prefs_set_val(pw->ck_js,     nsoption_bool(enable_javascript) ? 1 : 0);
 	prefs_set_val(pw->ck_popups, nsoption_bool(disable_popups) ? 1 : 0);
-	prefs_set_val(pw->ck_debug,
-		nsoption_bool(macsurf_debug_integrations) ? 1 : 0);
-	prefs_set_val(pw->ck_dnt, nsoption_bool(do_not_track) ? 1 : 0);
-	prefs_set_val(pw->ck_ref, nsoption_bool(send_referer) ? 1 : 0);
+	prefs_set_val(pw->ck_ads,    nsoption_bool(block_advertisements) ? 1 : 0);
+
+	/* Appearance */
+	prefs_popup_set_item(pw->pp_font,    pw->m_font,    prefs_popup_item(&s_popup_font, nsoption_int(font_size)));
+	prefs_popup_set_item(pw->pp_minfont, pw->m_minfont, prefs_popup_item(&s_popup_minfont, nsoption_int(font_min_size)));
+
+	/* Privacy */
 	prefs_set_val(pw->ck_cookies, nsoption_bool(accept_cookies) ? 1 : 0);
-	prefs_set_val(pw->pp_cat, pw->cat + 1);
+	prefs_set_val(pw->ck_ref,     nsoption_bool(send_referer) ? 1 : 0);
+	prefs_set_val(pw->ck_dnt,     nsoption_bool(do_not_track) ? 1 : 0);
+
+	/* Advanced */
+	prefs_popup_set_item(pw->pp_fetch,   pw->m_fetch,   prefs_popup_item(&s_popup_fetch, nsoption_int(max_fetchers)));
+	prefs_popup_set_item(pw->pp_perhost, pw->m_perhost, prefs_popup_item(&s_popup_perhost, nsoption_int(max_fetchers_per_host)));
+
+	if (pw->tabs != NULL)
+		SetControlValue(pw->tabs, (short)(pw->cat + 1));
+}
+
+/* Reset UI controls to factory defaults without modifying live nsoptions */
+static void prefs_load_defaults_into_ui(struct prefs_win *pw)
+{
+	const char *home = MACSURF_HOME_URL;
+
+	if (pw->te_home != NULL) {
+		TESetText(home, (long)strlen(home), pw->te_home);
+		TESetSelect(0, 32767, pw->te_home);
+	}
+	if (pw->te_ww != NULL) {
+		TESetText("0", 1, pw->te_ww);
+		TESetSelect(0, 32767, pw->te_ww);
+	}
+	if (pw->te_wh != NULL) {
+		TESetText("0", 1, pw->te_wh);
+		TESetSelect(0, 32767, pw->te_wh);
+	}
+
+	prefs_set_val(pw->ck_images, 1);
+	prefs_set_val(pw->ck_anim,   1);
+	prefs_set_val(pw->ck_css,    1);
+	prefs_set_val(pw->ck_js,     1);
+	prefs_set_val(pw->ck_popups, 0);
+	prefs_set_val(pw->ck_ads,    0);
+
+	prefs_popup_set_item(pw->pp_font,    pw->m_font,    prefs_popup_item(&s_popup_font, 120));
+	prefs_popup_set_item(pw->pp_minfont, pw->m_minfont, prefs_popup_item(&s_popup_minfont, 85));
+
+	prefs_set_val(pw->ck_cookies, 1);
+	prefs_set_val(pw->ck_ref,     1);
+	prefs_set_val(pw->ck_dnt,     0);
+
+	prefs_popup_set_item(pw->pp_fetch,   pw->m_fetch,   prefs_popup_item(&s_popup_fetch, 128));
+	prefs_popup_set_item(pw->pp_perhost, pw->m_perhost, prefs_popup_item(&s_popup_perhost, 16));
+}
+
+static void prefs_set_home_from_current(struct prefs_win *pw)
+{
+	struct gui_window *gw = macos9_window_list_head();
+	if (gw != NULL && gw->bw != NULL && pw->te_home != NULL) {
+		struct nsurl *u = NULL;
+		if (browser_window_get_url(gw->bw, true, &u) == NSERROR_OK && u != NULL) {
+			const char *url_str = nsurl_access(u);
+			if (url_str != NULL && url_str[0] != '\0') {
+				TESetText(url_str, (long)strlen(url_str), pw->te_home);
+				TESetSelect(0, 32767, pw->te_home);
+				InvalWindowRect(pw->win, &s_te_home_rect);
+			}
+		}
+	}
+}
+
+static void prefs_set_home_default(struct prefs_win *pw)
+{
+	if (pw->te_home != NULL) {
+		TESetText(MACSURF_HOME_URL, (long)strlen(MACSURF_HOME_URL), pw->te_home);
+		TESetSelect(0, 32767, pw->te_home);
+		InvalWindowRect(pw->win, &s_te_home_rect);
+	}
 }
 
 static void prefs_paint(struct prefs_win *pw)
@@ -812,65 +915,225 @@ static void prefs_paint(struct prefs_win *pw)
 	Rect r;
 	RGBColor saved;
 	RGBColor black_c;
-	black_c.red = black_c.green = black_c.blue = 0;
+	RGBColor gray_c;
+	RGBColor sep_c;
+
+	black_c.red = 0; black_c.green = 0; black_c.blue = 0;
+	gray_c.red = 0x5555; gray_c.green = 0x5555; gray_c.blue = 0x5555;
+	sep_c.red = 0xBBBB; sep_c.green = 0xBBBB; sep_c.blue = 0xBBBB;
+
 	SetRect(&content, 0, 0, PREFS_W_W, PREFS_W_H);
 	SetRect(&panel, 0, PREFS_PANEL_TOP, PREFS_W_W, PREFS_PANEL_BOT);
 	EraseRect(&panel);
+
 	prefs_banner(&content, "Preferences");
+
 	GetForeColor(&saved);
-	RGBForeColor(&black_c);
-	TextFont(1);
-	TextSize(12);
-	MoveTo(300, 62); DrawString("\pShow:");
+
+	/* Bottom separator line */
+	RGBForeColor(&sep_c);
+	MoveTo(0, PREFS_PANEL_BOT + 2);
+	LineTo(PREFS_W_W, PREFS_PANEL_BOT + 2);
+
+	/* Default button ring around OK */
+	{
+		Rect ok_ring = s_btn_ok_rect;
+		InsetRect(&ok_ring, -4, -4);
+		PenSize(3, 3);
+		RGBForeColor(&black_c);
+		FrameRoundRect(&ok_ring, 16, 16);
+		PenSize(1, 1);
+	}
+
+	/* Draw controls: category tabs frame & visible panel controls */
+	RGBForeColor(&saved);
+	DrawControls(pw->win);
+
+	/* Category content labels and descriptions */
 	switch (pw->cat) {
 	case PREFS_CAT_GENERAL:
-		MoveTo(16, 96); DrawString("\pHome page:");
-		MoveTo(16, 134); DrawString("\pNew window width:");
-		MoveTo(16, 164); DrawString("\pNew window height:");
-		MoveTo(216, 164); DrawString("\p(0 = automatic)");
+		RGBForeColor(&black_c);
+		TextFont(1); TextFace(bold); TextSize(12);
+		MoveTo(24, 90);
+		DrawString("\pHome page:");
+
+		MoveTo(24, 182);
+		DrawString("\pNew window size:");
+
+		TextFace(normal);
+		MoveTo(28, 212);
+		DrawString("\pWidth:");
+		MoveTo(168, 212);
+		DrawString("\pHeight:");
+
+		RGBForeColor(&gray_c);
+		TextFont(3); TextSize(9);
+		MoveTo(288, 212);
+		DrawString("\p(0 = automatic default)");
 		break;
-	case PREFS_CAT_APPEAR:
-		MoveTo(16, 96); DrawString("\pDefault font size:");
-		MoveTo(16, 126); DrawString("\pMinimum font size:");
-		break;
+
 	case PREFS_CAT_CONTENT:
+		RGBForeColor(&black_c);
+		TextFont(1); TextFace(normal); TextSize(12);
+		/* Checkbox labels - drawn manually to avoid white cutout.
+		 * Checkbox is 20px tall (top to bottom). Center vertically:
+		 * baseline at rect_top + 14 (8px checkbox + 2px gap + 4px baseline offset for Geneva 12). */
+		#define CK_LABEL_V(top) ((short)((top) + 14))
+		MoveTo((short)(s_ck_images_ctrl_rect.left + 22), CK_LABEL_V(s_ck_images_ctrl_rect.top));
+		DrawString("\pLoad images");
+		MoveTo((short)(s_ck_anim_ctrl_rect.left + 22), CK_LABEL_V(s_ck_anim_ctrl_rect.top));
+		DrawString("\pAnimate images");
+		MoveTo((short)(s_ck_css_ctrl_rect.left + 22), CK_LABEL_V(s_ck_css_ctrl_rect.top));
+		DrawString("\pUse website styles (CSS)");
+		MoveTo((short)(s_ck_js_ctrl_rect.left + 22), CK_LABEL_V(s_ck_js_ctrl_rect.top));
+		DrawString("\pEnable JavaScript");
+		MoveTo((short)(s_ck_popups_ctrl_rect.left + 22), CK_LABEL_V(s_ck_popups_ctrl_rect.top));
+		DrawString("\pBlock pop-up windows");
+		MoveTo((short)(s_ck_ads_ctrl_rect.left + 22), CK_LABEL_V(s_ck_ads_ctrl_rect.top));
+		DrawString("\pBlock advertisements");
+		#undef CK_LABEL_V
+
+		RGBForeColor(&gray_c);
+		TextFont(3); TextFace(normal); TextSize(9);
+		MoveTo(44, 108);
+		DrawString("\pShows pictures and image-based page backgrounds.");
+		MoveTo(64, 152);
+		DrawString("\pPlays animated GIF images.");
+		MoveTo(44, 196);
+		DrawString("\pDisplays pages using formatting and styles provided by websites.");
+		MoveTo(44, 240);
+		DrawString("\pRequired for menus, comments, and interactive features on websites.");
+		MoveTo(44, 284);
+		DrawString("\pPrevents websites from opening unrequested new windows.");
 		break;
+
+	case PREFS_CAT_APPEAR:
+		RGBForeColor(&black_c);
+		TextFont(1); TextFace(normal); TextSize(12);
+		MoveTo(24, 104);
+		DrawString("\pDefault font size:");
+		MoveTo(24, 168);
+		DrawString("\pMinimum font size:");
+
+		RGBForeColor(&gray_c);
+		TextFont(3); TextSize(9);
+		MoveTo(24, 126);
+		DrawString("\pStandard text size for web pages (MacSurf default is 12 pt / 16 px).");
+		MoveTo(24, 190);
+		DrawString("\pSmallest size text will be allowed to shrink to on detailed pages.");
+		break;
+
 	case PREFS_CAT_PRIVACY:
-		break;
+		RGBForeColor(&black_c);
+		TextFont(1); TextFace(normal); TextSize(12);
+		/* Checkbox labels - drawn manually to avoid white cutout.
+		 * Center vertically: baseline at rect_top + 14. */
+		#define CK_LABEL_V(top) ((short)((top) + 14))
+		MoveTo((short)(s_ck_cookies_ctrl_rect.left + 22), CK_LABEL_V(s_ck_cookies_ctrl_rect.top));
+		DrawString("\pStore and send cookies");
+		MoveTo((short)(s_ck_ref_ctrl_rect.left + 22), CK_LABEL_V(s_ck_ref_ctrl_rect.top));
+		DrawString("\pSend Referer header");
+		MoveTo((short)(s_ck_dnt_ctrl_rect.left + 22), CK_LABEL_V(s_ck_dnt_ctrl_rect.top));
+		DrawString("\pSend Do Not Track request");
+		#undef CK_LABEL_V
+
+		RGBForeColor(&gray_c);
+		TextFont(3); TextFace(normal); TextSize(9);
+		MoveTo(44, 108);
+		DrawString("\pAllows websites to remember your logins, sessions, and preferences.");
+		MoveTo(44, 156);
+		DrawString("\pInforms websites which web page linked you to them.");
+		MoveTo(44, 204);
+		DrawString("\pAsks websites and advertisers not to track your browsing habits.");
+		MoveTo(24, 272);
+		DrawString("\pRemoves temporarily cached files and recorded page visit history.");
+		break;;
+
 	case PREFS_CAT_NETWORK:
-		MoveTo(16, 96); DrawString("\pMaximum simultaneous fetchers:");
-		MoveTo(16, 126); DrawString("\pMaximum fetchers per host:");
+		RGBForeColor(&black_c);
+		TextFont(1); TextFace(normal); TextSize(12);
+		MoveTo(24, 104);
+		DrawString("\pMaximum simultaneous connections:");
+		MoveTo(24, 168);
+		DrawString("\pMaximum connections per host:");
+		MoveTo(24, 230);
+		DrawString("\pMemory cache size:");
+
+		RGBForeColor(&gray_c);
+		TextFont(3); TextSize(9);
+		MoveTo(24, 126);
+		DrawString("\pTotal concurrent HTTP/HTTPS network connections (default is 128).");
+		MoveTo(24, 190);
+		DrawString("\pConcurrent connections to a single server domain (default is 16).");
+
+		TextFont(1); TextSize(12);
+		RGBForeColor(&black_c);
+		MoveTo(160, 230);
+		DrawString("\p32 MB (allocated from application partition)");
 		break;
+
 	default:
 		break;
 	}
-	RGBForeColor(&saved);
-	DrawControls(pw->win);
+
+	/* Draw popup button labels directly to guarantee crisp 12pt Geneva text */
+	TextFont(1); TextFace(normal); TextSize(12);
+	RGBForeColor(&black_c);
+
+	if (pw->cat == PREFS_CAT_APPEAR) {
+		int fi = prefs_popup_item(&s_popup_font, nsoption_int(font_size)) - 1;
+		int mi = prefs_popup_item(&s_popup_minfont, nsoption_int(font_min_size)) - 1;
+		if (fi >= 0 && fi < s_popup_font.count) {
+			MoveTo((short)(s_pp_font_rect.left + 8), (short)(s_pp_font_rect.top + 15));
+			DrawText(s_popup_font.labels[fi], 0, (short)strlen(s_popup_font.labels[fi]));
+		}
+		if (mi >= 0 && mi < s_popup_minfont.count) {
+			MoveTo((short)(s_pp_minfont_rect.left + 8), (short)(s_pp_minfont_rect.top + 15));
+			DrawText(s_popup_minfont.labels[mi], 0, (short)strlen(s_popup_minfont.labels[mi]));
+		}
+	} else if (pw->cat == PREFS_CAT_NETWORK) {
+		int fi = prefs_popup_item(&s_popup_fetch, nsoption_int(max_fetchers)) - 1;
+		int pi = prefs_popup_item(&s_popup_perhost, nsoption_int(max_fetchers_per_host)) - 1;
+		if (fi >= 0 && fi < s_popup_fetch.count) {
+			MoveTo((short)(s_pp_fetch_rect.left + 8), (short)(s_pp_fetch_rect.top + 15));
+			DrawText(s_popup_fetch.labels[fi], 0, (short)strlen(s_popup_fetch.labels[fi]));
+		}
+		if (pi >= 0 && pi < s_popup_perhost.count) {
+			MoveTo((short)(s_pp_perhost_rect.left + 8), (short)(s_pp_perhost_rect.top + 15));
+			DrawText(s_popup_perhost.labels[pi], 0, (short)strlen(s_popup_perhost.labels[pi]));
+		}
+	}
+
+	/* Framed TextEdit fields */
 	if (pw->cat == PREFS_CAT_GENERAL) {
+		RGBForeColor(&black_c);
 		if (pw->te_home != NULL) {
-			r = s_te_home_rect; FrameRect(&r); TEUpdate(&r, pw->te_home);
+			r = s_te_home_rect;
+			FrameRect(&r);
+			TEUpdate(&r, pw->te_home);
 		}
 		if (pw->te_ww != NULL) {
-			r = s_te_ww_rect; FrameRect(&r); TEUpdate(&r, pw->te_ww);
+			r = s_te_ww_rect;
+			FrameRect(&r);
+			TEUpdate(&r, pw->te_ww);
 		}
 		if (pw->te_wh != NULL) {
-			r = s_te_wh_rect; FrameRect(&r); TEUpdate(&r, pw->te_wh);
+			r = s_te_wh_rect;
+			FrameRect(&r);
+			TEUpdate(&r, pw->te_wh);
 		}
+		RGBForeColor(&saved);
 	}
 }
 
-/* TrackControl + PopUpMenuSelect for a value popup. */
-static void prefs_do_popup(struct prefs_win *pw, ControlRef c, MenuHandle m,
-		Point lp)
+static void prefs_do_popup(ControlRef c, MenuHandle m, Point lp)
 {
-	short part;
 	short cur;
 	Rect cr;
 	Point gpt;
 	long chosen;
+	(void)lp;
 	if (c == NULL || m == NULL) return;
-	part = TrackControl(c, lp, NULL);
-	if (part == 0) return;
 	cur = GetControlValue(c);
 	GetControlBounds(c, &cr);
 	gpt.h = cr.left;
@@ -883,35 +1146,19 @@ static void prefs_do_popup(struct prefs_win *pw, ControlRef c, MenuHandle m,
 	}
 }
 
-/* The category popup also switches the visible panel. */
-static void prefs_do_popup_cat(struct prefs_win *pw, Point lp)
-{
-	short part;
-	short cur;
-	Rect cr;
-	Point gpt;
-	long chosen;
-	if (pw->pp_cat == NULL || pw->m_cat == NULL) return;
-	part = TrackControl(pw->pp_cat, lp, NULL);
-	if (part == 0) return;
-	cur = GetControlValue(pw->pp_cat);
-	GetControlBounds(pw->pp_cat, &cr);
-	gpt.h = cr.left;
-	gpt.v = cr.top;
-	LocalToGlobal(&gpt);
-	chosen = PopUpMenuSelect(pw->m_cat, gpt.v, gpt.h, cur);
-	if (chosen != 0) {
-		SetControlValue(pw->pp_cat, (short)(chosen & 0xFFFF));
-		prefs_set_cat(pw, (int)(chosen & 0xFFFF) - 1);
-	}
-}
 
-static void prefs_check_toggle(ControlRef c, Point lp)
+
+static void prefs_check_toggle(ControlRef c, Point lp, const Rect *ctrl_rect)
 {
-	short part;
+	short cur;
 	if (c == NULL) return;
-	part = TrackControl(c, lp, NULL);
-	if (part != 0) Draw1Control(c);
+	if (ctrl_rect != NULL && PtInRect(lp, ctrl_rect)) {
+		short part = TrackControl(c, lp, NULL);
+		if (part == 0) return;
+	}
+	cur = GetControlValue(c);
+	SetControlValue(c, cur ? 0 : 1);
+	Draw1Control(c);
 }
 
 static void prefs_te_focus(struct prefs_win *pw, TEHandle te, Point lp)
@@ -948,12 +1195,12 @@ static void prefs_te_tab(struct prefs_win *pw)
 	TESetSelect(0, 32767, next);
 }
 
-/* mouseDown on our content: returns 1 when the window should close. */
 static int prefs_click(struct prefs_win *pw, Point lp)
 {
 	Rect r;
 	short part;
 
+	/* OK: commit changes, save deltas, apply live, exit */
 	if (PtInRect(lp, &s_btn_ok_rect)) {
 		part = TrackControl(pw->btn_ok, lp, NULL);
 		if (part != 0) {
@@ -964,31 +1211,50 @@ static int prefs_click(struct prefs_win *pw, Point lp)
 		}
 		return 0;
 	}
+
+	/* Cancel: discard draft changes, exit */
 	if (PtInRect(lp, &s_btn_cancel_rect)) {
 		part = TrackControl(pw->btn_cancel, lp, NULL);
 		if (part != 0) return 1;
 		return 0;
 	}
+
+	/* Restore Defaults: reset UI controls only (confirmed on OK) */
 	if (PtInRect(lp, &s_btn_defaults_rect)) {
 		part = TrackControl(pw->btn_defaults, lp, NULL);
 		if (part != 0) {
-			/* factory settings: re-apply the boot baseline into
-			 * the live table and re-read every control. NOT
-			 * written to disk until OK. */
-			macos9_prefs_apply_defaults();
-			prefs_load_values(pw);
-			SetRect(&r, 0, 0, PREFS_W_W, PREFS_W_H);
+			prefs_load_defaults_into_ui(pw);
+			SetRect(&r, 0, PREFS_PANEL_TOP, PREFS_W_W, PREFS_PANEL_BOT);
 			InvalWindowRect(pw->win, &r);
 		}
 		return 0;
 	}
-	if (PtInRect(lp, &s_pp_cat_rect)) {
-		prefs_do_popup_cat(pw, lp);
+
+	/* Category tabs (header row y: 42..68) */
+	if (PtInRect(lp, &s_tabs_rect) && lp.v < 70) {
+		part = TrackControl(pw->tabs, lp, NULL);
+		if (part != 0) {
+			short new_cat = GetControlValue(pw->tabs);
+			if (new_cat >= 1 && new_cat <= PREFS_CAT_COUNT) {
+				prefs_set_cat(pw, new_cat - 1);
+			}
+		}
 		return 0;
 	}
 
+	/* Per-category interactions */
 	switch (pw->cat) {
 	case PREFS_CAT_GENERAL:
+		if (PtInRect(lp, &s_btn_home_current_rect)) {
+			part = TrackControl(pw->btn_home_current, lp, NULL);
+			if (part != 0) prefs_set_home_from_current(pw);
+			return 0;
+		}
+		if (PtInRect(lp, &s_btn_home_default_rect)) {
+			part = TrackControl(pw->btn_home_default, lp, NULL);
+			if (part != 0) prefs_set_home_default(pw);
+			return 0;
+		}
 		if (PtInRect(lp, &s_te_home_rect)) {
 			prefs_te_focus(pw, pw->te_home, lp); return 0;
 		}
@@ -999,49 +1265,46 @@ static int prefs_click(struct prefs_win *pw, Point lp)
 			prefs_te_focus(pw, pw->te_wh, lp); return 0;
 		}
 		break;
+
+	case PREFS_CAT_CONTENT:
+		if (PtInRect(lp, &s_ck_images_row_rect)) {
+			prefs_check_toggle(pw->ck_images, lp, &s_ck_images_ctrl_rect); return 0;
+		}
+		if (PtInRect(lp, &s_ck_anim_row_rect)) {
+			prefs_check_toggle(pw->ck_anim, lp, &s_ck_anim_ctrl_rect); return 0;
+		}
+		if (PtInRect(lp, &s_ck_css_row_rect)) {
+			prefs_check_toggle(pw->ck_css, lp, &s_ck_css_ctrl_rect); return 0;
+		}
+		if (PtInRect(lp, &s_ck_js_row_rect)) {
+			prefs_check_toggle(pw->ck_js, lp, &s_ck_js_ctrl_rect); return 0;
+		}
+		if (PtInRect(lp, &s_ck_popups_row_rect)) {
+			prefs_check_toggle(pw->ck_popups, lp, &s_ck_popups_ctrl_rect); return 0;
+		}
+		if (PtInRect(lp, &s_ck_ads_row_rect)) {
+			prefs_check_toggle(pw->ck_ads, lp, &s_ck_ads_ctrl_rect); return 0;
+		}
+		break;
+
 	case PREFS_CAT_APPEAR:
-		if (PtInRect(lp, &s_ck_fg_rect)) {
-			prefs_check_toggle(pw->ck_fg, lp); return 0;
-		}
-		if (PtInRect(lp, &s_ck_bg_rect)) {
-			prefs_check_toggle(pw->ck_bg, lp); return 0;
-		}
-		if (PtInRect(lp, &s_ck_anim_rect)) {
-			prefs_check_toggle(pw->ck_anim, lp); return 0;
-		}
 		if (PtInRect(lp, &s_pp_font_rect)) {
-			prefs_do_popup(pw, pw->pp_font, pw->m_font, lp); return 0;
+			prefs_do_popup(pw->pp_font, pw->m_font, lp); return 0;
 		}
 		if (PtInRect(lp, &s_pp_minfont_rect)) {
-			prefs_do_popup(pw, pw->pp_minfont, pw->m_minfont, lp); return 0;
+			prefs_do_popup(pw->pp_minfont, pw->m_minfont, lp); return 0;
 		}
 		break;
-	case PREFS_CAT_CONTENT:
-		if (PtInRect(lp, &s_ck_js_rect)) {
-			prefs_check_toggle(pw->ck_js, lp); return 0;
-		}
-		if (PtInRect(lp, &s_ck_css_rect)) {
-			prefs_check_toggle(pw->ck_css, lp); return 0;
-		}
-		if (PtInRect(lp, &s_ck_ads_rect)) {
-			prefs_check_toggle(pw->ck_ads, lp); return 0;
-		}
-		if (PtInRect(lp, &s_ck_popups_rect)) {
-			prefs_check_toggle(pw->ck_popups, lp); return 0;
-		}
-		if (PtInRect(lp, &s_ck_debug_rect)) {
-			prefs_check_toggle(pw->ck_debug, lp); return 0;
-		}
-		break;
+
 	case PREFS_CAT_PRIVACY:
-		if (PtInRect(lp, &s_ck_dnt_rect)) {
-			prefs_check_toggle(pw->ck_dnt, lp); return 0;
+		if (PtInRect(lp, &s_ck_cookies_row_rect)) {
+			prefs_check_toggle(pw->ck_cookies, lp, &s_ck_cookies_ctrl_rect); return 0;
 		}
-		if (PtInRect(lp, &s_ck_ref_rect)) {
-			prefs_check_toggle(pw->ck_ref, lp); return 0;
+		if (PtInRect(lp, &s_ck_ref_row_rect)) {
+			prefs_check_toggle(pw->ck_ref, lp, &s_ck_ref_ctrl_rect); return 0;
 		}
-		if (PtInRect(lp, &s_ck_cookies_rect)) {
-			prefs_check_toggle(pw->ck_cookies, lp); return 0;
+		if (PtInRect(lp, &s_ck_dnt_row_rect)) {
+			prefs_check_toggle(pw->ck_dnt, lp, &s_ck_dnt_ctrl_rect); return 0;
 		}
 		if (PtInRect(lp, &s_btn_cache_rect)) {
 			part = TrackControl(pw->btn_cache, lp, NULL);
@@ -1054,39 +1317,51 @@ static int prefs_click(struct prefs_win *pw, Point lp)
 			return 0;
 		}
 		break;
+
 	case PREFS_CAT_NETWORK:
 		if (PtInRect(lp, &s_pp_fetch_rect)) {
-			prefs_do_popup(pw, pw->pp_fetch, pw->m_fetch, lp); return 0;
+			prefs_do_popup(pw->pp_fetch, pw->m_fetch, lp); return 0;
 		}
 		if (PtInRect(lp, &s_pp_perhost_rect)) {
-			prefs_do_popup(pw, pw->pp_perhost, pw->m_perhost, lp); return 0;
+			prefs_do_popup(pw->pp_perhost, pw->m_perhost, lp); return 0;
 		}
 		break;
+
 	default:
 		break;
 	}
 
-	/* clicked nothing: drop TE focus */
 	prefs_te_blur(pw);
 	return 0;
 }
 
-/* keyDown/autoKey: returns 1 when the window should close. */
 static int prefs_key(struct prefs_win *pw, const EventRecord *ev)
 {
 	char ch = (char)(ev->message & charCodeMask);
 	if (ev->modifiers & cmdKey) {
 		if (ch == '.' || ch == 'w' || ch == 'W') return 1;
-		return 0;  /* other command keys: ignore in this loop */
+		if (ch == 0x1C) {  /* Cmd-Left Arrow: previous tab */
+			int c = pw->cat - 1;
+			if (c < 0) c = PREFS_CAT_COUNT - 1;
+			prefs_set_cat(pw, c);
+			return 0;
+		}
+		if (ch == 0x1D) {  /* Cmd-Right Arrow: next tab */
+			int c = pw->cat + 1;
+			if (c >= PREFS_CAT_COUNT) c = 0;
+			prefs_set_cat(pw, c);
+			return 0;
+		}
+		return 0;
 	}
 	if (ch == 0x1B) return 1;  /* Esc = cancel */
-	if (ch == '\r' || ch == 0x03) {
+	if (ch == '\r' || ch == 0x03) {  /* Return / Enter = OK */
 		prefs_apply_from_ui(pw);
 		macos9_prefs_save();
 		macos9_prefs_apply_live();
 		return 1;
 	}
-	if (ch == 0x09) {  /* Tab cycles the three text fields */
+	if (ch == 0x09) {  /* Tab cycles text fields */
 		prefs_te_tab(pw);
 		return 0;
 	}
@@ -1101,18 +1376,18 @@ void macos9_prefs_show(void)
 	EventRecord ev;
 	Rect wb;
 	Str255 pt;
+	ControlRef root = NULL;
 	int done = 0;
 
 	memset(&pw, 0, sizeof pw);
 	pw.cat = PREFS_CAT_GENERAL;
 
-	/* one prefs window at a time */
 	if (g_prefs_open_win != NULL) {
 		SelectWindow(g_prefs_open_win);
 		return;
 	}
 
-	SetRect(&wb, 120, 90, (short)(120 + PREFS_W_W), (short)(90 + PREFS_W_H));
+	SetRect(&wb, 110, 80, (short)(110 + PREFS_W_W), (short)(80 + PREFS_W_H));
 	if (CreateNewWindow(kDocumentWindowClass, kWindowCloseBoxAttribute,
 			&wb, &pw.win) != noErr || pw.win == NULL) {
 		return;
@@ -1120,72 +1395,71 @@ void macos9_prefs_show(void)
 	g_prefs_open_win = pw.win;
 	c_to_pstring("Preferences", pt);
 	SetWTitle(pw.win, pt);
-	SetWRefCon(pw.win, 0);  /* TENew dsMemWZErr safety (CLAUDE.md) */
+	SetWRefCon(pw.win, 0);  /* dsMemWZErr guard */
+
+	CreateRootControl(pw.win, &root);
 
 	GetPort(&saved_port);
 	SetPortWindowPort(pw.win);
 	TextFont(1);
 	TextSize(12);
 
-	/* bottom row */
-	PS_CTRL(pw.btn_defaults, pw.win, &s_btn_defaults_rect,
-		"Defaults", kControlPushButtonProc);
-	PS_CTRL(pw.btn_cancel, pw.win, &s_btn_cancel_rect,
-		"Cancel", kControlPushButtonProc);
-	PS_CTRL(pw.btn_ok, pw.win, &s_btn_ok_rect,
-		"OK", kControlPushButtonProc);
-	/* category picker */
-	pw.m_cat = prefs_cat_menu();
-	PS_CTRL(pw.pp_cat, pw.win, &s_pp_cat_rect,
-		"", kControlPopupButtonProc);
-	prefs_popup_attach(pw.pp_cat, pw.m_cat);
-	/* Appearance */
+	/* Bottom button row */
+	pw.btn_defaults = prefs_create_button(pw.win, &s_btn_defaults_rect, "Restore Defaults");
+	pw.btn_cancel   = prefs_create_button(pw.win, &s_btn_cancel_rect, "Cancel");
+	pw.btn_ok       = prefs_create_button(pw.win, &s_btn_ok_rect, "OK");
+
+	/* Category tabs (created before panel controls to establish container frame) */
+	pw.tabs = prefs_create_tabs(pw.win, &s_tabs_rect, s_lbl_cat,
+		PREFS_CAT_COUNT, pw.cat + 1);
+
+	/* General panel controls */
+	pw.btn_home_current = prefs_create_button(pw.win, &s_btn_home_current_rect, "Use Current Page");
+	pw.btn_home_default = prefs_create_button(pw.win, &s_btn_home_default_rect, "Restore Default");
+
+	/* Web Content checkboxes */
+	pw.ck_images = prefs_create_checkbox(pw.win, &s_ck_images_ctrl_rect, "Load images",
+		nsoption_bool(foreground_images) || nsoption_bool(background_images));
+	pw.ck_anim   = prefs_create_checkbox(pw.win, &s_ck_anim_ctrl_rect, "Animate images",
+		nsoption_bool(animate_images));
+	pw.ck_css    = prefs_create_checkbox(pw.win, &s_ck_css_ctrl_rect, "Use website styles (CSS)",
+		nsoption_bool(author_level_css));
+	pw.ck_js     = prefs_create_checkbox(pw.win, &s_ck_js_ctrl_rect, "Enable JavaScript",
+		nsoption_bool(enable_javascript));
+	pw.ck_popups = prefs_create_checkbox(pw.win, &s_ck_popups_ctrl_rect, "Block pop-up windows",
+		nsoption_bool(disable_popups));
+	pw.ck_ads    = prefs_create_checkbox(pw.win, &s_ck_ads_ctrl_rect, "Block advertisements",
+		nsoption_bool(block_advertisements));
+
+	/* Appearance popups */
 	pw.m_font = prefs_popup_menu(&s_popup_font, PREFS_MENU_ID_FONT);
-	PS_CTRL(pw.pp_font, pw.win, &s_pp_font_rect,
-		"", kControlPopupButtonProc);
-	prefs_popup_attach(pw.pp_font, pw.m_font);
+	pw.pp_font = prefs_create_popup(pw.win, &s_pp_font_rect, pw.m_font,
+		s_popup_font.count, prefs_popup_item(&s_popup_font, nsoption_int(font_size)));
+
 	pw.m_minfont = prefs_popup_menu(&s_popup_minfont, PREFS_MENU_ID_MINFONT);
-	PS_CTRL(pw.pp_minfont, pw.win, &s_pp_minfont_rect,
-		"", kControlPopupButtonProc);
-	prefs_popup_attach(pw.pp_minfont, pw.m_minfont);
-	PS_CTRL(pw.ck_fg, pw.win, &s_ck_fg_rect,
-		"Fetch foreground images", kControlCheckBoxProc);
-	PS_CTRL(pw.ck_bg, pw.win, &s_ck_bg_rect,
-		"Fetch background images", kControlCheckBoxProc);
-	PS_CTRL(pw.ck_anim, pw.win, &s_ck_anim_rect,
-		"Animate images", kControlCheckBoxProc);
-	/* Content */
-	PS_CTRL(pw.ck_js, pw.win, &s_ck_js_rect,
-		"Enable JavaScript", kControlCheckBoxProc);
-	PS_CTRL(pw.ck_css, pw.win, &s_ck_css_rect,
-		"Apply author CSS", kControlCheckBoxProc);
-	PS_CTRL(pw.ck_ads, pw.win, &s_ck_ads_rect,
-		"Block advertisements", kControlCheckBoxProc);
-	PS_CTRL(pw.ck_popups, pw.win, &s_ck_popups_rect,
-		"Block pop-up windows", kControlCheckBoxProc);
-	PS_CTRL(pw.ck_debug, pw.win, &s_ck_debug_rect,
-		"Enable debug integrations", kControlCheckBoxProc);
-	/* Privacy */
-	PS_CTRL(pw.ck_dnt, pw.win, &s_ck_dnt_rect,
-		"Send Do Not Track request", kControlCheckBoxProc);
-	PS_CTRL(pw.ck_ref, pw.win, &s_ck_ref_rect,
-		"Send Referer header", kControlCheckBoxProc);
-	PS_CTRL(pw.ck_cookies, pw.win, &s_ck_cookies_rect,
-		"Store and send cookies", kControlCheckBoxProc);
-	PS_CTRL(pw.btn_cache, pw.win, &s_btn_cache_rect,
-		"Clear Cache...", kControlPushButtonProc);
-	PS_CTRL(pw.btn_hist, pw.win, &s_btn_hist_rect,
-		"Clear History...", kControlPushButtonProc);
-	/* Network */
+	pw.pp_minfont = prefs_create_popup(pw.win, &s_pp_minfont_rect, pw.m_minfont,
+		s_popup_minfont.count, prefs_popup_item(&s_popup_minfont, nsoption_int(font_min_size)));
+
+	/* Privacy checkboxes & buttons */
+	pw.ck_cookies = prefs_create_checkbox(pw.win, &s_ck_cookies_ctrl_rect, "Store and send cookies",
+		nsoption_bool(accept_cookies));
+	pw.ck_ref     = prefs_create_checkbox(pw.win, &s_ck_ref_ctrl_rect, "Send Referer header",
+		nsoption_bool(send_referer));
+	pw.ck_dnt     = prefs_create_checkbox(pw.win, &s_ck_dnt_ctrl_rect, "Send Do Not Track request",
+		nsoption_bool(do_not_track));
+	pw.btn_cache  = prefs_create_button(pw.win, &s_btn_cache_rect, "Clear Cache...");
+	pw.btn_hist   = prefs_create_button(pw.win, &s_btn_hist_rect, "Clear History...");
+
+	/* Advanced popups */
 	pw.m_fetch = prefs_popup_menu(&s_popup_fetch, PREFS_MENU_ID_FETCH);
-	PS_CTRL(pw.pp_fetch, pw.win, &s_pp_fetch_rect,
-		"", kControlPopupButtonProc);
-	prefs_popup_attach(pw.pp_fetch, pw.m_fetch);
+	pw.pp_fetch = prefs_create_popup(pw.win, &s_pp_fetch_rect, pw.m_fetch,
+		s_popup_fetch.count, prefs_popup_item(&s_popup_fetch, nsoption_int(max_fetchers)));
+
 	pw.m_perhost = prefs_popup_menu(&s_popup_perhost, PREFS_MENU_ID_PERHOST);
-	PS_CTRL(pw.pp_perhost, pw.win, &s_pp_perhost_rect,
-		"", kControlPopupButtonProc);
-	prefs_popup_attach(pw.pp_perhost, pw.m_perhost);
-	/* General text fields (TENew uses the current port) */
+	pw.pp_perhost = prefs_create_popup(pw.win, &s_pp_perhost_rect, pw.m_perhost,
+		s_popup_perhost.count, prefs_popup_item(&s_popup_perhost, nsoption_int(max_fetchers_per_host)));
+
+	/* TextEdit fields for General panel */
 	{
 		Rect r = s_te_home_rect;
 		pw.te_home = TENew(&r, &r);
@@ -1203,6 +1477,14 @@ void macos9_prefs_show(void)
 	prefs_panel_vis(&pw);
 	ShowWindow(pw.win);
 	SelectWindow(pw.win);
+
+	SetPortWindowPort(pw.win);
+	{
+		Rect port_r;
+		GetWindowPortBounds(pw.win, &port_r);
+		InvalWindowRect(pw.win, &port_r);
+	}
+
 	if (pw.te_home != NULL) {
 		pw.active_te = pw.te_home;
 		TEActivate(pw.te_home);
@@ -1226,6 +1508,7 @@ void macos9_prefs_show(void)
 			} else if (part == inGoAway) {
 				if (TrackGoAway(pw.win, ev.where)) done = 1;
 			} else if (part == inContent) {
+				SetPortWindowPort(pw.win);
 				lp = ev.where;
 				GlobalToLocal(&lp);
 				if (prefs_click(&pw, lp)) done = 1;
@@ -1236,14 +1519,30 @@ void macos9_prefs_show(void)
 		case autoKey:
 			if (prefs_key(&pw, &ev)) done = 1;
 			break;
+		case activateEvt: {
+			WindowRef which = (WindowRef)(unsigned long)ev.message;
+			Boolean becoming_active = (ev.modifiers & activeFlag) != 0;
+			if (which == pw.win) {
+				SetPortWindowPort(pw.win);
+				if (becoming_active) {
+					if (pw.active_te != NULL) TEActivate(pw.active_te);
+				} else {
+					if (pw.active_te != NULL) TEDeactivate(pw.active_te);
+				}
+				{
+					Rect pb;
+					GetWindowPortBounds(pw.win, &pb);
+					InvalWindowRect(pw.win, &pb);
+				}
+			}
+			break;
+		}
 		case updateEvt:
 			if ((WindowRef)ev.message == pw.win) {
 				BeginUpdate(pw.win);
 				prefs_paint(&pw);
 				EndUpdate(pw.win);
 			} else {
-				/* fixes709 pattern - keep uncovered
-				 * browser windows repainted. */
 				extern void macos9_handle_update(const EventRecord *event);
 				macos9_handle_update(&ev);
 				SetPortWindowPort(pw.win);
@@ -1252,41 +1551,50 @@ void macos9_prefs_show(void)
 		case nullEvent:
 			if (pw.active_te != NULL) TEIdle(pw.active_te);
 			break;
+		case kHighLevelEvent:
+			AEProcessAppleEvent(&ev);
+			break;
 		default:
 			break;
 		}
 	}
 
 	prefs_te_blur(&pw);
+
+	/* Dispose controls */
 	prefs_disp_ctrl(pw.btn_defaults);
 	prefs_disp_ctrl(pw.btn_cancel);
 	prefs_disp_ctrl(pw.btn_ok);
-	prefs_disp_ctrl(pw.pp_cat);
+	prefs_disp_ctrl(pw.tabs);
+	prefs_disp_ctrl(pw.btn_home_current);
+	prefs_disp_ctrl(pw.btn_home_default);
+	prefs_disp_ctrl(pw.ck_images);
+	prefs_disp_ctrl(pw.ck_anim);
+	prefs_disp_ctrl(pw.ck_css);
+	prefs_disp_ctrl(pw.ck_js);
+	prefs_disp_ctrl(pw.ck_popups);
+	prefs_disp_ctrl(pw.ck_ads);
 	prefs_disp_ctrl(pw.pp_font);
 	prefs_disp_ctrl(pw.pp_minfont);
-	prefs_disp_ctrl(pw.pp_fetch);
-	prefs_disp_ctrl(pw.pp_perhost);
-	prefs_disp_ctrl(pw.ck_fg);
-	prefs_disp_ctrl(pw.ck_bg);
-	prefs_disp_ctrl(pw.ck_anim);
-	prefs_disp_ctrl(pw.ck_js);
-	prefs_disp_ctrl(pw.ck_css);
-	prefs_disp_ctrl(pw.ck_ads);
-	prefs_disp_ctrl(pw.ck_popups);
-	prefs_disp_ctrl(pw.ck_debug);
-	prefs_disp_ctrl(pw.ck_dnt);
-	prefs_disp_ctrl(pw.ck_ref);
 	prefs_disp_ctrl(pw.ck_cookies);
+	prefs_disp_ctrl(pw.ck_ref);
+	prefs_disp_ctrl(pw.ck_dnt);
 	prefs_disp_ctrl(pw.btn_cache);
 	prefs_disp_ctrl(pw.btn_hist);
-	prefs_disp_menu(pw.m_cat);
+	prefs_disp_ctrl(pw.pp_fetch);
+	prefs_disp_ctrl(pw.pp_perhost);
+
+	/* Dispose menus */
 	prefs_disp_menu(pw.m_font);
 	prefs_disp_menu(pw.m_minfont);
 	prefs_disp_menu(pw.m_fetch);
 	prefs_disp_menu(pw.m_perhost);
+
+	/* Dispose TextEdit handles */
 	if (pw.te_home != NULL) TEDispose(pw.te_home);
 	if (pw.te_ww != NULL) TEDispose(pw.te_ww);
 	if (pw.te_wh != NULL) TEDispose(pw.te_wh);
+
 	DisposeWindow(pw.win);
 	g_prefs_open_win = NULL;
 	SetPort(saved_port);
@@ -1296,7 +1604,6 @@ void macos9_prefs_show(void)
 
 void macos9_prefs_show(void)
 {
-	/* Linux syntax-check / harness builds: nothing to show. */
 }
 
 #endif /* __MACOS9__ */

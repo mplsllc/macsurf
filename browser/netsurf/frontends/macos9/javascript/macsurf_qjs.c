@@ -23,13 +23,11 @@
 #include "utils/ns_errors.h"
 #include "macos9.h"
 #include "macsurf_debug.h"
-#include "macsurf_diag.h"
-#include "macsurf_gap.h"
-#include "macsurf_capability.h"
 #include "macsurf_qjs.h"
 #include "macsurf_qjs_audit.h"
 #include "macsurf_timebase.h"
 #include "macos9_js_fetch.h"
+#include "macsurf_diag.h"
 /* fixes1245 (#167) - plot_font_style_t/gui_layout_table for canvas
  * measureText's real (not fabricated) width query. Neither was pulled in
  * transitively by anything already included here -- checked by trying
@@ -43,7 +41,6 @@
 #include "content/handlers/html/box.h"
 #include "content/handlers/html/box_inspect.h"
 #include "content/handlers/html/box_construct.h"
-#include <libcss/select.h>
 /* fixes1013 - corestring_dom_scroll / _resize for the scroll/resize fan-out. */
 #include "utils/corestrings.h"
 #include "utils/libdom.h"
@@ -58,6 +55,8 @@
 #include "macos9_reconvert.h"
 
 extern int macsurf_ptr_is_heap(const void *);
+extern void html_content_set_diag_context(struct content *, unsigned long,
+	void *);
 
 #ifdef WITH_QUICKJS
 
@@ -119,30 +118,53 @@ struct jsheap *g_heap = NULL;  /* exported for audit */
  * js_destroyheap() unlinks.  Exists so macsurf_qjs_pump_all() can pump all of
  * them; see the note there for why pumping only g_heap froze iframes. */
 static struct jsheap *g_heap_list = NULL;
-#define QJS_IO_TIMER_TARGET_CAP 64
-#define QJS_IO_TIMER_EXPECT_CAP 64
-static unsigned long qjs_ctx_gen(JSContext *ctx);
-struct qjs_io_timer_expect {
-	JSContext *ctx;
-	unsigned long ctx_gen, io_id, seq;
-	char target[QJS_IO_TIMER_TARGET_CAP];
-};
-static struct qjs_io_timer_expect
-	s_io_timer_expects[QJS_IO_TIMER_EXPECT_CAP];
-static unsigned long s_io_timer_expect_seq;
-
-static struct qjs_io_timer_expect *qjs_io_timer_expect_for_ctx(JSContext *ctx)
+static unsigned long g_qjs_task_next = 1;
+static unsigned long g_qjs_task_id = 0;
+static int g_qjs_nav_seq = 0;
+static int g_qjs_task_kind = MACSURF_JS_TASK_NONE;
+static int g_qjs_task_depth = 0;
+static unsigned long g_qjs_task_mutations = 0;
+static struct ms_diag_scope g_qjs_task_diag_scope;
+int macsurf_js_page_execution_active(void) { return g_qjs_task_depth != 0; }
+unsigned long macsurf_js_current_task_id(void) { return g_qjs_task_id; }
+int macsurf_js_current_task_kind(void) { return g_qjs_task_kind; }
+void macsurf_js_note_dom_mutation(void) { if (g_qjs_task_depth != 0) g_qjs_task_mutations++; }
+static int qjs_diag_task_kind(int kind)
 {
-	struct qjs_io_timer_expect *expect = NULL;
-	int i;
-	unsigned long ctx_gen = qjs_ctx_gen(ctx);
-	for (i = 0; i < QJS_IO_TIMER_EXPECT_CAP; i++) {
-		struct qjs_io_timer_expect *candidate = &s_io_timer_expects[i];
-		if (candidate->ctx == ctx && candidate->ctx_gen == ctx_gen &&
-			(expect == NULL || candidate->seq < expect->seq))
-			expect = candidate;
+	switch (kind) {
+	case MACSURF_JS_TASK_SCRIPT: return MS_TASK_SCRIPT;
+	case MACSURF_JS_TASK_EVENT: return MS_TASK_EVENT;
+	case MACSURF_JS_TASK_TIMER: return MS_TASK_TIMER;
+	case MACSURF_JS_TASK_MICROTASK: return MS_TASK_MICROTASK;
+	case MACSURF_JS_TASK_INTERNAL_SETUP: return MS_TASK_INTERNAL_SETUP;
+	case MACSURF_JS_TASK_INTERNAL_NOTIFICATION: return MS_TASK_INTERNAL_NOTIFICATION;
+	default: return MS_TASK_NONE;
 	}
-	return expect;
+}
+static void qjs_task_push(int kind)
+{
+	if (g_qjs_task_depth++ == 0) {
+		g_qjs_task_id=g_qjs_task_next++;
+		if (g_qjs_task_next==0) g_qjs_task_next=1;
+		g_qjs_task_kind=kind;
+		ms_diag_task_enter_external(&g_qjs_task_diag_scope, g_qjs_task_id,
+			qjs_diag_task_kind(kind), (unsigned long)g_qjs_nav_seq,
+			ms_diag_cur_script(), 0, NULL);
+	}
+}
+static void qjs_task_pop(void)
+{
+	if (g_qjs_task_depth > 0 && --g_qjs_task_depth == 0) {
+		unsigned long id = g_qjs_task_id;
+		unsigned long n = g_qjs_task_mutations;
+		int kind = g_qjs_task_kind;
+		extern void macos9_reconvert_js_task_complete_kind(unsigned long, int);
+		g_qjs_task_id = 0;
+		g_qjs_task_kind = MACSURF_JS_TASK_NONE;
+		g_qjs_task_mutations = 0;
+		if (n != 0) macos9_reconvert_js_task_complete_kind(id, kind);
+		ms_diag_task_leave(&g_qjs_task_diag_scope);
+	}
 }
 
 /* The authoritative ownership record for one JavaScript realm.  A heap can
@@ -161,6 +183,18 @@ struct qjs_realm_owner {
 };
 
 static struct qjs_realm_owner *g_qjs_realm_owners = NULL;
+static unsigned long qjs_ctx_gen(JSContext *ctx);
+int js_realm_valid_for_content(struct jsthread *thread,
+		struct content *content, unsigned long generation);
+struct qjs_thread_owner { struct jsthread *thread; unsigned long token; struct qjs_thread_owner *next; };
+static struct qjs_thread_owner *g_qjs_threads = NULL;
+static unsigned long g_qjs_thread_token = 1;
+static struct qjs_thread_owner *qjs_thread_owner(struct jsthread *t)
+{ struct qjs_thread_owner *o; for (o = g_qjs_threads; o != NULL; o = o->next) if (o->thread == t) return o; return NULL; }
+static void qjs_thread_register(struct jsthread *t)
+{ struct qjs_thread_owner *o = calloc(1, sizeof(*o)); if (o == NULL) return; o->thread=t; o->token=g_qjs_thread_token++; if (g_qjs_thread_token==0) g_qjs_thread_token=1; o->next=g_qjs_threads; g_qjs_threads=o; }
+static void qjs_thread_unregister(struct jsthread *t)
+{ struct qjs_thread_owner **p=&g_qjs_threads; while (*p != NULL) { if ((*p)->thread == t) { struct qjs_thread_owner *o=*p; *p=o->next; free(o); return; } p=&(*p)->next; } }
 
 static struct qjs_realm_owner *qjs_owner_for_ctx(JSContext *ctx)
 {
@@ -216,6 +250,68 @@ struct content *qjs_get_content_for_ctx(JSContext *ctx)
 {
 	struct qjs_realm_owner *owner = qjs_owner_for_ctx(ctx);
 	return (owner != NULL) ? owner->content : NULL;
+}
+
+unsigned long js_realm_generation(struct jsthread *thread)
+{
+	if (thread == NULL || thread->ctx == NULL) return 0;
+	return qjs_ctx_gen(thread->ctx);
+}
+unsigned long js_thread_generation(struct jsthread *thread)
+{ struct qjs_thread_owner *o=qjs_thread_owner(thread); return o ? o->token : 0; }
+int js_thread_valid_for_content(struct jsthread *thread, unsigned long token,
+		struct content *content, unsigned long realm_generation)
+{ struct qjs_thread_owner *o=qjs_thread_owner(thread); if (o == NULL || o->token != token) return 0; return js_realm_valid_for_content(thread, content, realm_generation); }
+
+int js_realm_valid_for_content(struct jsthread *thread,
+		struct content *content, unsigned long generation)
+{
+	struct qjs_realm_owner *owner;
+	if (thread == NULL || thread->ctx == NULL || content == NULL ||
+		generation == 0)
+		return 0;
+	if (qjs_ctx_gen(thread->ctx) != generation)
+		return 0;
+	owner = qjs_owner_for_ctx(thread->ctx);
+	return (owner != NULL && owner->content == content) ? 1 : 0;
+}
+
+/* fixes1292/1293 - Validate that a jsthread is still live and owns the
+ * expected content/document before dispatching JS work to it.  The minimal
+ * NULL checks in js_fire_window_load are insufficient: a tab close or
+ * navigation can free the context while late subresource callbacks still
+ * reach html_proceed_to_done, passing a stale thread pointer with a
+ * non-NULL but freed ctx.  This function checks the authoritative
+ * g_qjs_threads list, the g_heap_list for ctx liveness/generation, and
+ * the realm owner record for content/document identity. */
+static int qjs_thread_is_live_for_dispatch(struct jsthread *thread,
+		struct content *expected_content,
+		dom_document *expected_document)
+{
+	struct qjs_thread_owner *towner;
+	struct qjs_realm_owner *rowner;
+	if (thread == NULL)
+		return 0;
+	/* Thread must be registered in g_qjs_threads BEFORE any dereference.
+	 * This check only compares the pointer value against the registry,
+	 * so it is safe even if 'thread' points to freed memory. */
+	towner = qjs_thread_owner(thread);
+	if (towner == NULL)
+		return 0;
+	/* Now safe to dereference: thread is a live registered object. */
+	if (thread->ctx == NULL || thread->heap == NULL)
+		return 0;
+	/* Context must be live at this address with matching generation. */
+	if (qjs_ctx_gen(thread->ctx) == 0)
+		return 0;
+	/* Realm owner must exist and match content. */
+	rowner = qjs_owner_for_ctx(thread->ctx);
+	if (rowner == NULL || rowner->content != expected_content)
+		return 0;
+	/* Realm owner must match document. */
+	if (expected_document != NULL && rowner->document != expected_document)
+		return 0;
+	return 1;
 }
 
 /* ------------------------------------------------------------------ */
@@ -286,14 +382,14 @@ double macsurf_qjs_get_now(void);
  * guard / retry infrastructure stays in the binary and is re-enabled by
  * flipping this one define back to 1. */
 #ifndef MACSURF_JS_GEOMETRY
-#define MACSURF_JS_GEOMETRY 1
+#define MACSURF_JS_GEOMETRY 0
 #endif
 /* fixes1141 - AUDIT ON for the hardware baseline round. Enables per-script
  * timing, failure reasons, audit budgets, and the LIFE js done ok lines.
  * The counters (g_js_skip_count, g_js_timeout_count) always increment
  * regardless of this switch; this gates only the log emissions. */
 #ifndef MACSURF_JS_AUDIT
-#define MACSURF_JS_AUDIT 1
+#define MACSURF_JS_AUDIT 0
 #endif
 /* fixes1108 (#265) - ON. Only macsurf_qjs_fire_scroll has a live call site
  * (window.c:509-510, the single scroll choke point: arrow keys, scrollbar
@@ -309,14 +405,14 @@ double macsurf_qjs_get_now(void);
  * lazy-load `rect.top < innerHeight` check now answers truly and needs a
  * real scroll event to re-fire). */
 #ifndef MACSURF_JS_VIEW_EVENTS
-#define MACSURF_JS_VIEW_EVENTS 1
+#define MACSURF_JS_VIEW_EVENTS 0
 #endif
 
 #ifndef MACSURF_JS_TIMEOUT_MS
 /* fixes1136 (Option B): 30s execution deadline.  On a 400 MHz G3, 176 KB
  * framework bundles (XenForo core-compiled.js) need ~19s; 30s gives headroom
  * while still preventing truly runaway scripts.  Set to 0 to disarm. */
-#define MACSURF_JS_TIMEOUT_MS 30000
+#define MACSURF_JS_TIMEOUT_MS 8000
 #endif
 #define QJS_SCRIPT_TIMEOUT_MS MACSURF_JS_TIMEOUT_MS
 
@@ -566,6 +662,9 @@ static void qjs_log_exc(JSContext *ctx, JSValueConst exc,
 	macsurf_debug_log_writef("LIFE qjs %s: %s [%s]",
 			what, msg ? msg : "?",
 			name ? name : "?");
+	qjs_short_name(name, sname, (int)sizeof(sname));
+	ms_diag_error_record(0UL, 0UL, MS_ERR_JS_EXCEPTION, 0, MS_OPR_NONE,
+			sname, msg ? msg : "?");
 	if (msg) JS_FreeCString(ctx, msg);
 
 	stk = JS_GetPropertyStr(ctx, exc, "stack");
@@ -619,6 +718,15 @@ void macsurf_qjs__safe_eval(JSContext *qctx, const char *src)
 	JS_FreeValue(qctx, val);
 }
 
+static void qjs_page_dispatch_eval(struct jsthread *thread, const char *src,
+		int kind)
+{
+	if (thread == NULL || thread->ctx == NULL) return;
+	qjs_task_push(kind);
+	macsurf_qjs__safe_eval(thread->ctx, src);
+	qjs_task_pop();
+}
+
 /* ------------------------------------------------------------------ */
 /* console.* native functions                                           */
 /* ------------------------------------------------------------------ */
@@ -651,6 +759,7 @@ static void qjs_console_emit(JSContext *ctx, const char *prefix,
 	char buf[2048];
 	size_t pos = 0;
 	size_t plen = strlen(prefix);
+	const char *errmsg;
 
 	/* fixes1246 - budget only the two LIFE-promoted levels (error/warn);
 	 * log/info/debug stay WORK-invisible in release exactly as before, so
@@ -687,6 +796,12 @@ static void qjs_console_emit(JSContext *ctx, const char *prefix,
 		}
 	}
 	MS_LOG(buf);
+	if (strcmp(prefix, "LIFE console.error:") == 0) {
+		errmsg = buf + plen;
+		while (*errmsg == ' ') errmsg++;
+		ms_diag_error_record(0UL, 0UL, MS_ERR_JS_EXCEPTION, 0, MS_OPR_NONE,
+				"console.error", errmsg);
+	}
 }
 
 #define CONSOLE_FN(name, prefix) \
@@ -1224,9 +1339,6 @@ struct qjs_timer {
 	 * generation bookkeeping is wrong -- which the hardware says it is, since
 	 * fixes875's gate passed and the free still blew up. */
 	JSRuntime *rt;
-	/* MacSurf Trace 1b: causal origin, captured at setTimeout registration. */
-	unsigned long origin_script_id;
-	unsigned long nav_id;
 };
 
 static struct qjs_timer s_timer_arena[QJS_MAX_TIMERS];
@@ -1394,7 +1506,6 @@ static struct qjs_timer *timer_alloc(void)
 	 * never run). It used to be silent, which reads as "everything is fine"
 	 * while a page quietly misbehaves. */
 	g_timer_evicted++;   /* fixes1273 */
-	ms_diag_timer_state((unsigned long)victim->id, MS_TIMER_EVICTED);
 	macsurf_debug_log_writef(
 		"WORK timer: arena FULL (%d) -- evicting furthest-out id=%d "
 		"(expiry %ld ms out); its callback will never run",
@@ -1418,33 +1529,14 @@ static JSValue qjs_settimeout_impl(JSContext *ctx,
 	int id;
 	int extra;
 	int i;
-	struct qjs_io_timer_expect *expect;
 
 	(void)this_val;
-	expect = qjs_io_timer_expect_for_ctx(ctx);
-	if (expect != NULL)
-		ms_diag_io_timer_native_state(expect->io_id, expect->target,
-			MS_IO_TIMER_NATIVE_ENTERED);
-	if (argc < 1 || !JS_IsFunction(ctx, argv[0])) {
-		if (expect != NULL) {
-			ms_diag_io_timer_native_state(expect->io_id, expect->target,
-				MS_IO_TIMER_NATIVE_BAD_CALLBACK);
-			memset(expect, 0, sizeof(*expect));
-		}
-		return JS_NewInt32(ctx, 0);
-	}
+	if (argc < 1 || !JS_IsFunction(ctx, argv[0])) return JS_NewInt32(ctx, 0);
 	if (argc >= 2) JS_ToFloat64(ctx, &delay_ms, argv[1]);
 	if (delay_ms < 0.0) delay_ms = 0.0;
 
 	t = timer_alloc();
-	if (t == NULL) {
-		if (expect != NULL) {
-			ms_diag_io_timer_native_state(expect->io_id, expect->target,
-				MS_IO_TIMER_NATIVE_NO_SLOT);
-			memset(expect, 0, sizeof(*expect));
-		}
-		return JS_NewInt32(ctx, 0);
-	}
+	if (t == NULL) return JS_NewInt32(ctx, 0);
 
 	id = s_timer_next_id++;
 	if (s_timer_next_id <= 0) s_timer_next_id = 1;
@@ -1481,18 +1573,6 @@ static JSValue qjs_settimeout_impl(JSContext *ctx,
 	/* Dup against the SAME ctx as `fn`, for the same reason. */
 	for (i = 0; i < extra; i++)
 		t->args[i] = JS_DupValue(ctx, argv[2 + i]);
-
-	/* MacSurf Trace 1b: capture the causal origin NOW (registration time),
-	 * not at fire -- by then current_script / current_nav have moved on. */
-	t->origin_script_id = ms_diag_cur_script();
-	t->nav_id = ms_diag_cur_nav();
-	ms_diag_timer_arm((unsigned long)id, t->nav_id, t->origin_script_id,
-		ms_diag_cur_task(), t->ctx_gen);
-	if (expect != NULL) {
-		ms_diag_io_timer_bind(expect->io_id, expect->target,
-			(unsigned long)id);
-		memset(expect, 0, sizeof(*expect));
-	}
 
 	return JS_NewInt32(ctx, id);
 }
@@ -1531,7 +1611,6 @@ static JSValue qjs_cleartimeout(JSContext *ctx, JSValueConst this_val,
 			if (qjs_timer_owned_by(t, ctx) && t->id == target_id) {
 				/* owned_by() already proved t->ctx == ctx, so the
 				 * helper's free-against-t->ctx is this same ctx. */
-				ms_diag_timer_state((unsigned long)t->id, MS_TIMER_CANCELLED);
 				timer_slot_clear(t, 1);
 				break;
 			}
@@ -1610,8 +1689,6 @@ static void qjs_flush_timers(JSContext *old_ctx)
 				(long) qjs_ctx_gen(old_ctx),
 				(void *) old_ctx);
 			/* free_vals=0: ABANDON - see the note above. */
-			ms_diag_timer_state((unsigned long)s_timer_arena[i].id,
-				MS_TIMER_ABANDONED);
 			timer_slot_clear(&s_timer_arena[i], 0);
 			continue;
 		}
@@ -1633,8 +1710,6 @@ static void qjs_flush_timers(JSContext *old_ctx)
 				(long) i, "");
 		macsurf_reconv_pos_flush();
 
-		ms_diag_timer_state((unsigned long)s_timer_arena[i].id,
-			MS_TIMER_REALM_TEARDOWN);
 		timer_slot_clear(&s_timer_arena[i], 1);
 	}
 
@@ -1704,16 +1779,12 @@ void macsurf_qjs_run_timers(struct jscontext *ctx)
 		 * WRONG runtime. */
 		if (qjs_timer_owned_by(&s_timer_arena[i], qctx)) {
 			if (s_timer_arena[i].expiry_ms <= now) {
-				ms_diag_timer_state((unsigned long)s_timer_arena[i].id,
-					MS_TIMER_DUE);
 				due_idx[ndue] = i;
 				due_id[ndue] = s_timer_arena[i].id;
 				ndue++;
 				g_timer_due++;   /* fixes1273 */
 			}
 		} else if (s_timer_arena[i].live) {
-			ms_diag_timer_state((unsigned long)s_timer_arena[i].id,
-				MS_TIMER_OWNER_MISMATCH);
 			/* fixes1273 - live, but belongs to another context.
 			 * Its own heap's pass fires it; counted so "registered
 			 * into a realm nobody pumps" is visible, not assumed
@@ -1732,9 +1803,6 @@ void macsurf_qjs_run_timers(struct jscontext *ctx)
 		JSValue this_obj;
 		int call_nargs;
 		int a;
-		struct ms_diag_scope __tsk;	/* MacSurf Trace 1b */
-		unsigned long __t_nav = t->nav_id;
-		unsigned long __t_scr = t->origin_script_id;
 
 		/* Revalidate: a prior callback may have cleared this timer, or
 		 * timer_alloc may have evicted+reused this slot for a different
@@ -1796,12 +1864,8 @@ void macsurf_qjs_run_timers(struct jscontext *ctx)
 		/* fixes876 - HTML spec calls timer callbacks with `this` = the window.
 		 * JS_UNDEFINED left strict-mode callbacks with `this === undefined`. */
 		this_obj = JS_GetGlobalObject(qctx);
-		ms_diag_task_enter(&__tsk, MS_TASK_TIMER, __t_nav, __t_scr,
-			0, (const char *) 0);
-		ms_diag_timer_state((unsigned long)due_id[k], MS_TIMER_FIRING);
+		qjs_task_push(MACSURF_JS_TASK_TIMER);
 		ret = JS_Call(qctx, fn, this_obj, call_nargs, call_args);
-		ms_diag_timer_state((unsigned long)due_id[k], MS_TIMER_FIRED);
-		ms_diag_task_leave(&__tsk);
 		{	/* fixes1037 */
 			extern double macos9_micros(void);
 			double dt = macos9_micros() - g_timer_t0;
@@ -1827,6 +1891,7 @@ void macsurf_qjs_run_timers(struct jscontext *ctx)
 			}
 		}
 		JS_FreeValue(qctx, ret);
+		qjs_task_pop();
 		g_qjs_script_deadline = prevdl;
 		JS_FreeValue(qctx, fn);
 		for (a = 0; a < call_nargs; a++)
@@ -2041,7 +2106,6 @@ long g_js_skip_count = 0;  /* fixes1141 - scripts skipped (size cap) */
  * js_exec at the top of every script run, so the FBCR __d wrapper below
  * can report exactly which script was executing when a given module got
  * registered, without threading the name through JS. */
-static int g_qjs_nav_seq = 0;
 static char g_qjs_current_script[192] = "";
 long g_js_timeout_count = 0;  /* fixes1141 - scripts aborted (deadline) */
 
@@ -2489,8 +2553,9 @@ static dom_string *qjs_make_domstr(const char *s)
 static void qjs_mark_dom_dirty(JSContext *ctx, void *node, int kind)
 {
 	struct content *content = qjs_get_content_for_ctx(ctx);
-	if (content != NULL)
+	if (content != NULL) {
 		macos9_js_mark_dom_dirty_node(content, node, kind);
+	}
 }
 
 /* ---- QuickJS class for element wrappers ---- */
@@ -2751,104 +2816,6 @@ static void qjs_blob_finalizer(JSRuntime *rt, JSValue val)
 }
 
 static JSClassDef s_blob_class = { "Blob", qjs_blob_finalizer };
-
-/* MediaQueryList owns a parsed libcss query for its JS lifetime. This keeps
- * matchMedia() on the exact @media parser/matcher path and avoids reparsing a
- * query on every viewport change. */
-static JSClassID s_mql_class_id;
-
-struct qjs_mql {
-	struct css_media_query *query;
-};
-
-static void qjs_mql_finalizer(JSRuntime *rt, JSValue val)
-{
-	struct qjs_mql *mql = (struct qjs_mql *)JS_GetOpaque(val,
-			s_mql_class_id);
-	(void)rt;
-	if (mql == NULL) return;
-	css_media_query_destroy(mql->query);
-	free(mql);
-}
-
-static JSClassDef s_mql_class = { "MediaQueryList", qjs_mql_finalizer };
-
-static struct qjs_mql *qjs_mql_get(JSContext *ctx, JSValueConst value)
-{
-	return (struct qjs_mql *)JS_GetOpaque2(ctx, value, s_mql_class_id);
-}
-
-static JSValue qjs_mql_matches_native(JSContext *ctx,
-		JSValueConst this_val, int argc, JSValueConst *argv)
-{
-	struct qjs_mql *mql;
-	struct content *content;
-	html_content *htmlc;
-	bool matches = false;
-	css_error error;
-	(void)argc;
-	(void)argv;
-
-	mql = qjs_mql_get(ctx, this_val);
-	if (mql == NULL || mql->query == NULL)
-		return JS_EXCEPTION;
-	content = qjs_get_content_for_ctx(ctx);
-	if (content == NULL)
-		return JS_NewBool(ctx, false);
-	htmlc = (html_content *)content;
-	error = css_media_query_matches(mql->query, &htmlc->unit_len_ctx,
-			&htmlc->media, &matches);
-	if (error != CSS_OK)
-		return JS_NewBool(ctx, false);
-	return JS_NewBool(ctx, matches);
-}
-
-static JSValue qjs_mql_media_native(JSContext *ctx,
-		JSValueConst this_val, int argc, JSValueConst *argv)
-{
-	struct qjs_mql *mql;
-	(void)argc;
-	(void)argv;
-	mql = qjs_mql_get(ctx, this_val);
-	if (mql == NULL || mql->query == NULL)
-		return JS_EXCEPTION;
-	return JS_NewString(ctx, css_media_query_text(mql->query));
-}
-
-static JSValue qjs_match_media_native(JSContext *ctx,
-		JSValueConst this_val, int argc, JSValueConst *argv)
-{
-	struct qjs_mql *mql;
-	const char *source = "";
-	JSValue result;
-	css_error error;
-	(void)this_val;
-
-	if (argc > 0) {
-		source = JS_ToCString(ctx, argv[0]);
-		if (source == NULL)
-			return JS_EXCEPTION;
-	}
-	mql = calloc(1, sizeof(*mql));
-	if (mql == NULL) {
-		if (argc > 0) JS_FreeCString(ctx, source);
-		return JS_ThrowOutOfMemory(ctx);
-	}
-	error = css_media_query_create(source, &mql->query);
-	if (argc > 0) JS_FreeCString(ctx, source);
-	if (error != CSS_OK) {
-		free(mql);
-		return JS_ThrowInternalError(ctx, "could not parse media query");
-	}
-	result = JS_NewObjectClass(ctx, s_mql_class_id);
-	if (JS_IsException(result)) {
-		css_media_query_destroy(mql->query);
-		free(mql);
-		return result;
-	}
-	JS_SetOpaque(result, mql);
-	return result;
-}
 
 static struct qjs_blob *qjs_blob_get(JSContext *ctx, JSValueConst value)
 {
@@ -5582,13 +5549,13 @@ static void qjs_el_install_js_helpers(JSContext *ctx, JSValue proto)
 		"}"
 		"try{a[i].call(this,ev);}"
 		"catch(e){try{console.error('LIFE jsevent listener threw ['+t+']: '+"
-		"((e&&e.message)||e));}catch(_){}}}}"
+		"((e&&e.name)?(e.name+': '):'')+((e&&e.message)||e)+(e&&e.stack?(' STACK: '+e.stack):''));}catch(_){}}}}"
 		"if(ev&&ev.__msStopNow)return true;"
 		/* on* handlers are non-capture by definition, so they must never
 		 * run in the capturing phase. */
 		"if(ph!==1&&this._H&&this._H[t]){try{this._H[t].call(this,ev);}"
 		"catch(e){try{console.error('LIFE jsevent on'+t+' threw: '+"
-		"((e&&e.message)||e));}catch(_){}}}"
+		"((e&&e.name)?(e.name+': '):'')+((e&&e.message)||e)+(e&&e.stack?(' STACK: '+e.stack):''));}catch(_){}}}"
 		"return true;};"
 		/* fixes1008 (2b) - THE MISSING DOM SURFACE.
 		 *
@@ -6271,6 +6238,23 @@ static int qjs_geometry_scope_allowed(JSContext *ctx)
 	const char *url;
 	const char *path;
 
+	/* fixes1180 (#267) - enable geometry during user event tasks.
+	 *
+	 * Interactive widgets (XenForo menus, nav dropdowns, etc.) mutate the
+	 * DOM inside a click handler, then immediately measure the freshly
+	 * inserted element -- the standard measure/mutate idiom.  With geometry
+	 * globally off they get `undefined` for every metric and compute
+	 * `left:NaNpx`, positioning menus off-screen.
+	 *
+	 * Allowing geometry only during MACSURF_JS_TASK_EVENT captures exactly
+	 * these interactive bursts while leaving load-time scripts on the cheap
+	 * "refuse and return undefined" path.  The cost is one sync reconvert
+	 * per event (hardware-measured ~150ms on 68kMLA for the forum thread),
+	 * bounded by the 120s cumulative budget in macos9_reconvert.c.
+	 * Settle-once limits each CLICK to a single flush regardless of how many
+	 * geometry reads the event handler fires. */
+	if (g_qjs_task_kind == MACSURF_JS_TASK_EVENT) return 1;
+
 	if (c == NULL || c->llcache == NULL) return 0;
 	url = nsurl_access(content_get_url(c));
 	if (url == NULL) return 0;
@@ -6602,12 +6586,7 @@ static JSValue qjs_el_metric(JSContext *ctx, JSValueConst this_val,
 	 * (jQuery :hidden relies on it). */
 	qjs_geometry_flush(ctx);	/* fixes1073 (#265) */
 	if (!qjs_geometry_settled(ctx)) {
-		char rname[64];
 		g_geom_undef++;			/* fixes1087 */
-		macsurf_gap_hit(MS_GAP_GEOMETRY_UNDEFINED);
-		snprintf(rname, sizeof rname, "%s.unsettled", qjs_metric_name(magic));
-		ms_diag_capability_hit(MS_CAP_GEOMETRY, MS_CAP_GET,
-			rname, MS_CAP_UNSUPPORTED, MS_ANSWER_UNSUPPORTED);
 		qjs_geom_audit(qjs_metric_name(magic), this_val,
 				"undefined (unsettled)");
 		return JS_UNDEFINED;
@@ -6617,11 +6596,46 @@ static JSValue qjs_el_metric(JSContext *ctx, JSValueConst this_val,
 
 	b = qjs_box_for(ctx, this_val);
 	if (b == NULL) {
-		/* When an element has no box (e.g. detached, display:none, or not
-		 * generating a layout box), return 0 in accordance with CSSOM View
-		 * specifications, matching getBoundingClientRect. */
-		g_geom_zero++;
-		qjs_geom_audit(qjs_metric_name(magic), this_val, "0 (no box)");
+		/* fixes1016 - no box while a mutation awaits its reconvert is
+		 * NOT "hidden", it is "not measured yet": a real browser reflows
+		 * synchronously and answers truly. We cannot (Phase 3's forced
+		 * pass is its own risky round), so answer undefined -- the
+		 * NaN-propagating no-op -- rather than a fabricated 0. This is
+		 * exactly how slick collapsed the hackaday featured carousel:
+		 * it measured its just-inserted slides, got 0, and wrote it
+		 * back as inline sizes. */
+		extern int macos9_reconvert_pending_for(void *cv);
+		if (macos9_reconvert_pending_for(content)) {
+			g_geom_undef++;		/* fixes1087 */
+			qjs_geom_audit(qjs_metric_name(magic), this_val,
+					"undefined (mutation pending)");
+			return JS_UNDEFINED;
+		}
+		/* fixes1087 - NEVER fabricate 0 before the load is DONE.
+		 *
+		 * Opening the gate to CONTENT_STATUS_READY lets a widget measure
+		 * elements that already have boxes, which is the whole point. But
+		 * it also means reaching here for an element whose box has simply
+		 * not been built yet, and answering 0 for that is the fixes1014
+		 * failure verbatim: the script writes the fabricated 0 back as an
+		 * inline width/height and the content is erased for good.
+		 *
+		 * 0 is only the TRUE answer once the document is DONE -- there a
+		 * missing box really does mean "not rendered", which is what
+		 * jQuery's :hidden relies on. Before that, `undefined` is the
+		 * honest answer and NaN-propagates into a no-op.
+		 *
+		 * Harness Test 43 asserts exactly this and caught the first cut of
+		 * this change fabricating a value in the unsettled window. */
+		if (content->status != CONTENT_STATUS_DONE) {
+			g_geom_undef++;
+			qjs_geom_audit(qjs_metric_name(magic), this_val,
+					"undefined (no box, not DONE)");
+			return JS_UNDEFINED;
+		}
+		g_geom_zero++;			/* fixes1087 - the dangerous one */
+		qjs_geom_audit(qjs_metric_name(magic), this_val,
+				"0 (no box)");
 		return JS_NewInt32(ctx, 0);
 	}
 
@@ -6886,7 +6900,9 @@ static void qjs_fire_dispatch(JSContext *ctx, JSValueConst obj,
 	}
 	if (JS_IsFunction(ctx, fn)) {
 		argv[0] = evobj;
+		qjs_task_push(MACSURF_JS_TASK_EVENT);
 		ret = JS_Call(ctx, fn, obj, 1, (JSValueConst *)argv);
+		qjs_task_pop();
 		if (JS_IsException(ret)) {
 			JSValue ex = JS_GetException(ctx);
 			qjs_log_exc(ctx, ex, "event handler threw", what);
@@ -6896,6 +6912,13 @@ static void qjs_fire_dispatch(JSContext *ctx, JSValueConst obj,
 	}
 	JS_FreeValue(ctx, fn);
 }
+
+struct qjs_synth_ev_slot {
+	dom_event *evt;
+	JSValue jsev;
+	struct qjs_synth_ev_slot *prev;
+};
+static struct qjs_synth_ev_slot *g_synth_ev_stack = NULL;
 
 static void qjs_dom_listener_cb(dom_event *evt, void *pw)
 {
@@ -6970,8 +6993,13 @@ static void qjs_dom_listener_cb(dom_event *evt, void *pw)
 	 * Built via `new Event(type)` so the prototype chain is right, then the
 	 * real values are written over the constructor's defaults from the actual
 	 * dom_event. Falls back to a plain object if the constructor is somehow
-	 * missing, because an event with no prototype still beats no dispatch. */
-	{
+	/* fixes1178: If this dispatch was triggered by el.dispatchEvent(customEvent),
+	 * reuse the original JS event object so that custom properties (detail,
+	 * container, image, etc.) and class prototypes (class H extends Event)
+	 * are preserved across dispatch as required by the W3C/WHATWG DOM specs. */
+	if (g_synth_ev_stack != NULL && g_synth_ev_stack->evt == evt) {
+		evobj = JS_DupValue(ctx, g_synth_ev_stack->jsev);
+	} else {
 		JSValue global = JS_GetGlobalObject(ctx);
 		JSValue ctor = JS_GetPropertyStr(ctx, global, "Event");
 		evobj = JS_UNDEFINED;
@@ -7017,7 +7045,8 @@ static void qjs_dom_listener_cb(dom_event *evt, void *pw)
 		/* isTrusted is TRUE only here -- this is the native UI path.
 		 * Anything from `new Event` / dispatchEvent reports false, and some
 		 * libraries branch on it to reject synthetic input. */
-		JS_SetPropertyStr(ctx, evobj, "isTrusted", JS_NewBool(ctx, 1));
+		JS_SetPropertyStr(ctx, evobj, "isTrusted",
+				JS_NewBool(ctx, (g_synth_ev_stack != NULL && g_synth_ev_stack->evt == evt) ? 0 : 1));
 	}
 
 	/* Mouse and keyboard details, from the values the frontend already has.
@@ -7160,30 +7189,15 @@ static void qjs_dom_listener_cb(dom_event *evt, void *pw)
 			global = JS_GetGlobalObject(ctx);
 		}
 
-		{
-			/* MacSurf Trace 1b: one task per real (libdom-originated)
-			 * event dispatch, covering the whole capture/target/
-			 * bubble fan-out. script=0 -- listeners belong to many
-			 * scripts. Inherits the current task if JS is already
-			 * running (ms_diag_task_enter's nested rule). */
-			struct ms_diag_scope __evtsk;
-			ms_diag_task_enter(&__evtsk, MS_TASK_EVENT,
-				ms_diag_cur_nav(), 0, 0,
-				(type_ds != (dom_string *) 0) ?
-					dom_string_data(type_ds) : (const char *) 0);
+		if (is_doc && capturing) {
+			qjs_fire_dispatch(ctx, global, evobj, "window");
+		}
 
-			if (is_doc && capturing) {
-				qjs_fire_dispatch(ctx, global, evobj, "window");
-			}
+		qjs_fire_dispatch(ctx, hit->val, evobj,
+				is_doc ? "document" : "element");
 
-			qjs_fire_dispatch(ctx, hit->val, evobj,
-					is_doc ? "document" : "element");
-
-			if (is_doc && !capturing) {
-				qjs_fire_dispatch(ctx, global, evobj, "window");
-			}
-
-			ms_diag_task_leave(&__evtsk);
+		if (is_doc && !capturing) {
+			qjs_fire_dispatch(ctx, global, evobj, "window");
 		}
 		if (is_doc) JS_FreeValue(ctx, global);
 	}
@@ -7494,6 +7508,7 @@ static JSValue qjs_el_dispatch_event_data(JSContext *ctx,
 	dom_event *evt = NULL;
 	bool ok_flag = true;
 	bool bubbles = true, cancelable = true;
+	struct qjs_synth_ev_slot slot;
 	(void)this_val; (void)magic;
 
 	node = qjs_get_node(this_val);
@@ -7544,9 +7559,16 @@ static JSValue qjs_el_dispatch_event_data(JSContext *ctx,
 	}
 	macsurf_dom_string_unref(tds);
 
+	slot.evt = evt;
+	slot.jsev = argv[0];
+	slot.prev = g_synth_ev_stack;
+	g_synth_ev_stack = &slot;
+
 	g_qjs_in_dispatch = 1;
 	(void)dom_event_target_dispatch_event(node, evt, &ok_flag);
 	g_qjs_in_dispatch = 0;
+
+	g_synth_ev_stack = slot.prev;
 	dom_event_unref(evt);
 
 	/* false when a cancelable event was cancelled -- the whole point of the
@@ -9200,9 +9222,6 @@ static void qjs_dom_init_class(JSRuntime *rt)
 	s_blob_class_id = 0;
 	JS_NewClassID(rt, &s_blob_class_id);
 	JS_NewClass(rt, s_blob_class_id, &s_blob_class);
-	s_mql_class_id = 0;
-	JS_NewClassID(rt, &s_mql_class_id);
-	JS_NewClass(rt, s_mql_class_id, &s_mql_class);
 }
 
 /* ====================================================================== */
@@ -9973,6 +9992,9 @@ static void qjs_el_install_proto(JSContext *ctx)
 		"for(i=0;i<ht.length;i++){"
 			"var c=(typeof globalThis!=='undefined'?globalThis:this)[ht[i]];"
 			"if(c&&c.prototype){try{c.prototype.__proto__=p;}catch(e){}}}"
+		"var scr=(typeof globalThis!=='undefined'?globalThis:this).HTMLScriptElement;"
+		"if(scr&&scr.prototype){"
+			"scr.prototype.async=true;scr.prototype.readyState='complete';}"
 		"return p;})()";
 	JSValue proto;
 
@@ -10241,6 +10263,33 @@ static void qjs_dom_install(JSContext *ctx)
 			"Object.defineProperty(d,'head',{configurable:true,"
 			"get:function(){var n=d.__getHead();if(n)return n;"
 			"if(!_fbHead)_fbHead=mkfb('head');return _fbHead;}});"
+			/* fixes1180 (#267) - document.clientWidth/clientHeight.
+			 *
+			 * XF.viewport(m) where m=document calls a.clientWidth on the
+			 * document object.  Document is not an HTMLElement, so the
+			 * property is absent from its prototype chain and returns
+			 * undefined.  XF.viewport then computes {width:undefined,
+			 * right:undefined, ...} and every positioning formula yields
+			 * NaNpx.
+			 *
+			 * document.clientWidth is not standard (it lives on Element,
+			 * not Document) but some engines answer it as the viewport
+			 * width for scroll-root semantics.  The values innerWidth/
+			 * innerHeight are always correct: the viewport dimensions are
+			 * known at navigation time, not computed from layout. */
+			"if(!('clientWidth' in d)){"
+			"Object.defineProperty(d,'clientWidth',{configurable:true,"
+			"get:function(){return (typeof innerWidth==='number'"
+			"&&innerWidth)||980;}});"
+			"Object.defineProperty(d,'clientHeight',{configurable:true,"
+			"get:function(){return (typeof innerHeight==='number'"
+			"&&innerHeight)||600;}});"
+			"Object.defineProperty(d,'scrollLeft',{configurable:true,"
+			"get:function(){return (typeof scrollX==='number'&&scrollX)||0;},"
+			"set:function(){}}); "
+			"Object.defineProperty(d,'scrollTop',{configurable:true,"
+			"get:function(){return (typeof scrollY==='number'&&scrollY)||0;},"
+			"set:function(){}});}"
 			/* (XF-probe round, FormData crash) -- document must answer
 			 * "defaultView" (and the IE-era parentWindow) with the global
 			 * object.  editor-compiled.js (Froala v4, the 68kmla reply box)
@@ -10400,192 +10449,6 @@ static JSValue qjs_raf_fired(JSContext *ctx,
 {
 	(void)ctx; (void)this_val; (void)argc; (void)argv;
 	g_raf_fires++;
-	return JS_UNDEFINED;
-}
-
-/* Module Trace v1: native bridge for __msModEvent(name, dep_name, event_type, reason, depth) */
-static JSValue qjs_ms_mod_event(JSContext *ctx,
-	JSValueConst this_val, int argc, JSValueConst *argv)
-{
-	const char *name = NULL;
-	const char *dep_name = NULL;
-	int event_type = 0;
-	int reason = 0;
-	int depth = 0;
-	int32_t wait_id = 0;
-
-	(void)this_val;
-	if (argc < 3) return JS_UNDEFINED;
-
-	name = JS_ToCString(ctx, argv[0]);
-	if (argc > 1 && !JS_IsNull(argv[1]) && !JS_IsUndefined(argv[1]))
-		dep_name = JS_ToCString(ctx, argv[1]);
-
-	(void)JS_ToInt32(ctx, &event_type, argv[2]);
-	if (argc > 3)
-		(void)JS_ToInt32(ctx, &reason, argv[3]);
-	if (argc > 4)
-		(void)JS_ToInt32(ctx, &depth, argv[4]);
-	if (argc > 5)
-		(void)JS_ToInt32(ctx, &wait_id, argv[5]);
-
-	if (name != NULL) {
-		extern void ms_diag_module_record_by_name(const char *name,
-			const char *dep_name, int event_type, int reason, int depth,
-			unsigned long wait_id);
-		ms_diag_module_record_by_name(name, dep_name, event_type, reason, depth,
-			(unsigned long)wait_id);
-		JS_FreeCString(ctx, name);
-	}
-	if (dep_name != NULL)
-		JS_FreeCString(ctx, dep_name);
-
-	return JS_UNDEFINED;
-}
-
-/* IntersectionObserver Trace v1: native bridge for __msIOEvent(io_id, ev_type, target_name, x, y, w, h, intersecting, ratio_pct, entries) */
-static JSValue qjs_ms_io_event(JSContext *ctx,
-	JSValueConst this_val, int argc, JSValueConst *argv)
-{
-	int io_id = 0, ev_type = 0, intersecting = 0, ratio_pct = 0, entries = 0;
-	int x = 0, y = 0, w = 0, h = 0;
-	const char *target_name = NULL;
-
-	(void)this_val;
-	if (argc < 2) return JS_UNDEFINED;
-
-	(void)JS_ToInt32(ctx, &io_id, argv[0]);
-	(void)JS_ToInt32(ctx, &ev_type, argv[1]);
-	if (argc > 2 && !JS_IsNull(argv[2]) && !JS_IsUndefined(argv[2]))
-		target_name = JS_ToCString(ctx, argv[2]);
-	if (argc > 3) (void)JS_ToInt32(ctx, &x, argv[3]);
-	if (argc > 4) (void)JS_ToInt32(ctx, &y, argv[4]);
-	if (argc > 5) (void)JS_ToInt32(ctx, &w, argv[5]);
-	if (argc > 6) (void)JS_ToInt32(ctx, &h, argv[6]);
-	if (argc > 7) (void)JS_ToInt32(ctx, &intersecting, argv[7]);
-	if (argc > 8) (void)JS_ToInt32(ctx, &ratio_pct, argv[8]);
-	if (argc > 9) (void)JS_ToInt32(ctx, &entries, argv[9]);
-
-	ms_diag_io_record((unsigned long)io_id, ev_type, target_name,
-		(long)x, (long)y, (long)w, (long)h, intersecting, ratio_pct, entries);
-
-	if (target_name != NULL)
-		JS_FreeCString(ctx, target_name);
-
-	return JS_UNDEFINED;
-}
-
-/* The IO shim arms this one-shot expectation immediately before setTimeout.
- * Native allocation consumes it, avoiding JS wrapper/public timer handles. */
-static JSValue qjs_ms_io_timer(JSContext *ctx,
-	JSValueConst this_val, int argc, JSValueConst *argv)
-{
-	int io_id = 0, i = 0, slot = -1;
-	const char *target_name = NULL;
-	struct qjs_io_timer_expect *expect;
-	(void)this_val;
-	if (argc < 2) return JS_UNDEFINED;
-	(void)JS_ToInt32(ctx, &io_id, argv[0]);
-	if (!JS_IsNull(argv[1]) && !JS_IsUndefined(argv[1]))
-		target_name = JS_ToCString(ctx, argv[1]);
-	for (i = 0; i < QJS_IO_TIMER_EXPECT_CAP; i++)
-		if (s_io_timer_expects[i].ctx == NULL) { slot = i; break; }
-	if (slot < 0) {
-		unsigned long oldest = 0;
-		slot = 0;
-		for (i = 0; i < QJS_IO_TIMER_EXPECT_CAP; i++)
-			if (oldest == 0 || s_io_timer_expects[i].seq < oldest) {
-				oldest = s_io_timer_expects[i].seq;
-				slot = i;
-			}
-	}
-	expect = &s_io_timer_expects[slot];
-	memset(expect, 0, sizeof(*expect));
-	expect->ctx = ctx;
-	expect->ctx_gen = qjs_ctx_gen(ctx);
-	expect->io_id = (unsigned long)io_id;
-	expect->seq = ++s_io_timer_expect_seq;
-	if (s_io_timer_expect_seq == 0) expect->seq = ++s_io_timer_expect_seq;
-	ms_diag_io_timer_expect(expect->io_id, target_name);
-	i = 0;
-	if (target_name != NULL) while (target_name[i] != '\0' &&
-		i < QJS_IO_TIMER_TARGET_CAP - 1) {
-		expect->target[i] = target_name[i]; i++;
-	}
-	expect->target[i] = '\0';
-	if (target_name != NULL) JS_FreeCString(ctx, target_name);
-	return JS_UNDEFINED;
-}
-
-/* Browser API attempts that occur before a native request exists.  JS returns
- * the opaque id to its fetch/XHR shim; later native events join on it. */
-static JSValue qjs_ms_operation_begin(JSContext *ctx,
-	JSValueConst this_val, int argc, JSValueConst *argv)
-{
-	int kind = MS_OP_FETCH;
-	(void)this_val;
-	if (argc > 0) (void)JS_ToInt32(ctx, &kind, argv[0]);
-	return JS_NewInt32(ctx, (int32_t)ms_diag_operation_begin(kind,
-		MS_ANSWER_NATIVE));
-}
-
-static JSValue qjs_ms_operation_event(JSContext *ctx,
-	JSValueConst this_val, int argc, JSValueConst *argv)
-{
-	int32_t op = 0, kind = 0, phase = 0, result = 0, reason = 0, quality = 0;
-	int32_t req = 0;
-	(void)this_val;
-	if (argc < 6) return JS_UNDEFINED;
-	(void)JS_ToInt32(ctx, &op, argv[0]);
-	(void)JS_ToInt32(ctx, &kind, argv[1]);
-	(void)JS_ToInt32(ctx, &phase, argv[2]);
-	(void)JS_ToInt32(ctx, &result, argv[3]);
-	(void)JS_ToInt32(ctx, &reason, argv[4]);
-	(void)JS_ToInt32(ctx, &quality, argv[5]);
-	if (argc > 6) (void)JS_ToInt32(ctx, &req, argv[6]);
-	ms_diag_operation_record((unsigned long)op, kind, phase, result, reason,
-		quality, (unsigned long)req);
-	return JS_UNDEFINED;
-}
-
-static JSValue qjs_ms_error_event(JSContext *ctx,
-	JSValueConst this_val, int argc, JSValueConst *argv)
-{
-	int32_t op = 0, req = 0, kind = 0, boundary = 0, reason = 0;
-	const char *name = NULL;
-	const char *message = NULL;
-	(void)this_val;
-	if (argc < 5) return JS_UNDEFINED;
-	(void)JS_ToInt32(ctx, &op, argv[0]);
-	(void)JS_ToInt32(ctx, &req, argv[1]);
-	(void)JS_ToInt32(ctx, &kind, argv[2]);
-	(void)JS_ToInt32(ctx, &boundary, argv[3]);
-	(void)JS_ToInt32(ctx, &reason, argv[4]);
-	if (argc > 5 && !JS_IsNull(argv[5]) && !JS_IsUndefined(argv[5]))
-		name = JS_ToCString(ctx, argv[5]);
-	if (argc > 6 && !JS_IsNull(argv[6]) && !JS_IsUndefined(argv[6]))
-		message = JS_ToCString(ctx, argv[6]);
-	ms_diag_error_record((unsigned long)op, (unsigned long)req, kind,
-		boundary, reason, name, message);
-	if (name != NULL) JS_FreeCString(ctx, name);
-	if (message != NULL) JS_FreeCString(ctx, message);
-	return JS_UNDEFINED;
-}
-
-static JSValue qjs_ms_capability(JSContext *ctx, JSValueConst this_val,
-	int argc, JSValueConst *argv)
-{
-	int domain = 0, operation = 0, result = 0, quality = 0;
-	const char *name = NULL;
-	(void)this_val;
-	if (argc < 5) return JS_UNDEFINED;
-	(void)JS_ToInt32(ctx, &domain, argv[0]);
-	(void)JS_ToInt32(ctx, &operation, argv[1]);
-	name = JS_ToCString(ctx, argv[2]);
-	(void)JS_ToInt32(ctx, &result, argv[3]);
-	(void)JS_ToInt32(ctx, &quality, argv[4]);
-	ms_diag_capability_hit(domain, operation, name, result, quality);
-	if (name != NULL) JS_FreeCString(ctx, name);
 	return JS_UNDEFINED;
 }
 
@@ -10973,9 +10836,6 @@ static void register_browser_globals(JSContext *ctx)
 	 * reference them. */
 	qjs_set_func(ctx, global, "__viewportW", qjs_js_viewport_w, 0);
 	qjs_set_func(ctx, global, "__viewportH", qjs_js_viewport_h, 0);
-	qjs_set_func(ctx, global, "__matchMediaNative", qjs_match_media_native, 1);
-	qjs_set_func(ctx, global, "__mqlMatches", qjs_mql_matches_native, 0);
-	qjs_set_func(ctx, global, "__mqlMedia", qjs_mql_media_native, 0);
 	qjs_set_func(ctx, global, "__scrollX",   qjs_js_scroll_x, 0);
 	qjs_set_func(ctx, global, "__scrollY",   qjs_js_scroll_y, 0);
 	qjs_set_func(ctx, global, "__scrollTo",  qjs_js_scroll_to, 2);
@@ -10983,13 +10843,6 @@ static void register_browser_globals(JSContext *ctx)
 	qjs_set_func(ctx, global, "__msLife",    qjs_ms_life, 1); /* fixes1015 */
 	qjs_set_func(ctx, global, "__msScript",  qjs_ms_current_script, 0); /* fixes1312 */
 	qjs_set_func(ctx, global, "__msRafFired", qjs_raf_fired, 0); /* fixes1236 */
-	qjs_set_func(ctx, global, "__msModEvent", qjs_ms_mod_event, 6); /* Module Trace v2 */
-	qjs_set_func(ctx, global, "__msIOEvent",  qjs_ms_io_event, 10); /* IO Trace v1 */
-	qjs_set_func(ctx, global, "__msIOTimer",  qjs_ms_io_timer, 3);
-	qjs_set_func(ctx, global, "__msOperationBegin", qjs_ms_operation_begin, 1);
-	qjs_set_func(ctx, global, "__msOperationEvent", qjs_ms_operation_event, 7);
-	qjs_set_func(ctx, global, "__msErrorEvent", qjs_ms_error_event, 7);
-	qjs_set_func(ctx, global, "__msCapability", qjs_ms_capability, 5);
 	/* localStorage persistence backend, consumed by the _Storage shim
 	 * below (register_browser_globals runs per navigation, so the saved
 	 * map is reloaded on every realm build). */
@@ -11107,10 +10960,18 @@ static void register_browser_globals(JSContext *ctx)
 			"this.composed=!!opts.composed;"
 			"this.defaultPrevented=false;"
 			"this.target=null;this.currentTarget=null;"
-			"this.preventDefault=function(){this.defaultPrevented=true;};"
-			"this.stopPropagation=function(){};"
-			"this.stopImmediatePropagation=function(){};"
 		"}"
+		"Event.NONE=0;Event.CAPTURING_PHASE=1;Event.AT_TARGET=2;Event.BUBBLING_PHASE=3;"
+		"Event.prototype.NONE=0;Event.prototype.CAPTURING_PHASE=1;Event.prototype.AT_TARGET=2;Event.prototype.BUBBLING_PHASE=3;"
+		"Event.prototype.preventDefault=function(){if(this.cancelable)this.defaultPrevented=true;};"
+		"Event.prototype.stopPropagation=function(){};"
+		"Event.prototype.stopImmediatePropagation=function(){this.__msStopNow=true;};"
+		"Event.prototype.composedPath=function(){"
+			"var p=[];var n=this.target||this.srcElement;"
+			"while(n){p.push(n);n=n.parentNode;}"
+			"if(p.length>0&&p[p.length-1]===document&&typeof window!=='undefined'){p.push(window);}"
+			"return p;"
+		"};"
 		"this.Event=Event;"
 		"function CustomEvent(type,opts){"
 			"Event.call(this,type,opts);"
@@ -11118,7 +10979,13 @@ static void register_browser_globals(JSContext *ctx)
 		"}"
 		"CustomEvent.prototype=Object.create(Event.prototype);"
 		"this.CustomEvent=CustomEvent;"
-		"function MouseEvent(type,opts){Event.call(this,type,opts);"
+		"function UIEvent(type,opts){Event.call(this,type,opts);"
+			"opts=opts||{};"
+			"this.view=opts.view||null;this.detail=opts.detail||0;"
+		"}"
+		"UIEvent.prototype=Object.create(Event.prototype);"
+		"this.UIEvent=UIEvent;"
+		"function MouseEvent(type,opts){UIEvent.call(this,type,opts);"
 			"opts=opts||{};"
 			"this.clientX=opts.clientX||0;this.clientY=opts.clientY||0;"
 			"this.screenX=opts.screenX||0;this.screenY=opts.screenY||0;"
@@ -11127,16 +10994,29 @@ static void register_browser_globals(JSContext *ctx)
 			"this.ctrlKey=!!opts.ctrlKey;this.altKey=!!opts.altKey;"
 			"this.metaKey=!!opts.metaKey;"
 		"}"
-		"MouseEvent.prototype=Object.create(Event.prototype);"
+		"MouseEvent.prototype=Object.create(UIEvent.prototype);"
 		"this.MouseEvent=MouseEvent;"
-		"function KeyboardEvent(type,opts){Event.call(this,type,opts);"
+		"function PointerEvent(type,opts){MouseEvent.call(this,type,opts);"
+			"opts=opts||{};"
+			"this.pointerId=opts.pointerId||0;"
+			"this.width=opts.width||1;this.height=opts.height||1;"
+			"this.pressure=opts.pressure||0;"
+			"this.tangentialPressure=opts.tangentialPressure||0;"
+			"this.tiltX=opts.tiltX||0;this.tiltY=opts.tiltY||0;"
+			"this.twist=opts.twist||0;"
+			"this.pointerType=opts.pointerType||'';"
+			"this.isPrimary=!!opts.isPrimary;"
+		"}"
+		"PointerEvent.prototype=Object.create(MouseEvent.prototype);"
+		"this.PointerEvent=PointerEvent;"
+		"function KeyboardEvent(type,opts){UIEvent.call(this,type,opts);"
 			"opts=opts||{};"
 			"this.key=opts.key||'';this.code=opts.code||'';"
 			"this.keyCode=opts.keyCode||0;this.which=opts.which||0;"
 			"this.shiftKey=!!opts.shiftKey;this.ctrlKey=!!opts.ctrlKey;"
 			"this.altKey=!!opts.altKey;this.metaKey=!!opts.metaKey;"
 		"}"
-		"KeyboardEvent.prototype=Object.create(Event.prototype);"
+		"KeyboardEvent.prototype=Object.create(UIEvent.prototype);"
 		"this.KeyboardEvent=KeyboardEvent;");
 
 	/* --- document shims --- */
@@ -11395,6 +11275,21 @@ static void register_browser_globals(JSContext *ctx)
 			"document.ownerDocument=null;"
 			"document.querySelectorAll=document.querySelectorAll||"
 				"function(){return [];};"
+			/* fixes1175 - standard document collections: scripts, images, forms, links.
+			 * core-compiled.js:35 loadScripts checks `m.scripts[0]` to inspect
+			 * script loader capability; throwing TypeError halted XF lazy init. */
+			"Object.defineProperty(document,'scripts',{"
+				"configurable:true,get:function(){"
+					"return document.getElementsByTagName('script');}});"
+			"Object.defineProperty(document,'images',{"
+				"configurable:true,get:function(){"
+					"return document.getElementsByTagName('img');}});"
+			"Object.defineProperty(document,'forms',{"
+				"configurable:true,get:function(){"
+					"return document.getElementsByTagName('form');}});"
+			"Object.defineProperty(document,'links',{"
+				"configurable:true,get:function(){"
+					"return document.querySelectorAll('a[href],area[href]');}});"
 			/* fixes1006 (1b) - tell libdom, or a real click never
 			 * arrives. The _listeners registry is unchanged; the
 			 * missing half was the registration. __msRegDocEvent is
@@ -11467,7 +11362,7 @@ static void register_browser_globals(JSContext *ctx)
 					"if(L)L.forEach(function(f){try{f(ev);}catch(e){"
 						"try{if(typeof __msLife==='function')"
 							"__msLife('docevt THREW type='+t+': '+"
-								"((e&&e.message)||e));}catch(_){}"
+								"((e&&e.name)?(e.name+': '):'')+((e&&e.message)||e)+(e&&e.stack?(' STACK: '+e.stack):''));}catch(_){}"
 					"}});return true;};"
 		"}");
 
@@ -11518,7 +11413,6 @@ static void register_browser_globals(JSContext *ctx)
 		"function _mkObserver(label){"
 			"function C(cb){this._cb=cb;}"
 			"C.prototype.observe=function(t,opts){"
-				"try{if(typeof __msCapability==='function')__msCapability(4,2,label,2,2);}catch(_){}"
 				"try{__msLife('WANT '+label+'.observe '"
 				"+((t&&(t.id||t.tagName))||'?')+' (NO-OP)');}catch(_){}"
 				"var self=this;"
@@ -11671,89 +11565,35 @@ static void register_browser_globals(JSContext *ctx)
 		"ResizeObserver.prototype.disconnect=function(){this._targets=[];};"
 		"this.ResizeObserver=ResizeObserver;");
 	macsurf_qjs__safe_eval(ctx,
-		"var _ms_next_io_id=1;"
-		"function IntersectionObserverEntry(init){"
-			"this.time=(init&&init.time)||0;"
-			"this.target=(init&&init.target)||null;"
-			"this.rootBounds=(init&&init.rootBounds)||null;"
-			"this.boundingClientRect=(init&&init.boundingClientRect)||"
-				"{top:0,left:0,bottom:0,right:0,width:0,height:0,x:0,y:0};"
-			"this.intersectionRect=(init&&init.intersectionRect)||"
-				"this.boundingClientRect;"
-			"this.isIntersecting=(init&&init.isIntersecting!==undefined)?"
-				"init.isIntersecting:true;"
-		"}"
-		"IntersectionObserverEntry.prototype.time=0;"
-		"IntersectionObserverEntry.prototype.target=null;"
-		"IntersectionObserverEntry.prototype.rootBounds=null;"
-		"IntersectionObserverEntry.prototype.boundingClientRect=null;"
-		"IntersectionObserverEntry.prototype.intersectionRect=null;"
-		"IntersectionObserverEntry.prototype.isIntersecting=true;"
-		"IntersectionObserverEntry.prototype.intersectionRatio=1;"
-		"this.IntersectionObserverEntry=IntersectionObserverEntry;"
 		"function IntersectionObserver(cb,opts){"
-			"try{if(typeof __msCapability==='function')__msCapability(4,3,'IntersectionObserver',3,1);}catch(_){}"
-			"this._id=_ms_next_io_id++;"
 			"this._cb=cb;this._opts=opts||{};this._targets=[];"
 			"this.root=(opts&&opts.root)||null;"
 			"this.rootMargin=(opts&&opts.rootMargin)||'0px';"
 			"this.thresholds=[0];"
-			"try{if(typeof __msIOEvent==='function')"
-				"__msIOEvent(this._id,0,null,0,0,0,0,0,0,0);}"
-			"catch(_){}"
 		"}"
 		"IntersectionObserver.prototype.observe=function(el){"
 			"if(!el)return;"
-			"var tid=(el.id?('#'+el.id):(el.className?('.'+String(el.className).split(' ')[0]):(el.tagName||'?')));"
-			"try{if(typeof __msIOEvent==='function')"
-				"__msIOEvent(this._id,1,tid,0,0,0,0,0,0,0);}"
+			"try{__msLife('WANT IntersectionObserver.observe '"
+			"+((el.id||el.tagName)||'?')+' (always intersecting)');}"
 			"catch(_){}"
 			"this._targets.push(el);"
 			"var self=this;"
-			"try{if(typeof __msIOTimer==='function')"
-				"__msIOTimer(this._id,tid);}catch(_){}"
 			"setTimeout(function(){"
-				"if(self._targets.indexOf(el)<0){"
-					"try{if(typeof __msIOEvent==='function')"
-						"__msIOEvent(self._id,5,tid,0,0,0,0,0,0,0);}catch(_){}"
-					"return;"
-				"}"
+				"if(self._targets.indexOf(el)<0)return;"
 				"var r=(el.getBoundingClientRect&&el.getBoundingClientRect())||"
 					"{top:0,left:0,bottom:0,right:0,width:0,height:0,x:0,y:0};"
-				"try{if(typeof __msIOEvent==='function')"
-					"__msIOEvent(self._id,2,tid,r.left|0,r.top|0,r.width|0,r.height|0,0,0,0);}"
-				"catch(_){}"
-				"var isInt=(r.width>0&&r.height>0)||(r.bottom>0&&r.top<10000)||(r.width===0&&r.height===0&&r.top===0&&r.left===0);"
-				"var ratio=isInt?100:0;"
-				"try{if(typeof __msIOEvent==='function')"
-					"__msIOEvent(self._id,3,tid,0,0,0,0,isInt?1:0,ratio,0);}"
-				"catch(_){}"
-				"var entry=new IntersectionObserverEntry({"
-					"target:el,isIntersecting:isInt,"
-					"intersectionRatio:isInt?1:0,boundingClientRect:r,"
+				"var entry={target:el,isIntersecting:true,"
+					"intersectionRatio:1,boundingClientRect:r,"
 					"intersectionRect:r,rootBounds:null,"
 					"time:(typeof performance!=='undefined'&&performance.now)?"
-						"performance.now():0});"
-				"try{if(typeof __msIOEvent==='function')"
-					"__msIOEvent(self._id,4,tid,0,0,0,0,0,0,1);}"
-				"catch(_){}"
+						"performance.now():0};"
 				"try{self._cb([entry],self);}catch(e){}"
 			"},0);"
 		"};"
 		"IntersectionObserver.prototype.unobserve=function(el){"
-			"var i=this._targets.indexOf(el);"
-			"if(i>=0){"
-				"var tid=(el.id?('#'+el.id):(el.className?('.'+String(el.className).split(' ')[0]):(el.tagName||'?')));"
-				"try{if(typeof __msIOEvent==='function')"
-					"__msIOEvent(this._id,6,tid,0,0,0,0,0,0,0);}catch(_){}"
-				"this._targets.splice(i,1);"
-			"}"
+			"var i=this._targets.indexOf(el);if(i>=0)this._targets.splice(i,1);"
 		"};"
-		"IntersectionObserver.prototype.disconnect=function(){"
-			"try{if(typeof __msIOEvent==='function')"
-				"__msIOEvent(this._id,7,null,0,0,0,0,0,0,this._targets.length);}catch(_){}"
-			"this._targets=[];"
-		"};"
+		"IntersectionObserver.prototype.disconnect=function(){this._targets=[];};"
 		"IntersectionObserver.prototype.takeRecords=function(){return [];};"
 		"this.IntersectionObserver=IntersectionObserver;");
 
@@ -11837,7 +11677,7 @@ static void register_browser_globals(JSContext *ctx)
 			"if(arr)arr.forEach(function(f){try{f(ev);}catch(e){"
 				"try{if(typeof __msLife==='function')"
 					"__msLife('winevt THREW type='+t+': '+"
-						"((e&&e.message)||e));}catch(_){}"
+						"((e&&e.name)?(e.name+': '):'')+((e&&e.message)||e)+(e&&e.stack?(' STACK: '+e.stack):''));}catch(_){}"
 			"}});return true;};"
 		/* fixes1011 - the REAL getComputedStyle. __gcsNative reads the
 		 * cascade + box (installed in qjs_dom_install); this wrapper adds
@@ -11858,6 +11698,56 @@ static void register_browser_globals(JSContext *ctx)
 				"inl.setProperty(p,v);};"
 			"o.cssText=(inl&&inl.cssText)||'';"
 			"return o;};"
+		/* fixes1015 - ours answers matches:false unconditionally, so any
+		 * rendering that branches on a media query silently takes the
+		 * false path. Log which queries the page actually asked. */
+		/* fixes1114b (#265) - REAL matchMedia evaluator, not hardcoded false.
+		 *
+		 * The old stub answered {matches:false} to EVERY query, which is a
+		 * lying answer: a page's (min-width:800px) check got `false` and the
+		 * page served its mobile layout on a 949px-wide window.
+		 *
+		 * Unknown queries still log via __msLife (matching the old WANT
+		 * behavior) so the hardware log tells us which queries real pages
+		 * use next. Known-query evaluation is at call time so
+		 * this.innerWidth/this.innerHeight (set a few lines below) are
+		 * already available. */
+		"this.matchMedia=function(q){"
+			"var m={matches:false,media:q||'',"
+				"addListener:function(){},removeListener:function(){},"
+				"addEventListener:function(){},removeEventListener:function(){}};"
+			"if(!q)return m;"
+			"var s=q.replace(/[\\t\\n\\r ]/g,'');"
+			"try{"
+				/* display-mode */
+				"if(s==='(display-mode:standalone)'||s==='(display-mode:fullscreen)')return m;"
+				"if(s==='(display-mode:browser)'){m.matches=true;return m;}"
+				/* prefers-color-scheme (Mac OS 9 is always light) */
+				"if(s==='(prefers-color-scheme:dark)')return m;"
+				"if(s==='(prefers-color-scheme:light)'){m.matches=true;return m;}"
+				/* max/min width (viewport is 949px) */
+				"if(s.indexOf('(max-width:')===0){var n=parseInt(s.slice(11));"
+					"m.matches=(n>0&&this.innerWidth<=n);return m;}"
+				"if(s.indexOf('(min-width:')===0){var n=parseInt(s.slice(11));"
+					"m.matches=(n>0&&this.innerWidth>=n);return m;}"
+				/* max/min height (viewport is 613px) */
+				"if(s.indexOf('(max-height:')===0){var n=parseInt(s.slice(12));"
+					"m.matches=(n>0&&this.innerHeight<=n);return m;}"
+				"if(s.indexOf('(min-height:')===0){var n=parseInt(s.slice(12));"
+					"m.matches=(n>0&&this.innerHeight>=n);return m;}"
+				/* pointer (desktop = fine) */
+				"if(s==='(pointer:fine)'){m.matches=true;return m;}"
+				/* hover (desktop = hover) */
+				"if(s==='(hover:hover)'){m.matches=true;return m;}"
+				/* prefers-reduced-motion */
+				"if(s==='(prefers-reduced-motion:reduce)')return m;"
+				"if(s==='(prefers-reduced-motion:no-preference)'){m.matches=true;return m;}"
+				/* unknown - log so we can add it */
+				"try{__msLife('WANT matchMedia \"'+q+'\" (unknown, answered false)');}catch(e){}"
+			"}catch(e){"
+				"try{__msLife('WANT matchMedia \"'+q+'\" (parse error)');}catch(e2){}"
+			"}"
+			"return m;};"
 		"this.requestIdleCallback=function(fn){return setTimeout(fn,0);};"
 		"this.cancelIdleCallback=function(id){clearTimeout(id);};"
 		/* fixes1011 - LIVE viewport + scroll, not frozen constants.
@@ -12078,8 +11968,8 @@ static void register_browser_globals(JSContext *ctx)
 			"this.readyState=0;this.status=0;this.statusText='';"
 			"this.responseText='';this.response='';this.responseType='';"
 			"this.responseURL='';"
-		"this._method='GET';this._url='';this._reqHeaders=[];"
-			"this._slotId=-1;this._opId=0;this._listeners={};"
+			"this._method='GET';this._url='';this._reqHeaders=[];"
+			"this._slotId=-1;this._listeners={};"
 			"if(typeof __workLogXHR==='function')__workLogXHR('new','','');"
 		"}"
 		"XMLHttpRequest.UNSENT=0;XMLHttpRequest.OPENED=1;"
@@ -12087,10 +11977,6 @@ static void register_browser_globals(JSContext *ctx)
 		"XMLHttpRequest.DONE=4;"
 		"XMLHttpRequest.prototype.open=function(method,url,async){"
 			"this._method=String(method||'GET');this._url=String(url||'');"
-			"if(!this._opId&&typeof __msOperationBegin==='function'){"
-				"this._opId=__msOperationBegin(1);"
-				"if(typeof __msOperationEvent==='function')"
-					"__msOperationEvent(this._opId,1,1,1,0,0,0);}"
 			"this._async=(async===false)?false:true;"
 			"this.readyState=1;"
 			"if(typeof __workLogXHR==='function')"
@@ -12112,8 +11998,6 @@ static void register_browser_globals(JSContext *ctx)
 		"};"
 		"XMLHttpRequest.prototype.overrideMimeType=function(){};"
 		"XMLHttpRequest.prototype.abort=function(){"
-			"if(this._opId&&typeof __msOperationEvent==='function')"
-				"__msOperationEvent(this._opId,1,5,1,12,0,0);"
 			"if(this._slotId>=0&&typeof __xhrNativeAbort==='function')"
 				"__xhrNativeAbort(this._slotId);"
 			"this._slotId=-1;this.readyState=0;this.status=0;"
@@ -12170,8 +12054,6 @@ static void register_browser_globals(JSContext *ctx)
 			"if(typeof __workLogXHR==='function')"
 				"__workLogXHR('send',this._method,this._url);"
 			"if(typeof __xhrNativeSend!=='function'){"
-				"if(this._opId&&typeof __msOperationEvent==='function')"
-					"__msOperationEvent(this._opId,1,2,2,8,3,0);"
 				"this.readyState=4;this.status=0;this._fire('readystatechange');"
 				"this._fire('error');this._fire('loadend');return;"
 			"}"
@@ -12183,13 +12065,9 @@ static void register_browser_globals(JSContext *ctx)
 				"if(!hasCT)this._reqHeaders.push('Content-Type: '+enc.contentType);"
 				"body=enc.body;"
 			"}"
-			"if(!this._opId&&typeof __msOperationBegin==='function')"
-				"this._opId=__msOperationBegin(1);"
 			"this._slotId=__xhrNativeSend(this,this._method,this._url,"
-				"(body===undefined)?null:body,this._reqHeaders,this._async,this._opId);"
+				"(body===undefined)?null:body,this._reqHeaders,this._async);"
 			"if(this._slotId<0){"
-				"if(this._opId&&typeof __msErrorEvent==='function')"
-					"__msErrorEvent(this._opId,0,1,2,8,'NetworkError','native XHR send declined');"
 				"var self=this;"
 				"setTimeout(function(){"
 					"self.readyState=4;self.status=0;"
@@ -12397,7 +12275,6 @@ static void register_browser_globals(JSContext *ctx)
 	macsurf_qjs__safe_eval(ctx,
 		"this.fetch=function(url,opts){"
 			"opts=opts||{};"
-			"var op=(typeof __msOperationBegin==='function')?__msOperationBegin(0):0;"
 			"if(url&&typeof url==='object'&&url.url!==undefined){"
 				"var rq=url;"
 				"url=rq.url;"
@@ -12412,15 +12289,10 @@ static void register_browser_globals(JSContext *ctx)
 			 * signal rejects synchronously-ish, before any network
 			 * activity starts). */
 			"if(opts.signal&&opts.signal.aborted){"
-				"if(op&&typeof __msOperationEvent==='function')"
-					"__msOperationEvent(op,0,0,2,1,0,0);"
-				"if(op&&typeof __msErrorEvent==='function')"
-					"__msErrorEvent(op,0,2,0,1,'AbortError','fetch signal already aborted');"
 				"return Promise.reject(opts.signal.reason);}"
 			"return new Promise(function(resolve,reject){"
 				"try{"
 					"var xhr=new XMLHttpRequest();"
-					"xhr._opId=op;"
 					"xhr.open(opts.method||'GET',url,true);"
 					"if(opts.headers){"
 						"if(typeof opts.headers.forEach==='function'){"
@@ -12435,11 +12307,9 @@ static void register_browser_globals(JSContext *ctx)
 					 * calls the native __xhrNativeAbort, so this really
 					 * stops the request, not just settles the promise. */
 					"if(opts.signal){"
-					"opts.signal.addEventListener('abort',function(){"
-						"try{xhr.abort();}catch(ae){}"
-						"if(op&&typeof __msOperationEvent==='function')"
-							"__msOperationEvent(op,0,5,1,12,0,0);"
-						"reject(opts.signal.reason);"
+						"opts.signal.addEventListener('abort',function(){"
+							"try{xhr.abort();}catch(ae){}"
+							"reject(opts.signal.reason);"
 						"});"
 					"}"
 					"xhr.onreadystatechange=function(){"
@@ -12447,12 +12317,7 @@ static void register_browser_globals(JSContext *ctx)
 						"var ok=xhr.status>=200&&xhr.status<300;"
 						"if(typeof __workLogFetch==='function')"
 							"__workLogFetch(String(url),ok,xhr.status);"
-						"if(xhr.status===0){"
-							"if(op&&typeof __msOperationEvent==='function')"
-								"__msOperationEvent(op,0,7,4,8,0,0);"
-							"if(op&&typeof __msErrorEvent==='function')"
-								"__msErrorEvent(op,0,2,7,8,'NetworkError','XHR completed with status 0');"
-							"reject(new Error('Network error'));return;}"
+						"if(xhr.status===0){reject(new Error('Network error'));return;}"
 						"var respText=xhr.responseText||'';"
 						/* fixes1140 - a real Response instance, so
 						 * `r instanceof Response` holds and `r.headers`
@@ -12477,17 +12342,10 @@ static void register_browser_globals(JSContext *ctx)
 							"headers:hdrs,"
 							"url:xhr.responseURL||String(url)"
 						"});"
-						"if(op&&typeof __msOperationEvent==='function')"
-							"__msOperationEvent(op,0,7,3,0,0,0);"
 						"resolve(resp);"
 					"};"
 					"xhr.send(opts.body===undefined?null:opts.body);"
-				"}catch(e){"
-					"if(op&&typeof __msOperationEvent==='function')"
-						"__msOperationEvent(op,0,7,4,8,0,0);"
-					"if(op&&typeof __msErrorEvent==='function')"
-						"__msErrorEvent(op,0,0,7,8,(e&&e.name)||'Error',(e&&e.message)||String(e));"
-					"reject(e);}"
+				"}catch(e){reject(e);}"
 			"});"
 		"};");
 
@@ -12956,6 +12814,8 @@ static void register_browser_globals(JSContext *ctx)
 		"g[names[i]]=function(){};"
 		"}"
 		"}"
+		"if(typeof g.HTMLScriptElement!=='undefined'&&g.HTMLScriptElement.prototype){"
+		"g.HTMLScriptElement.prototype.async=true;g.HTMLScriptElement.prototype.readyState='complete';}"
 		/* fixes1144 - NodeFilter constants. Froala editor 4.2.1
 		 * accesses NodeFilter.SHOW_TEXT in its TreeWalker init;
 		 * NodeFilter must be an object with the spec's constant
@@ -13046,31 +12906,6 @@ static void register_browser_globals(JSContext *ctx)
 		"if(g.XMLHttpRequest&&g.XMLHttpRequest.prototype&&g.EventTarget&&g.EventTarget.prototype){"
 		"try{Object.setPrototypeOf(g.XMLHttpRequest.prototype,g.EventTarget.prototype);}catch(e){}"
 		"}"
-		"})(this);");
-
-	/* Real MediaQueryList instances are native opaque objects so each retains a
-	 * parsed libcss query. The listener/event layer intentionally reuses the
-	 * browser's EventTarget implementation rather than creating another event
-	 * registry. __msMediaCheck is called only from a completed document-media
-	 * update, never by matchMedia() itself. */
-	macsurf_qjs__safe_eval(ctx,
-		"(function(g){"
-		"function MediaQueryList(){throw new TypeError('Illegal constructor');}"
-		"MediaQueryList.prototype=Object.create(g.EventTarget.prototype);"
-		"MediaQueryList.prototype.constructor=MediaQueryList;"
-		"Object.defineProperty(MediaQueryList.prototype,'matches',{get:function(){return __mqlMatches.call(this);}});"
-		"Object.defineProperty(MediaQueryList.prototype,'media',{get:function(){return __mqlMedia.call(this);}});"
-		"MediaQueryList.prototype.addListener=function(fn){this.addEventListener('change',fn);};"
-		"MediaQueryList.prototype.removeListener=function(fn){this.removeEventListener('change',fn);};"
-		"g.MediaQueryList=MediaQueryList;"
-		"g.__msMediaLists=[];"
-		"g.matchMedia=function(query){var m=__matchMediaNative(query);"
-		"Object.setPrototypeOf(m,MediaQueryList.prototype);m.__msLast=m.matches;"
-		"g.__msMediaLists.push(m);return m;};"
-		"g.__msMediaCheck=function(){var a=g.__msMediaLists.slice(),i,m,now,e;"
-		"for(i=0;i<a.length;i++){m=a[i];now=m.matches;if(now===m.__msLast)continue;"
-		"m.__msLast=now;e=new Event('change');e.matches=now;e.media=m.media;"
-		"m.dispatchEvent(e);if(typeof m.onchange==='function')m.onchange.call(m,e);}};"
 		"})(this);");
 
 	/* fixes1280 (#167) - Facebook has reached its application scheduler.
@@ -13872,9 +13707,6 @@ static void register_browser_globals(JSContext *ctx)
 			"try{"
 				"total++;"
 				"var id=(l&&l.id!=null)?String(l.id):null;"
-				"if(id&&typeof __msModEvent==='function'){"
-					"__msModEvent(id,null,3,0,0);" /* MS_MOD_EXECUTE */
-				"}"
 				"if(id&&WATCH[id]&&!seen[id]){"
 					"seen[id]=1;"
 					"if(typeof __msLife==='function')"
@@ -14059,8 +13891,6 @@ static void register_browser_globals(JSContext *ctx)
 		"var rlRealNull=0;"
 		"var realD=(typeof g.__d==='function')?g.__d:null;"
 		"var realRL=(typeof g.requireLazy==='function')?g.requireLazy:null;"
-		"var realReq=(typeof g.require==='function')?g.require:null;"
-		"var realR=(typeof g.__r==='function')?g.__r:null;"
 		"var budget=300;"
 		"function wrappedD(){"
 			"dTotal++;"
@@ -14068,9 +13898,6 @@ static void register_browser_globals(JSContext *ctx)
 			"var _tgtDef=0;"
 			"try{"
 				"var id=(arguments[0]!=null)?String(arguments[0]):null;"
-				"if(id&&typeof __msModEvent==='function'){"
-					"__msModEvent(id,null,0,0,0);" /* MS_MOD_DEFINE */
-				"}"
 				/* fixes1270 - unconditional, every __d() call, not
 				 * gated by DWATCH: the graph walk needs the FULL
 				 * dependency map to reconstruct the target's real
@@ -14081,12 +13908,8 @@ static void register_browser_globals(JSContext *ctx)
 					"var _cp=[];"
 					"if(_rawDeps&&typeof _rawDeps.length==='number'){"
 						"var _di;"
-						"for(_di=0;_di<_rawDeps.length;_di++){"
+						"for(_di=0;_di<_rawDeps.length;_di++)"
 							"_cp.push(_rawDeps[_di]);"
-							"if(typeof __msModEvent==='function'&&_rawDeps[_di]){"
-								"__msModEvent(String(_rawDeps[_di]),id,5,0,1,0);" /* MS_MOD_DECLARE_DEP */
-							"}"
-						"}"
 					"}"
 					"GDEPS[id]=_cp;"
 					"if(id===GTARGET&&gTargetDefineSeq===-1)"
@@ -14147,16 +13970,6 @@ static void register_browser_globals(JSContext *ctx)
 			"try{"
 				"var deps=args[0];"
 				"var dj=(deps&&deps.join)?deps.join(','):String(deps);"
-				"if(typeof __msModEvent==='function'&&deps){"
-					"if(typeof deps.length==='number'){"
-						"var _mi;"
-						"for(_mi=0;_mi<deps.length;_mi++){"
-							"if(deps[_mi])__msModEvent(String(deps[_mi]),null,6,0,0,id);" /* MS_MOD_WAIT_REGISTERED */
-						"}"
-					"}else if(typeof deps==='string'){"
-						"__msModEvent(deps,null,1,0,0);"
-					"}"
-				"}"
 				/* fixes1271 - walk the deps ARRAY and record each
 				 * individual dependency string containing the
 				 * substring, rather than only testing the joined
@@ -14202,24 +14015,8 @@ static void register_browser_globals(JSContext *ctx)
 			"var origCb=args[1];"
 			"if(typeof origCb==='function'){"
 				"args[1]=function(){"
-					"if(typeof __msModEvent==='function'&&deps&&deps.length){"
-						"if(deps[0])__msModEvent(String(deps[0]),null,7,0,0,id);}"
 					"rlFires++;"
 					"if(isTarget)rlTargetFires++;"
-					"if(typeof __msModEvent==='function'&&deps){"
-						"if(typeof deps.length==='number'){"
-							"var _mi2;"
-							"for(_mi2=0;_mi2<deps.length;_mi2++){"
-								"if(deps[_mi2]){"
-									"__msModEvent(String(deps[_mi2]),null,2,0,0,id);" /* MS_MOD_RESOLVE */
-									"__msModEvent(String(deps[_mi2]),null,3,0,0,id);" /* MS_MOD_EXECUTE */
-								"}"
-							"}"
-						"}else if(typeof deps==='string'){"
-							"__msModEvent(deps,null,2,0,0,id);"
-							"__msModEvent(deps,null,3,0,0,id);"
-						"}"
-					"}"
 					"try{"
 						"if((isTarget||id<=20)&&budget>0&&"
 								"typeof __msLife==='function'){"
@@ -14236,14 +14033,8 @@ static void register_browser_globals(JSContext *ctx)
 								"__msLife('FBRL RETURN id='+id);"
 							"}"
 						"}catch(e2){}"
-						"if(typeof __msModEvent==='function'&&deps&&deps.length){"
-							"if(deps[0])__msModEvent(String(deps[0]),null,8,0,0,id);}"
 						"return ret;"
 					"}catch(err){"
-						"if(typeof __msModEvent==='function'&&deps){"
-							"var _edn=(typeof deps.length==='number'&&deps[0])?String(deps[0]):String(deps);"
-							"__msModEvent(_edn,null,4,3,0,id);" /* MS_MOD_FAIL (FACTORY_THROW=3) */
-						"}"
 						"try{if(typeof __msLife==='function')"
 							"__msLife('FBRL THROW id='+id+' err='+"
 								"((err&&err.message)||err));"
@@ -14258,46 +14049,6 @@ static void register_browser_globals(JSContext *ctx)
 			 * anything else means rl_target_fires=0 is our own bug. */
 			"rlRealNull++;"
 			"return undefined;"
-		"}"
-		"function wrappedRequire(id){"
-			"var sid=(id!=null)?String(id):null;"
-			"if(typeof __msModEvent==='function'&&sid){"
-				"__msModEvent(sid,null,1,0,0);" /* MS_MOD_REQUEST */
-			"}"
-			"if(!realReq)return undefined;"
-			"try{"
-				"var res=realReq.apply(this,arguments);"
-				"if(typeof __msModEvent==='function'&&sid){"
-					"__msModEvent(sid,null,2,0,0);" /* MS_MOD_RESOLVE */
-				"}"
-				"return res;"
-			"}catch(err){"
-				"if(typeof __msModEvent==='function'&&sid){"
-					"var r=(err&&err.message&&err.message.indexOf('unknown module')>=0)?1:3;" /* 1=MISSING, 3=FACTORY_THROW */
-					"__msModEvent(sid,null,4,r,0);" /* MS_MOD_FAIL */
-				"}"
-				"throw err;"
-			"}"
-		"}"
-		"function wrappedR(id){"
-			"var sid=(id!=null)?String(id):null;"
-			"if(typeof __msModEvent==='function'&&sid){"
-				"__msModEvent(sid,null,1,0,0);" /* MS_MOD_REQUEST */
-			"}"
-			"if(!realR)return undefined;"
-			"try{"
-				"var res=realR.apply(this,arguments);"
-				"if(typeof __msModEvent==='function'&&sid){"
-					"__msModEvent(sid,null,2,0,0);" /* MS_MOD_RESOLVE */
-				"}"
-				"return res;"
-			"}catch(err){"
-				"if(typeof __msModEvent==='function'&&sid){"
-					"var r=(err&&err.message&&err.message.indexOf('unknown module')>=0)?1:3;"
-					"__msModEvent(sid,null,4,r,0);" /* MS_MOD_FAIL */
-				"}"
-				"throw err;"
-			"}"
 		"}"
 		/* fixes1275 (#167) - DO NOT FABRICATE EXISTENCE.
 		 *
@@ -14368,16 +14119,6 @@ static void register_browser_globals(JSContext *ctx)
 			"configurable:true,"
 			"get:function(){return (realRL!==null)?wrappedRL:undefined;},"
 			"set:function(v){if(v!==wrappedRL)realRL=v;}"
-		"});"
-		"Object.defineProperty(g,'require',{"
-			"configurable:true,"
-			"get:function(){return (realReq!==null)?wrappedRequire:undefined;},"
-			"set:function(v){if(v!==wrappedRequire)realReq=v;}"
-		"});"
-		"Object.defineProperty(g,'__r',{"
-			"configurable:true,"
-			"get:function(){return (realR!==null)?wrappedR:undefined;},"
-			"set:function(v){if(v!==wrappedR)realR=v;}"
 		"});"
 		"g.__msFBLoader_dTotal=function(){return dTotal;};"
 		"g.__msFBLoader_dTarget=function(){return dTarget;};"
@@ -15478,6 +15219,8 @@ nserror js_newthread(struct jsheap *heap, void *win_priv, void *doc_priv,
 		 * by the "LIFE js src" line and the FBCR __d wrapper so both
 		 * can be diffed nav-by-nav. */
 		g_qjs_nav_seq++;
+		html_content_set_diag_context((struct content *)htmlc,
+			(unsigned long)g_qjs_nav_seq, win_priv);
 		qjs_flush_timers(heap->ctx);
 		/* fixes846 (#167 S3) - same load-bearing ordering as the timer
 		 * flush above: abort every in-flight XHR and free its dup'd
@@ -15570,6 +15313,7 @@ nserror js_newthread(struct jsheap *heap, void *win_priv, void *doc_priv,
 	thread->win_priv = win_priv;
 	thread->doc_priv = doc_priv;
 	*out_thread = thread;
+	qjs_thread_register(thread);
 	if (doc_priv != NULL) {
 		/* doc_priv is html_content* - extract dom_document*.
 		 * html_content is defined in content/handlers/html/private.h;
@@ -15592,6 +15336,7 @@ nserror js_closethread(struct jsthread *thread)
 
 void js_destroythread(struct jsthread *thread)
 {
+	qjs_thread_unregister(thread);
 	free(thread);
 }
 
@@ -15988,6 +15733,8 @@ unsigned char js_exec(struct jsthread *thread,
 	JSValue val;
 	int ok;
 	char *src;
+	struct ms_diag_scope diag_script_scope;
+	int diag_script_state = MS_SCR_DONE;
 
 	/* fixes847 (#167 S1 census gap) - the other half of the js_exec
 	 * visibility fix below: if thread/ctx is NULL, js_exec bails before
@@ -16039,56 +15786,16 @@ unsigned char js_exec(struct jsthread *thread,
  * the primary safety net.  Set to 0 to disarm. */
 #define MACSURF_JS_MAX_BYTES 262144UL
 #endif
-	/* fixes1143 - per-script size-cap bypass for essential bundles.
-	 * Editor bundles that exceed the cap are let through; the 30s
-	 * execution deadline bounds them instead.
-	 *
-	 * fixes1233 (#167) - hardware evidence (2026-08-20): the logged-in
-	 * feed now renders (h=3448, 180 real sections, friend names visible)
-	 * with 11 of 51 scripts skipped for size -- Facebook's real bundles
-	 * hash their filenames per build (no stable name like
-	 * "editor-compiled.js" to match), so they never qualify for the
-	 * existing bypass and get silently dropped even though the 30s
-	 * execution deadline is perfectly able to bound them, same as the
-	 * editor bundle. Bypass by HOST instead of filename for Facebook's
-	 * asset origins -- same fbcdn.net/facebook.net set already used for
-	 * the UA table (macos9_fetch.c) -- to see what the skipped bundles
-	 * actually add (deliberately broad per the maintainer's direction:
-	 * "bypass limits just for facebook to see what happens"). */
-	{
-		static const char *const bypass[] = {
-			"editor-compiled.js",
-			"fbcdn.net",
-			"facebook.net",
-			NULL
-		};
-		int cap_bypass = 0;
-		if (name != NULL) {
-			const char *const *bp;
-			for (bp = bypass; *bp != NULL; bp++) {
-				if (strstr(name, *bp) != NULL) {
-					cap_bypass = 1;
-					break;
-				}
-			}
-		}
-		if (!cap_bypass &&
-		    MACSURF_JS_MAX_BYTES != 0UL &&
+	if (MACSURF_JS_MAX_BYTES != 0UL &&
 		    txtlen > MACSURF_JS_MAX_BYTES) {
 			g_js_skip_count++;
 			macsurf_debug_log_writef(
 				"LIFE js skip [%s len=%ld > %ld]",
 				name ? name : "(anon)", (long)txtlen,
 				(long)MACSURF_JS_MAX_BYTES);
+			ms_diag_error_record(0UL, 0UL, MS_ERR_API_DECLINE, 0, MS_OPR_BODY_ALLOC,
+				name ? name : "(anon)", "script size exceeds MACSURF_JS_MAX_BYTES");
 			return 0;
-		}
-		if (cap_bypass &&
-		    MACSURF_JS_MAX_BYTES != 0UL &&
-		    txtlen > MACSURF_JS_MAX_BYTES) {
-			macsurf_debug_log_writef(
-				"LIFE js bypass [%s len=%ld]",
-				name ? name : "(anon)", (long)txtlen);
-		}
 	}
 
 	/* fixes523 DIAGNOSTIC: fingerprint the exact bytes handed to QuickJS so
@@ -16301,6 +16008,10 @@ unsigned char js_exec(struct jsthread *thread,
 		long r_us = 0;
 		JSValue fn;
 
+		qjs_task_push(MACSURF_JS_TASK_SCRIPT);
+		ms_diag_script_enter(&diag_script_scope,
+			(unsigned long)g_qjs_nav_seq, MS_SCRIPT_CLASSIC, name);
+		ms_diag_task_set_script(g_qjs_task_id, diag_script_scope.my_id);
 		fn = JS_Eval(thread->ctx, src, txtlen,
 				name ? name : "<script>",
 				JS_EVAL_TYPE_GLOBAL |
@@ -16308,6 +16019,7 @@ unsigned char js_exec(struct jsthread *thread,
 		t_mid = macos9_micros();
 		c_us = (long)(t_mid - t_js);
 		if (JS_IsException(fn)) {
+			diag_script_state = MS_SCR_COMPILE_FAIL;
 			/* Syntax error: fn IS the exception value, which is
 			 * what plain JS_Eval would have returned. Propagate it
 			 * unchanged so the error reporting below is identical
@@ -16319,6 +16031,7 @@ unsigned char js_exec(struct jsthread *thread,
 					0, 0, c_us, 0);
 		} else {
 			val = JS_EvalFunction(thread->ctx, fn);
+			if (JS_IsException(val)) diag_script_state = MS_SCR_RUN_FAIL;
 			r_us = (long)(macos9_micros() - t_mid);
 			/* R1.3 - compiled ok; ran to completion or threw. */
 			qjs_census_note(name, (long)txtlen, ctype,
@@ -16357,6 +16070,8 @@ unsigned char js_exec(struct jsthread *thread,
 			g_js_exec_fail++;
 		macsurf_debug_log_writef("LIFE qjs exec err: %s [%s len=%ld]",
 				estr ? estr : "?", sname, (long)txtlen);
+			ms_diag_error_record(0UL, 0UL, MS_ERR_JS_EXCEPTION, 0, MS_OPR_NONE,
+				sname, estr ? estr : "?");
 		}
 		if (estr) JS_FreeCString(thread->ctx, estr);
 
@@ -16393,6 +16108,8 @@ unsigned char js_exec(struct jsthread *thread,
 		JS_FreeValue(thread->ctx, exc);
 		JS_FreeValue(thread->ctx, val);
 		macsurf_debug_log_writef("qjs: exec-return0 [%s]", name ? name : "?");
+		ms_diag_script_leave(&diag_script_scope, diag_script_state);
+		qjs_task_pop();
 		return 0;
 	}
 	JS_FreeValue(thread->ctx, val);
@@ -16409,6 +16126,8 @@ unsigned char js_exec(struct jsthread *thread,
 				sname, (long)txtlen);
 	}
 #endif
+	ms_diag_script_leave(&diag_script_scope, diag_script_state);
+	qjs_task_pop();
 	return 1;
 }
 
@@ -16428,6 +16147,8 @@ unsigned char js_exec_module(struct jsthread *thread,
 	JSContext *ctx;
 	char *src;
 	int ok;
+	struct ms_diag_scope diag_script_scope;
+	int diag_script_state = MS_SCR_DONE;
 
 	if (thread == NULL || thread->ctx == NULL) {
 		macsurf_debug_log_writef(
@@ -16469,12 +16190,17 @@ unsigned char js_exec_module(struct jsthread *thread,
 		extern double macos9_micros(void);
 		double t0 = macos9_micros();
 		long mus;
+		qjs_task_push(MACSURF_JS_TASK_SCRIPT);
+		ms_diag_script_enter(&diag_script_scope,
+			(unsigned long)g_qjs_nav_seq, MS_SCRIPT_MODULE, name);
+		ms_diag_task_set_script(g_qjs_task_id, diag_script_scope.my_id);
 		val = JS_Eval(ctx, src, txtlen,
 			name ? name : "<module>",
 			JS_EVAL_TYPE_MODULE);
 		free(src);
 
 		ok = !JS_IsException(val);
+		if (!ok) diag_script_state = MS_SCR_RUN_FAIL;
 		mus = (long)(macos9_micros() - t0);
 		/* R1.3 - a module is compiled, resolved and executed in the one
 		 * JS_Eval call, so a failure cannot be attributed to a phase
@@ -16491,6 +16217,8 @@ unsigned char js_exec_module(struct jsthread *thread,
 		macsurf_debug_log_writef(
 			"LIFE qjs exec module done ok=%d us=%ld [%s]",
 			(int)ok, mus, name ? name : "<module>");
+		ms_diag_script_leave(&diag_script_scope, diag_script_state);
+		qjs_task_pop();
 	}
 
 	/* Update page stats (same as js_exec) */
@@ -16505,6 +16233,18 @@ unsigned char js_fire_event(struct jsthread *thread, const char *type,
 {
 	(void)doc; (void)target;
 	if (thread == NULL || thread->ctx == NULL || type == NULL) return 0;
+	/* fixes1293 - Validate thread liveness before dispatching. */
+	{
+		struct content *c = (struct content *)thread->doc_priv;
+		if (!qjs_thread_is_live_for_dispatch(thread, c, doc)) {
+			macsurf_debug_log_writef(
+				"LIFE qjs: fire_event SKIPPED stale thread=%p ctx=%p "
+				"c=%p type=%s",
+				(void *)thread, (void *)thread->ctx,
+				(void *)c, type);
+			return 0;
+		}
+	}
 	/* Fire window.dispatchEvent(new Event(type)) */
 	{
 		/* fixes603 - buffer/guard mismatch overflow: bytes written are
@@ -16519,7 +16259,7 @@ unsigned char js_fire_event(struct jsthread *thread, const char *type,
 			memcpy(script + 48, type, tlen);
 			memcpy(script + 48 + tlen, "'));}catch(e){}})();", 20);
 			script[48 + tlen + 20] = '\0';
-			macsurf_qjs__safe_eval(thread->ctx, script);
+			qjs_page_dispatch_eval(thread, script, MACSURF_JS_TASK_EVENT);
 		}
 	}
 	return 1;
@@ -16542,20 +16282,20 @@ void js_fire_mutation_batch(struct jsthread *thread)
 		"__msDeliverMutations();"
 		"}catch(e){}})();";
 	if (thread == NULL || thread->ctx == NULL) return;
-	macsurf_qjs__safe_eval(thread->ctx, s_deliver_src);
-}
-
-/* The document owns its MediaQueryList registry. html_reformat calls this
- * only after it has published the new css_media values and completed layout;
- * the JS-side check emits change events solely for lists whose truth changed. */
-void js_media_state_changed(struct jsthread *thread)
-{
-	static const char s_media_check_src[] =
-		"(function(){try{"
-		"if(typeof __msMediaCheck==='function')__msMediaCheck();"
-		"}catch(e){}})();";
-	if (thread == NULL || thread->ctx == NULL) return;
-	macsurf_qjs__safe_eval(thread->ctx, s_media_check_src);
+	/* fixes1293 - Validate thread liveness before dispatching. */
+	{
+		struct content *c = (struct content *)thread->doc_priv;
+		if (!qjs_thread_is_live_for_dispatch(thread, c, NULL)) {
+			macsurf_debug_log_writef(
+				"LIFE qjs: mutation_batch SKIPPED stale thread=%p ctx=%p "
+				"c=%p",
+				(void *)thread, (void *)thread->ctx,
+				(void *)c);
+			return;
+		}
+	}
+	qjs_page_dispatch_eval(thread, s_deliver_src,
+		MACSURF_JS_TASK_INTERNAL_NOTIFICATION);
 }
 
 /* fixes652: real-build definition of interaction.c's click bridge (Gate 5).
@@ -16605,7 +16345,20 @@ unsigned char js_fire_dom_ready(struct jsthread *thread, struct dom_document *do
 	if (thread == NULL || thread->ctx == NULL) {
 		return 0;
 	}
-	macsurf_qjs__safe_eval(thread->ctx, s_dom_ready_src);
+	/* fixes1293 - Same stale-thread validation as js_fire_window_load. */
+	{
+		struct content *c = (struct content *)thread->doc_priv;
+		if (!qjs_thread_is_live_for_dispatch(thread, c, doc)) {
+			macsurf_debug_log_writef(
+				"LIFE qjs: dom_ready SKIPPED stale thread=%p ctx=%p "
+				"c=%p doc=%p",
+				(void *)thread, (void *)thread->ctx,
+				(void *)c, (void *)doc);
+			return 0;
+		}
+	}
+	qjs_page_dispatch_eval(thread, s_dom_ready_src,
+		MACSURF_JS_TASK_INTERNAL_NOTIFICATION);
 	/* fixes862 (#289 probe) - was "qjs: DOMContentLoaded+load fired to
 	 * document", which the failures-only gate DROPS (macsurf_debug_log.c:
 	 * only "WORK " and genuine failures survive), so this has been invisible
@@ -16621,50 +16374,6 @@ unsigned char js_fire_dom_ready(struct jsthread *thread, struct dom_document *do
 	macsurf_debug_log_writef("LIFE domready fired ctx=%p doc=%p",
 			(void *)thread->ctx, (void *)doc);
 	return 1;
-}
-
-/* fixes1096 - THE SLIDER PROBE, JS HALF.
- *
- * html.c's C-side probe (html_slider_probe) reads the DOM through libdom and
- * can name what exists around .featured-slides; it cannot see what the
- * PAGE'S OWN scripts see. This half runs in the page realm at the same probe
- * points ("ready" / "done" / "reconvert" -- html.c splices the label in) and
- * asks the questions only JS can: does jQuery exist, does jQuery.fn.slick,
- * and what does document.querySelector answer for the theme's featured
- * classes. A libdom walk and the engine's querySelector can disagree when
- * script rebuilt the tree, which is itself a finding.
- *
- * Emitted through __msLife so the lines carry the LIFE prefix and survive the
- * failures-only release filter; __msLife's per-navigation budget (60) covers
- * this (2 lines per probe point, <=6 probe points per navigation).
- * All reads, no mutations: safe to run at any probe point. */
-void js_fire_slider_probe(struct jsthread *thread, const char *when)
-{
-	static const char s_fmt[] =
-		"(function(){try{"
-		"if(typeof document==='undefined'||!document.querySelector)return;"
-		"var L='%s';"
-		"var fs=document.querySelector('.featured-slides');"
-		"var fg=document.querySelector('.featured-grid');"
-		"var si=document.querySelector('.slick-initialized');"
-		"var se=document.querySelector('section.featured');"
-		"__msLife('SLIDER DOM['+L+'] fs='+(fs?'PRESENT':'MISSING')"
-		" +' fg='+(fg?'PRESENT':'MISSING')"
-		" +' si='+(si?'PRESENT':'MISSING')"
-		" +' sec='+(se?'PRESENT kids='+se.children.length:'MISSING'));"
-		"if(typeof jQuery!=='undefined'&&jQuery.fn){"
-		"__msLife('SLIDER LIB['+L+'] jq='+typeof jQuery"
-		" +' slick='+typeof jQuery.fn.slick);"
-		"}else{"
-		"__msLife('SLIDER LIB['+L+'] jq='+typeof jQuery+' (no fn)');"
-		"}"
-		"}catch(e){}})();";
-	char src[1024];
-
-	if (thread == NULL || thread->ctx == NULL) return;
-	if (when == NULL) when = "?";
-	sprintf(src, s_fmt, when);
-	macsurf_qjs__safe_eval(thread->ctx, src);
 }
 
 /* fixes881 (Phase 0.7) - readyState='complete' + `load` at document AND window.
@@ -16695,11 +16404,32 @@ unsigned char js_fire_window_load(struct jsthread *thread, struct dom_document *
 		"try{if(typeof window!=='undefined')"
 		"window.dispatchEvent(new Event('load'));}catch(e){}"
 		"}catch(e){}})();";
-	(void)doc;
+
 	if (thread == NULL || thread->ctx == NULL) {
 		return 0;
 	}
-	macsurf_qjs__safe_eval(thread->ctx, s_window_load_src);
+	/* fixes1293 - Validate that the thread is still live and owns the
+	 * expected content/document.  A stale thread from a closed tab or
+	 * navigated page can have non-NULL but freed ctx, which would crash
+	 * QuickJS when JS_Eval tries to use it.  The validation checks:
+	 *   - thread is registered (in g_qjs_threads)
+	 *   - ctx is live with matching generation (in g_heap_list)
+	 *   - realm owner matches the thread's doc_priv (html_content)
+	 *   - realm owner matches the passed dom_document
+	 */
+	{
+		struct content *c = (struct content *)thread->doc_priv;
+		if (!qjs_thread_is_live_for_dispatch(thread, c, doc)) {
+			macsurf_debug_log_writef(
+				"LIFE qjs: window_load SKIPPED stale thread=%p ctx=%p "
+				"c=%p doc=%p",
+				(void *)thread, (void *)thread->ctx,
+				(void *)c, (void *)doc);
+			return 0;
+		}
+	}
+	qjs_page_dispatch_eval(thread, s_window_load_src,
+		MACSURF_JS_TASK_INTERNAL_NOTIFICATION);
 	macsurf_debug_log_writef("LIFE window load fired ctx=%p doc=%p",
 			(void *)thread->ctx, (void *)doc);
 	/* fixes1013 - one line per page saying whether the JS actually ran and
@@ -16811,6 +16541,22 @@ unsigned char js_fire_script_load(struct jsthread *thread,
 	JSValue fn, el, args[2], ret;
 
 	if (thread == NULL || thread->ctx == NULL || node == NULL) return 0;
+	/* fixes1293 - Validate thread liveness before dispatching. */
+	{
+		struct content *c = (struct content *)thread->doc_priv;
+		dom_document *doc = NULL;
+		macsurf_dom_node_get_owner_document(node, &doc);
+		if (!qjs_thread_is_live_for_dispatch(thread, c, doc)) {
+			macsurf_debug_log_writef(
+				"LIFE qjs: script_load SKIPPED stale thread=%p ctx=%p "
+				"c=%p node=%p",
+				(void *)thread, (void *)thread->ctx,
+				(void *)c, (void *)node);
+			if (doc) macsurf_dom_node_unref((dom_node *)doc);
+			return 0;
+		}
+		if (doc) macsurf_dom_node_unref((dom_node *)doc);
+	}
 	ctx = thread->ctx;
 
 	/* #265 - firing a script onload/onerror handler is a C->JS event
@@ -17009,16 +16755,14 @@ void macsurf_qjs_pump_all(void)
 		 * event loop -- the same class of hang as the fixes608 timer cycle.
 		 * QJS_MAX_JOBS_PER_PUMP caps one pass; leftovers run on the next poll,
 		 * which is what a real browser's task/microtask split does anyway. */
-		if (h->rt != NULL && JS_IsJobPending(h->rt)) {
+		if (h->rt != NULL) {
 			int jobs = 0;
-			struct ms_diag_scope __mtsk;	/* MacSurf Trace 1b */
-			/* one task per drain TURN, not per Promise job -- a turn
-			 * can hold jobs from several scripts, so script=0. */
-			ms_diag_task_enter(&__mtsk, MS_TASK_MICROTASK,
-				ms_diag_cur_nav(), 0, 0, (const char *) 0);
 			while (JS_IsJobPending(h->rt) && jobs < QJS_MAX_JOBS_PER_PUMP) {
 				JSContext *jctx = NULL;
-				int r = JS_ExecutePendingJob(h->rt, &jctx);
+				int r;
+				qjs_task_push(MACSURF_JS_TASK_MICROTASK);
+				r = JS_ExecutePendingJob(h->rt, &jctx);
+				qjs_task_pop();
 				if (r < 0) {
 					/* Uncaught rejection / job threw: surface it, keep
 					 * draining -- one bad job must not stall the queue. */
@@ -17051,9 +16795,6 @@ void macsurf_qjs_pump_all(void)
 				}
 				g_job_pump_cap_hits++;
 			}
-			ms_diag_task_set_jobs(&__mtsk, (unsigned long) jobs,
-				jobs >= QJS_MAX_JOBS_PER_PUMP);
-			ms_diag_task_leave(&__mtsk);
 		}
 		h = next;
 	}

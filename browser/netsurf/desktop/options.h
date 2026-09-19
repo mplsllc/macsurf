@@ -151,12 +151,6 @@ NSOPTION_BOOL(animate_images, true)
 /** Whether to execute javascript */
 NSOPTION_BOOL(enable_javascript, false)
 
-/** Enable MacSurf's diagnostic logging and performance instrumentation.
- * Disabled by default for release builds: the integrations are useful while
- * investigating a problem, but should not consume CPU or disk I/O during a
- * normal page load. */
-NSOPTION_BOOL(macsurf_debug_integrations, false)
-
 /** Whether to allow Author level CSS. */
 NSOPTION_BOOL(author_level_css, true)
 
@@ -183,6 +177,9 @@ NSOPTION_STRING(cookie_jar, NULL)
 
 /** Home page location */
 NSOPTION_STRING(homepage_url, NULL)
+
+/** Custom download folder path (MacSurf-specific) */
+NSOPTION_STRING(download_folder_path, NULL)
 
 /** search web from url bar */
 NSOPTION_BOOL(search_url_bar, false)
