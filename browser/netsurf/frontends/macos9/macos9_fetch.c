@@ -36,6 +36,7 @@ extern int macos9_fsspec_to_path(const FSSpec *spec, char *out, long cap);
 
 #include "macos9_useragent.h"
 #include "macos9_blocklist.h"
+#include "macsurf_debug_log.h"	/* UAOUT diagnostic uses macsurf_debug_log_writef */
 
 /* fixes368 (#167)  -  per-host User-Agent table (Classilla "sitecontrol"
  * pattern). See macos9_useragent.h. To add a site override, add a
@@ -432,14 +433,25 @@ const char *macos9_user_agent_for_host(const char *host)
 			best_len = sl;
 		}
 	}
-	if (best >= 0) return macos9_user_ua_rules[best].ua;
+	if (best >= 0) {
+		const char *ua = macos9_user_ua_rules[best].ua;
+		macsurf_debug_log_writef("UAOUT host=%s rule=user[%d] suffix=%s ua=%s",
+			host, best, macos9_user_ua_rules[best].suffix, ua);
+		return ua;
+	}
 
 	/* Preserve the historical built-in first-match-wins contract. */
 	n = sizeof(macos9_ua_rules) / sizeof(macos9_ua_rules[0]);
 	for (i = 0; i < n; i++) {
-		if (macos9_ua_suffix_match(host, macos9_ua_rules[i].suffix))
-			return macos9_ua_rules[i].ua;
+		if (macos9_ua_suffix_match(host, macos9_ua_rules[i].suffix)) {
+			const char *ua = macos9_ua_rules[i].ua;
+			macsurf_debug_log_writef("UAOUT host=%s rule=builtin[%d] suffix=%s ua=%s",
+				host, (int)i, macos9_ua_rules[i].suffix, ua);
+			return ua;
+		}
 	}
+	macsurf_debug_log_writef("UAOUT host=%s rule=default ua=%s",
+		host, MACOS9_UA_DEFAULT);
 	return MACOS9_UA_DEFAULT;
 }
 

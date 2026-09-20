@@ -245,7 +245,7 @@ void macos9_prefs_apply_live(void)
  * Preferences window - native Carbon / Appearance Manager UI.
  */
 
-#define PREFS_W_W 480
+#define PREFS_W_W 580
 #define PREFS_W_H 420
 #define PREFS_BANNER_H 40
 #define PREFS_PANEL_TOP 48
@@ -375,7 +375,7 @@ struct prefs_win {
 static const Rect s_btn_defaults_rect     = { 358,  20, 382, 144 };
 static const Rect s_btn_cancel_rect       = { 358, 276, 382, 356 };
 static const Rect s_btn_ok_rect           = { 358, 372, 382, 460 };
-static const Rect s_tabs_rect             = {  42,  12, 348, 468 };
+static const Rect s_tabs_rect             = {  42,  12, 448, 468 };
 
 /* General panel */
 static const Rect s_te_home_rect          = {  94,  24, 116, 456 };
@@ -417,12 +417,12 @@ static const Rect s_btn_cache_rect        = { 230,  24, 254, 160 };
 static const Rect s_btn_hist_rect         = { 230, 175, 254, 310 };
 
 /* User Agents panel */
-static const Rect s_pp_ua_rule_rect       = {  82, 150, 104, 456 };
-static const Rect s_te_ua_host_rect       = { 126,  92, 148, 456 };
-static const Rect s_pp_ua_profile_rect    = { 166, 150, 188, 330 };
-static const Rect s_te_ua_custom_rect     = { 218,  24, 240, 456 };
-static const Rect s_btn_ua_save_rect      = { 258,  24, 282, 154 };
-static const Rect s_btn_ua_remove_rect    = { 258, 166, 282, 276 };
+static const Rect s_pp_ua_rule_rect       = { 166, 142, 188, 442 };
+static const Rect s_te_ua_host_rect       = { 196, 142, 218, 558 };
+static const Rect s_pp_ua_profile_rect    = { 226, 142, 248, 322 };
+static const Rect s_te_ua_custom_rect     = { 256, 142, 278, 558 };
+static const Rect s_btn_ua_save_rect      = { 286, 142, 310, 272 };
+static const Rect s_btn_ua_remove_rect    = { 286, 282, 310, 392 };
 
 /* Advanced panel */
 static const Rect s_pp_fetch_rect         = {  88, 280, 110, 380 };
@@ -1760,7 +1760,7 @@ void macos9_prefs_show(void)
 		return;
 	}
 
-	SetRect(&wb, 110, 80, (short)(110 + PREFS_W_W), (short)(80 + PREFS_W_H));
+	SetRect(&wb, 110, 80, (short)(110 + PREFS_W_H), (short)(80 + PREFS_W_W));
 	if (CreateNewWindow(kDocumentWindowClass, kWindowCloseBoxAttribute,
 			&wb, &pw.win) != noErr || pw.win == NULL) {
 		return;

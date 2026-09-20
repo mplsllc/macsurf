@@ -418,6 +418,9 @@ static int mfs_open(struct macos9_fetch_ctx *c) {
 				c->status = c->cache_hit_status;
 				c->content_length = c->cache_hit_len;
 				c->keep_alive_ok = 0;
+						host, ua);
+					if (host_lwc) lwc_string_unref(host_lwc);
+				}
 				return 1; /* mfs_poll_one drives the rest */
 			}
 		}
