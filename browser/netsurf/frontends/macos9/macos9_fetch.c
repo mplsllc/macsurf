@@ -29,6 +29,9 @@
 #include <OpenTptInternet.h>
 #include <Threads.h>
 extern OTClientContextPtr macos9_ot_context;
+/* the full HFS path builder from window.c (same one the disk cache and the
+ * file-upload builder declare locally; gives MSL fopen a path it honours) */
+extern int macos9_fsspec_to_path(const FSSpec *spec, char *out, long cap);
 #endif
 
 #include "macos9_useragent.h"
