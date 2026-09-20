@@ -256,7 +256,6 @@ enum {
 	PREFS_CAT_CONTENT,
 	PREFS_CAT_APPEAR,
 	PREFS_CAT_PRIVACY,
-	PREFS_CAT_USERAGENT,
 	PREFS_CAT_NETWORK,
 	PREFS_CAT_COUNT
 };
@@ -268,7 +267,7 @@ struct prefs_popup_def {
 };
 
 static const char *s_lbl_cat[] = {
-	"General", "Web Content", "Appearance", "Privacy", "User Agents", "Advanced"
+	"General", "Web Content", "Appearance", "Privacy", "Advanced"
 };
 
 static const char *s_lbl_font[] = {
@@ -416,17 +415,17 @@ static const Rect s_ck_dnt_row_rect       = { 170,  24, 190, 456 };
 static const Rect s_btn_cache_rect        = { 230,  24, 254, 160 };
 static const Rect s_btn_hist_rect         = { 230, 175, 254, 310 };
 
-/* User Agents panel */
-static const Rect s_pp_ua_rule_rect       = {  82, 150, 104, 456 };
-static const Rect s_te_ua_host_rect       = { 126,  92, 148, 456 };
-static const Rect s_pp_ua_profile_rect    = { 166, 150, 188, 330 };
-static const Rect s_te_ua_custom_rect     = { 218,  24, 240, 456 };
-static const Rect s_btn_ua_save_rect      = { 258,  24, 282, 154 };
-static const Rect s_btn_ua_remove_rect    = { 258, 166, 282, 276 };
+/* Advanced panel — Network */
+static const Rect s_pp_fetch_rect         = {  72, 280,  94, 380 };
+static const Rect s_pp_perhost_rect       = { 106, 280, 128, 380 };
 
-/* Advanced panel */
-static const Rect s_pp_fetch_rect         = {  88, 280, 110, 380 };
-static const Rect s_pp_perhost_rect       = { 152, 280, 174, 380 };
+/* Advanced panel — User-Agent Overrides */
+static const Rect s_pp_ua_rule_rect       = { 198, 150, 220, 456 };
+static const Rect s_te_ua_host_rect       = { 222,  92, 244, 456 };
+static const Rect s_pp_ua_profile_rect    = { 246, 150, 268, 330 };
+static const Rect s_te_ua_custom_rect     = { 270,  24, 292, 456 };
+static const Rect s_btn_ua_save_rect      = { 302,  24, 326, 154 };
+static const Rect s_btn_ua_remove_rect    = { 302, 166, 326, 276 };
 
 #define PREFS_MENU_ID_FONT       261
 #define PREFS_MENU_ID_MINFONT    262
@@ -881,10 +880,10 @@ static void prefs_panel_vis(struct prefs_win *pw)
 	prefs_set_vis(pw->btn_cache,        pw->cat == PREFS_CAT_PRIVACY);
 	prefs_set_vis(pw->btn_hist,         pw->cat == PREFS_CAT_PRIVACY);
 	/* User Agents */
-	prefs_set_vis(pw->pp_ua_rule,       pw->cat == PREFS_CAT_USERAGENT);
-	prefs_set_vis(pw->pp_ua_profile,    pw->cat == PREFS_CAT_USERAGENT);
-	prefs_set_vis(pw->btn_ua_save,      pw->cat == PREFS_CAT_USERAGENT);
-	prefs_set_vis(pw->btn_ua_remove,    pw->cat == PREFS_CAT_USERAGENT);
+	prefs_set_vis(pw->pp_ua_rule,       pw->cat == PREFS_CAT_NETWORK);
+	prefs_set_vis(pw->pp_ua_profile,    pw->cat == PREFS_CAT_NETWORK);
+	prefs_set_vis(pw->btn_ua_save,      pw->cat == PREFS_CAT_NETWORK);
+	prefs_set_vis(pw->btn_ua_remove,    pw->cat == PREFS_CAT_NETWORK);
 	/* Advanced */
 	prefs_set_vis(pw->pp_fetch,         pw->cat == PREFS_CAT_NETWORK);
 	prefs_set_vis(pw->pp_perhost,       pw->cat == PREFS_CAT_NETWORK);
@@ -893,16 +892,8 @@ static void prefs_panel_vis(struct prefs_win *pw)
 static void prefs_set_cat(struct prefs_win *pw, int cat)
 {
 	Rect r;
-	int ua_rc;
 	if (cat < 0 || cat >= PREFS_CAT_COUNT) return;
 	if (cat == pw->cat) return;
-	if (pw->cat == PREFS_CAT_USERAGENT) {
-		ua_rc = prefs_ua_commit_editor(pw);
-		if (ua_rc < 0) {
-			SysBeep(1);
-			return;
-		}
-	}
 	if (pw->active_te != NULL) TEDeactivate(pw->active_te);
 	pw->active_te = NULL;
 	pw->cat = cat;
@@ -1309,51 +1300,43 @@ static void prefs_paint(struct prefs_win *pw)
 		DrawString("\pRemoves temporarily cached files and recorded page visit history.");
 		break;;
 
-	case PREFS_CAT_USERAGENT:
-		RGBForeColor(&black_c);
-		TextFont(1); TextFace(normal); TextSize(12);
-		MoveTo(24, 98);
-		DrawString("\pSaved override:");
-		MoveTo(24, 142);
-		DrawString("\pDomain:");
-		MoveTo(24, 182);
-		DrawString("\pUser agent:");
-		MoveTo(24, 212);
-		DrawString("\pCustom string:");
-
-		RGBForeColor(&gray_c);
-		TextFont(3); TextFace(normal); TextSize(9);
-		MoveTo(24, 116);
-		DrawString("\pChoose an existing rule or New Override to create one.");
-		MoveTo(24, 252);
-		DrawString("\pCustom string is used only when Custom... is selected.");
-		MoveTo(24, 304);
-		DrawString("\pMatches the domain and its subdomains. User rules override built-in");
-		MoveTo(24, 316);
-		DrawString("\pcompatibility rules and take effect on the next request after OK.");
-		break;
-
 	case PREFS_CAT_NETWORK:
 		RGBForeColor(&black_c);
 		TextFont(1); TextFace(normal); TextSize(12);
-		MoveTo(24, 104);
+		MoveTo(24, 80);
 		DrawString("\pMaximum simultaneous connections:");
-		MoveTo(24, 168);
+		MoveTo(24, 114);
 		DrawString("\pMaximum connections per host:");
-		MoveTo(24, 230);
+		MoveTo(24, 148);
 		DrawString("\pMemory cache size:");
-
-		RGBForeColor(&gray_c);
-		TextFont(3); TextSize(9);
-		MoveTo(24, 126);
-		DrawString("\pTotal concurrent HTTP/HTTPS network connections (default is 128).");
-		MoveTo(24, 190);
-		DrawString("\pConcurrent connections to a single server domain (default is 16).");
 
 		TextFont(1); TextSize(12);
 		RGBForeColor(&black_c);
-		MoveTo(160, 230);
+		MoveTo(160, 148);
 		DrawString("\p32 MB (allocated from application partition)");
+
+		/* Separator line */
+		{
+			PenSize(1, 1);
+			MoveTo(24, 170);
+			LineTo(456, 170);
+		}
+
+		/* User-Agent Overrides subsection */
+		TextFont(1); TextFace(bold); TextSize(12);
+		RGBForeColor(&black_c);
+		MoveTo(24, 186);
+		DrawString("\pUser-Agent Overrides:");
+
+		TextFace(normal);
+		MoveTo(24, 206);
+		DrawString("\pSaved override:");
+		MoveTo(24, 230);
+		DrawString("\pDomain:");
+		MoveTo(24, 254);
+		DrawString("\pUser agent:");
+		MoveTo(24, 278);
+		DrawString("\pCustom string:");
 		break;
 
 	default:
@@ -1375,24 +1358,12 @@ static void prefs_paint(struct prefs_win *pw)
 			MoveTo((short)(s_pp_minfont_rect.left + 8), (short)(s_pp_minfont_rect.top + 15));
 			DrawText(s_popup_minfont.labels[mi], 0, (short)strlen(s_popup_minfont.labels[mi]));
 		}
-	} else if (pw->cat == PREFS_CAT_USERAGENT) {
-		int ri = pw->pp_ua_rule != NULL ? GetControlValue(pw->pp_ua_rule) : 1;
-		int pi = pw->pp_ua_profile != NULL ? GetControlValue(pw->pp_ua_profile) - 1 : 0;
-		const char *rlabel = "New Override...";
-		if (ri >= 2 && ri - 2 < pw->ua_rule_count)
-			rlabel = pw->ua_rules[ri - 2].suffix;
-		MoveTo((short)(s_pp_ua_rule_rect.left + 8),
-			(short)(s_pp_ua_rule_rect.top + 15));
-		DrawText(rlabel, 0, (short)strlen(rlabel));
-		if (pi >= 0 && pi < s_popup_ua_profile.count) {
-			MoveTo((short)(s_pp_ua_profile_rect.left + 8),
-				(short)(s_pp_ua_profile_rect.top + 15));
-			DrawText(s_popup_ua_profile.labels[pi], 0,
-				(short)strlen(s_popup_ua_profile.labels[pi]));
-		}
 	} else if (pw->cat == PREFS_CAT_NETWORK) {
 		int fi = prefs_popup_item(&s_popup_fetch, nsoption_int(max_fetchers)) - 1;
 		int pi = prefs_popup_item(&s_popup_perhost, nsoption_int(max_fetchers_per_host)) - 1;
+		int ri = pw->pp_ua_rule != NULL ? GetControlValue(pw->pp_ua_rule) : 1;
+		int ui = pw->pp_ua_profile != NULL ? GetControlValue(pw->pp_ua_profile) - 1 : 0;
+		const char *rlabel = "New Override...";
 		if (fi >= 0 && fi < s_popup_fetch.count) {
 			MoveTo((short)(s_pp_fetch_rect.left + 8), (short)(s_pp_fetch_rect.top + 15));
 			DrawText(s_popup_fetch.labels[fi], 0, (short)strlen(s_popup_fetch.labels[fi]));
@@ -1400,6 +1371,17 @@ static void prefs_paint(struct prefs_win *pw)
 		if (pi >= 0 && pi < s_popup_perhost.count) {
 			MoveTo((short)(s_pp_perhost_rect.left + 8), (short)(s_pp_perhost_rect.top + 15));
 			DrawText(s_popup_perhost.labels[pi], 0, (short)strlen(s_popup_perhost.labels[pi]));
+		}
+		if (ri >= 2 && ri - 2 < pw->ua_rule_count)
+			rlabel = pw->ua_rules[ri - 2].suffix;
+		MoveTo((short)(s_pp_ua_rule_rect.left + 8),
+			(short)(s_pp_ua_rule_rect.top + 15));
+		DrawText(rlabel, 0, (short)strlen(rlabel));
+		if (ui >= 0 && ui < s_popup_ua_profile.count) {
+			MoveTo((short)(s_pp_ua_profile_rect.left + 8),
+				(short)(s_pp_ua_profile_rect.top + 15));
+			DrawText(s_popup_ua_profile.labels[ui], 0,
+				(short)strlen(s_popup_ua_profile.labels[ui]));
 		}
 	}
 
@@ -1422,7 +1404,7 @@ static void prefs_paint(struct prefs_win *pw)
 			TEUpdate(&r, pw->te_wh);
 		}
 		RGBForeColor(&saved);
-	} else if (pw->cat == PREFS_CAT_USERAGENT) {
+	} else if (pw->cat == PREFS_CAT_NETWORK) {
 		RGBForeColor(&black_c);
 		if (pw->te_ua_host != NULL) {
 			r = s_te_ua_host_rect;
@@ -1499,7 +1481,7 @@ static void prefs_te_tab(struct prefs_win *pw)
 		else next = pw->te_home;
 		if (next == NULL) next = pw->te_ww;
 		if (next == NULL) next = pw->te_wh;
-	} else if (pw->cat == PREFS_CAT_USERAGENT) {
+	} else if (pw->cat == PREFS_CAT_NETWORK) {
 		if (pw->active_te == pw->te_ua_host) next = pw->te_ua_custom;
 		else next = pw->te_ua_host;
 	} else {
@@ -1522,11 +1504,6 @@ static int prefs_click(struct prefs_win *pw, Point lp)
 	if (PtInRect(lp, &s_btn_ok_rect)) {
 		part = TrackControl(pw->btn_ok, lp, NULL);
 		if (part != 0) {
-			if (pw->cat == PREFS_CAT_USERAGENT &&
-		    prefs_ua_commit_editor(pw) < 0) {
-				SysBeep(1);
-				return 0;
-			}
 			prefs_apply_from_ui(pw);
 			macos9_prefs_save();
 			macos9_prefs_apply_live();
@@ -1641,7 +1618,13 @@ static int prefs_click(struct prefs_win *pw, Point lp)
 		}
 		break;
 
-	case PREFS_CAT_USERAGENT:
+	case PREFS_CAT_NETWORK:
+		if (PtInRect(lp, &s_pp_fetch_rect)) {
+			prefs_do_popup(pw->pp_fetch, pw->m_fetch, lp); return 0;
+		}
+		if (PtInRect(lp, &s_pp_perhost_rect)) {
+			prefs_do_popup(pw->pp_perhost, pw->m_perhost, lp); return 0;
+		}
 		if (PtInRect(lp, &s_pp_ua_rule_rect)) {
 			int item;
 			prefs_do_popup(pw->pp_ua_rule, pw->m_ua_rule, lp);
@@ -1686,15 +1669,6 @@ static int prefs_click(struct prefs_win *pw, Point lp)
 		}
 		break;
 
-	case PREFS_CAT_NETWORK:
-		if (PtInRect(lp, &s_pp_fetch_rect)) {
-			prefs_do_popup(pw->pp_fetch, pw->m_fetch, lp); return 0;
-		}
-		if (PtInRect(lp, &s_pp_perhost_rect)) {
-			prefs_do_popup(pw->pp_perhost, pw->m_perhost, lp); return 0;
-		}
-		break;
-
 	default:
 		break;
 	}
@@ -1724,11 +1698,6 @@ static int prefs_key(struct prefs_win *pw, const EventRecord *ev)
 	}
 	if (ch == 0x1B) return 1;  /* Esc = cancel */
 	if (ch == '\r' || ch == 0x03) {  /* Return / Enter = OK */
-		if (pw->cat == PREFS_CAT_USERAGENT &&
-		    prefs_ua_commit_editor(pw) < 0) {
-			SysBeep(1);
-			return 0;
-		}
 		prefs_apply_from_ui(pw);
 		macos9_prefs_save();
 		macos9_prefs_apply_live();
