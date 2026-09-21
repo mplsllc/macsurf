@@ -199,8 +199,8 @@ extern void *macsurf_try_realloc(void *ptr, size_t size);
 #define calloc  macsurf_safe_calloc
 #define realloc macsurf_safe_realloc
 
-/* POSIX types foundation */
-#ifndef __RETRO68__
+/* Classic POSIX emulation is incompatible with Darwin's native headers. */
+#if MACSURF_CLASSIC
   #ifndef _TIME_T
     #define _TIME_T
     typedef long time_t;
@@ -235,10 +235,14 @@ extern void *macsurf_try_realloc(void *ptr, size_t size);
   #ifndef _TIME_H
   #define _TIME_H
   #endif
-#else
-  #include <sys/types.h>
-  #include <sys/stat.h>
-  #include <time.h>
+#endif
+
+#if MACSURF_OSX
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <time.h>
+#include <errno.h>
+#include <fcntl.h>
 #endif
 
 #ifndef __func__
@@ -271,7 +275,7 @@ typedef bool(nslog_ensure_t)(FILE *fptr);
 #define NETSURF_BUILTIN_VERBOSE_FILTER NULL
 #endif
 
-#ifdef __MWERKS__
+#if MACSURF_CLASSIC && defined(__MWERKS__)
 /* Block MSL's stat.h variants  -  our shim defines struct stat. */
 #ifndef _STAT_H
 #define _STAT_H
@@ -291,8 +295,8 @@ typedef bool(nslog_ensure_t)(FILE *fptr);
 #include "stat.h"
 #include <fcntl.h>
 #include "mac_dirent.h"
-#endif
 #include "mac_types.h"
+#endif
 
 #ifndef restrict
 #define restrict
