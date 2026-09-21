@@ -38,7 +38,16 @@ the native compiler, linker, framework, and package setup, but not the selected
 Darwin libc runtime model. Its first attempted Update Project opened an IDE
 error window reporting `Illegal precompiled header version` from the installed
 `MSLMacHeadersMach-O` prefix. No executable was produced. The reference must
-be repaired and built before MacSurfX reconstruction.
+be repaired and built before MacSurfX reconstruction. The installed
+`MacHeadersMach-O.mcp` was opened to rebuild its `MSL MacHeadersMach-O`
+precompiled header after a resource-preserving backup to
+`/Projects/backups/MacHeaders-Mach-O-pre-rebuild-2026-09-20`.
+That build fails in MSL's `size_t_mach.h` because `ppc/ansi.h` cannot be
+opened. A search of the installed support tree and `/usr/include` found only
+`MacOS X Support/Headers/(wchar_t Support fix)/machine/ansi.h`.
+The MSL header's requested `ppc/ansi.h` is therefore not supplied at that
+path. This supports bypassing the MSL precompiled prefix for the planned
+Darwin-libc target; it does not justify adding a fake `ppc/ansi.h`.
 
 ## Confirmed MacSurfX differences
 
@@ -61,9 +70,9 @@ whole bundles.
 
 ## Next build steps
 
-1. Resolve the stationery's incompatible installed precompiled header by
-   rebuilding that prefix or selecting a source header, then build and launch
-   the reference. Record `file`, `otool -hv`, and `otool -L` output.
+1. Select a source prefix for an isolated copy of the stationery or establish
+   an equivalent native project without the MSL precompiled header, then
+   build and launch it. Record `file`, `otool -hv`, and `otool -L` output.
 2. Produce a native Darwin-libc reference from the proven compiler/linker and
    framework setup, with an explicit minimal probe. Do not import the MSL
    runtime libraries into the selected MacSurfX runtime model.
