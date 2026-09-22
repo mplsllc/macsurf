@@ -81,3 +81,106 @@ whole bundles.
    before the full application.
 
 The probe and native MacSurfX build have **not** passed yet.
+
+
+## Variant J: known-good PowerPC Mach-O link (2026-09-22)
+
+Branch `feature/macsurfx-macho`. Evidence lives under
+[`macsurfx/variant-j/`](macsurfx/variant-j/) (manifest:
+[`macsurfx/variant-j/MANIFEST.md`](macsurfx/variant-j/MANIFEST.md)).
+Large ktrace dumps are preserved in `macsurf-private` under
+`.private/research/macsurfx-link-20260922/`.
+
+### Observed rule
+
+Under CodeWarrior 8's two-level Mach-O namespace, the **project-visible dylib
+basename must match the leaf of the dylib's `LC_ID_DYLIB` install name**.
+For Darwin's system C library that is:
+
+- install name: `/usr/lib/libSystem.B.dylib`
+- required project filename: `libSystem.B.dylib`
+
+The successful mutation (Variant J) renamed the project-visible
+`libSystem-ppc.dylib` entry to `libSystem.B.dylib` at five XML `PATH` sites
+(FILE ×2, LINKORDER ×2, GROUPLIST ×1). File **bytes were unchanged**.
+
+### Two findings — keep distinct
+
+1. **Thin PPC compatibility copy** for fat/universal import compatibility
+   (`libSystem-ppc.dylib` content is a thin `MH_MAGIC` PPC dylib, not the
+   FAT system binary).
+2. **Install-name-leaf basename** for two-level symbol identity: the file
+   on disk / in the project must be named `libSystem.B.dylib`, while its
+   `LC_ID_DYLIB` remains `/usr/lib/libSystem.B.dylib` (do **not** rewrite
+   the install name).
+
+The correct artifact is therefore a **project-local thin PPC dylib named
+`libSystem.B.dylib` whose `LC_ID_DYLIB` is still
+`/usr/lib/libSystem.B.dylib`**. Describing J as fixed only because it uses
+"the PPC-only copy" is incomplete — both findings apply.
+
+The exact CW8 internal mechanism is **inference** from observed behavior;
+the observed pass/fail sequence is fact. Do not restate inference as
+documented Metrowerks behavior.
+
+### Experiment sequence (all end-to-end)
+
+| Variant | Mutation vs base | Result |
+| --- | --- | --- |
+| D | thin `libz` | same 4×348-byte undefined (`exit`, `errno`, `atexit`, `__keymgr_dwarf2_register_sections`) |
+| E | flat namespace | same |
+| F | + `System.framework` only | same |
+| H | `whichfileloaded` / `whyfileloaded` | same |
+| I | `FILEKIND Unknown` | same |
+| **J** | **rename `libSystem-ppc.dylib` → `libSystem.B.dylib` (5 PATH sites)** | **LINK PASS** |
+
+### Objective artifacts
+
+- Canonical export: [`macsurfx/SystemLibRef-PASS.xml`](macsurfx/SystemLibRef-PASS.xml)
+  (byte-identical to `variant-j/Link-J-rename-verified.xml`, md5
+  `782ab5877f672debaa5ae43ef05367a5`).
+- Linked executable `SimpleHello Debug` / `variant-j/SimpleHello-Debug`:
+  Mach-O ppc executable, 17852 bytes, md5
+  `9c9ccb0c95afbb7e963c05efa7a35052`, flags `NOUNDEFS|DYLDLINK|PREBOUND|TWOLEVEL`,
+  load commands: `/usr/lib/libSystem.B.dylib`, `/usr/lib/libz.1.dylib`,
+  `Carbon.framework`. `nm -u` still shows the classic six undefined names;
+  those symbols are **prebound** (nonzero `n_value`, two-level `n_desc`), not
+  left for dyld to fail on.
+- Project dylib `libSystem.B.dylib`: thin PPC, 2221800 bytes, md5
+  `7cf8c04b026bf108a52c6297eb325abe`, `otool -D` →
+  `/usr/lib/libSystem.B.dylib`.
+
+**Hardware/runtime launch of SimpleHello has not been confirmed by the
+maintainer.** Until they confirm on the real case, state this as
+"shipped — awaiting verification," not "verified."
+
+### Failed-variant evidence
+
+`variant-j/link-{D,E,F,H,I}-errors*.txt` — each 348 bytes, the identical
+four undefineds, preserved so the sequence is auditable.
+
+### Project settings captured in SystemLibRef-PASS.xml
+
+- Linker: `MacOS X PPC Linker` (both `Toolbox Mach-O Debug` and
+  `Toolbox Mach-O Final`)
+- `.c` compiler: `MW C/C++ PPC Mac OS X`
+- Frameworks: `Carbon`, `System`
+- `MWLinker_MachO_twolevelnamespace` = `1`
+- `MWLinker_MachO_whichfileloaded` = `1`, `MWLinker_MachO_whyfileloaded` = `1`
+- `RequireFrameworkStyleIncludes` = `true`, `AlwaysSearchUserPaths` = `false`
+- Prefix: `probe_prefix.h` (not MSL, not `macsurf_prefix_osx.h`)
+- Link order (both targets): `mwcrt1.o`, `SimpleHello.c`, `SimpleHello.plc`,
+  `SimpleHello.nib`, `libSystem.B.dylib`, `libz.1.2.3.dylib`
+- No `libSystem-ppc.dylib` PATH remains in the export.
+
+### Constraints still in force
+
+- Never modify Tiger's `/usr/lib/libSystem*.dylib`, `/usr/lib/libz*`, or
+  `/System/Library/Frameworks/System.framework`.
+- Compatibility runtime stays project-local under
+  `/Projects/MacSurfX-NativeReference-NoPCH/`.
+- Do not retry variants A–I without new evidence; do not reintroduce the
+  universal-libSystem theory; do not retry System.framework-only (F) alone.
+- Classic `MacSurf` target must keep building after any shared-source change.
+- New shared code migrates to `MACSURF_CLASSIC` / `MACSURF_OSX` /
+  `MACSURF_MACHO` — do not add new `__MACOS9__` conditionals.
