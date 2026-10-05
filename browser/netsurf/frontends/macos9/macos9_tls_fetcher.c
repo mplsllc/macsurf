@@ -43,6 +43,7 @@
 
 #include "ostls_async.h"
 #include "ostls_http.h"
+#include "ostls_time.h"
 #include "macos9_disk_cache.h"
 
 #define MAX_HTTPS_F        128  /* macTLS#196: bumped to 128 for GitHub (65+ in-flight)
@@ -3114,6 +3115,8 @@ static void hctx_poll(struct macos9_https_ctx *c)
 	if (c->state == HS_QUEUED) {
 		OSTLSConfig cfg;
 		OSTLSConnection *pooled;
+		OSTLSTimeDetails time_details;
+		OSErr time_result;
 
 		/* fixes232a - wait for NetSurf core to dispatch us via ops.start
 		 * before we open any TLS connection. setup() fires for every
@@ -3224,7 +3227,20 @@ static void hctx_poll(struct macos9_https_ctx *c)
 			hctx_fail(c, "https: OSTLS_New failed");
 			return;
 		}
+		time_result = OSTLS_GetBearSSLTimeDetails(&time_details);
+		macsurf_debug_log_writef(
+			"https: clock local_mac=%lu gmt_delta=%ld utc_mac=%lu unix=%lu bear_days=%lu bear_seconds=%lu helper=%d",
+			(unsigned long)time_details.local_mac_seconds,
+			time_details.gmt_delta_seconds,
+			(unsigned long)time_details.utc_mac_seconds,
+			(unsigned long)time_details.unix_seconds,
+			(unsigned long)time_details.bearssl_days,
+			(unsigned long)time_details.bearssl_seconds,
+			(int)time_result);
 		e = OSTLS_Start(c->conn);
+		macsurf_debug_log_writef(
+			"https: OSTLS_Start result=%d state=%d",
+			(int)e, (int)OSTLS_GetState(c->conn));
 		if (e != kOSTLSAsync_OK) {
 			hctx_fail(c, "https: OSTLS_Start failed");
 			return;

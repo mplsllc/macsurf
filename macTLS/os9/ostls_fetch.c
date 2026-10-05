@@ -23,6 +23,7 @@
  */
 
 #include "ostls_fetch.h"
+#include "macsurf_runtime_profile.h"
 #include "ostls_b3_anchors.h"
 #include "ostls_time.h"
 #include "ostls_entropy.h"
@@ -33,7 +34,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#ifdef __MWERKS__
+#if MACSURF_CLASSIC_RUNTIME
 #include <Types.h>
 #include <Events.h>             /* TickCount */
 #include <Files.h>
@@ -41,7 +42,7 @@
 #include <OpenTptInternet.h>
 extern OTClientContextPtr g_ostls_ot_context;
 #else
-/* Non-CW8 Retro68 syntax-check stubs. */
+/* Retro68 preflight and host syntax-check stubs. */
 typedef long OSStatus;
 typedef long OTResult;
 typedef void *EndpointRef;

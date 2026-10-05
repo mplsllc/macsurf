@@ -29,7 +29,9 @@
 #ifndef OSTLS_FETCH_H
 #define OSTLS_FETCH_H
 
-#ifdef __MWERKS__
+#include "macsurf_runtime_profile.h"
+
+#if MACSURF_CLASSIC_RUNTIME
 #include <MacTypes.h>      /* OSErr, UInt16, UInt32 */
 #else
 #ifndef OSTLS_OSERR_DEFINED
