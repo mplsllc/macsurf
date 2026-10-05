@@ -303,13 +303,13 @@ struct OSTLSConnection {
  * a socket is opened. Built lazily at first use, never disposed (it lives as
  * long as the process needs OT). */
 static OTNotifyUPP g_ostls_notifier_upp = NULL;
+#if MACSURF_COMPILER_MACMAKE_GCC
 static int g_ostls_diag_log_init_attempted = 0;
 static OSErr g_ostls_diag_log_init_result = -1;
 /* Keep the bring-up trace bounded when a page opens many HTTPS resources.
  * The first connection is enough to establish the clock/OT/handshake path. */
 static int g_ostls_diag_conn_claimed = 0;
 static OSTLSConnection *g_ostls_diag_conn = NULL;
-#if MACSURF_COMPILER_MACMAKE_GCC
 #define OSTLS_DIAG_CONN_SELECTED(conn) ((conn) == g_ostls_diag_conn)
 #else
 #define OSTLS_DIAG_CONN_SELECTED(conn) 1
