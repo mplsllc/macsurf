@@ -95,6 +95,12 @@ static int box_talloc_destructor(struct box *b)
 {
 	struct html_scrollbar_data *data;
 
+	/* Focus/selection retain raw textarea box pointers. A full reconvert frees
+	 * the old tree directly through talloc, bypassing box_free_box, so detach
+	 * any interaction owner at this common destruction point. */
+	if (b->gadget != NULL && b->gadget->html != NULL)
+		html_forget_box_interaction(b->gadget->html, b);
+
 	/* fixes908 -- note this box's first free + the free path in flight. */
 	{
 		extern const char *macsurf_talloc_free_ctx;
@@ -528,5 +534,4 @@ box_handle_scrollbars(struct content *c,
 
 	return NSERROR_OK;
 }
-
 

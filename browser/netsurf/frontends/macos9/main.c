@@ -16,6 +16,13 @@
 #include "macsurf_timebase.h"
 #include "macsurf_osver.h"     /* fixes936 -- macsurf_os_is_osx() */
 
+/* Temporary M7 startup-boundary trace. Kept separate from normal BOOT
+ * messages, which the release crash-only gate intentionally filters. */
+#define M7_BOOT_MARK(label) do { \
+	macsurf_debug_log_writef("M7_BOOT " label); \
+	macsurf_debug_log_flush(); \
+} while (0)
+
 #ifdef __MACOS9__
 #include <OpenTransport.h>
 #include <OpenTptInternet.h>
@@ -1529,6 +1536,7 @@ void macos9_poll(void) {
 		static int loop_marked = 0;
 		if (!loop_marked) {
 			loop_marked = 1;
+			M7_BOOT_MARK("event loop entered");
 			MS_LOG("BOOT event loop entered");
 			macsurf_debug_log_flush();
 		}
@@ -2133,7 +2141,9 @@ int main(void) {
 		macos9_table.llcache = null_llcache_table;
 		macos9_table.fetch = &macos9_fetch_table;
 	}
+	M7_BOOT_MARK("before netsurf_register");
 	netsurf_register(&macos9_table);
+	M7_BOOT_MARK("after netsurf_register");
 	MS_LOG("BOOT netsurf_register done");
 	/* The boot baseline (formerly hardcoded below) now lives in the
 	 * DEFAULT table via macos9_prefs_set_defaults, so nsoption_write
@@ -2142,9 +2152,13 @@ int main(void) {
 	 * "MacSurf Preferences" file (if any) loads OVER the baseline -
 	 * per-key user choices win. Both happen BEFORE netsurf_init so
 	 * fetchers/llcache see user values from the first fetch. */
+	M7_BOOT_MARK("before nsoption_init");
 	nsoption_init(macos9_prefs_set_defaults, NULL, NULL);
+	M7_BOOT_MARK("after nsoption_init");
 	MS_LOG("BOOT nsoption_init done");
+	M7_BOOT_MARK("before prefs load");
 	macos9_prefs_load();
+	M7_BOOT_MARK("after prefs load");
 	MS_LOG("BOOT prefs file loaded");
 	/* fixes1189 - the line this replaces ("images enabled, author_css on,
 	 * fetcher 128/16, mem cache 32MB") was a hardcoded claim left over
@@ -2154,11 +2168,14 @@ int main(void) {
 	 * every option that differs from the compiled default, or a clean
 	 * "n=0" line if none do. */
 	macos9_prefs_log_deltas();
+	M7_BOOT_MARK("after prefs delta log");
 #ifdef __MACOS9__
 	macsurf_debug_log_writef("DIAG pre-netsurf_init: free=%ld maxblk=%ld",
 		(long)FreeMem(), (long)MaxBlock());
 #endif
+	M7_BOOT_MARK("before netsurf_init");
 	netsurf_init(NULL);
+	M7_BOOT_MARK("after netsurf_init");
 	MS_LOG("BOOT netsurf_init done");
 	/* fixes721b - MacSurf loads no Messages file, so core message tokens
 	 * render as the raw token (e.g. an <input type=file> showed a white box
@@ -2188,15 +2205,21 @@ int main(void) {
 	/* fixes368 (#167) - restore a prior session's cookie jar (Facebook
 	 * login etc.) from disk now that urldb is up. Best-effort no-op on
 	 * first run. */
+	M7_BOOT_MARK("before cookies load");
 	macos9_cookies_load();
+	M7_BOOT_MARK("after cookies load");
 	MS_LOG("BOOT cookies loaded");
 #ifdef WITH_QUICKJS
+	M7_BOOT_MARK("before js_initialise");
 	js_initialise();
+	M7_BOOT_MARK("after js_initialise");
 	MS_LOG("BOOT js_initialise done");
 #endif
 	{
 		extern nserror macos9_http_fetcher_register(void);
+		M7_BOOT_MARK("before HTTP fetcher registration");
 		macos9_http_fetcher_register();
+		M7_BOOT_MARK("after HTTP fetcher registration");
 		MS_LOG("BOOT http_fetcher registered");
 	}
 	{
@@ -2212,8 +2235,10 @@ int main(void) {
 			extern nserror macos9_schedule(int t,
 				void (*callback)(void *p), void *p);
 			MS_LOG("BOOT launch: create empty window, defer home nav");
+			M7_BOOT_MARK("before initial browser_window_create");
 			browser_window_create(BW_CREATE_HISTORY | BW_CREATE_FOREGROUND,
 				NULL, NULL, NULL, &bw);
+			M7_BOOT_MARK("after initial browser_window_create");
 			macsurf_debug_log_writef(
 				"launch home: clock_ms=%ld (startup, pre-loop)",
 				(long)macsurf_monotonic_ms());

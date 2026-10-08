@@ -121,5 +121,24 @@ void html_set_focus(html_content *html, html_focus_type focus_type,
 		union html_focus_owner focus_owner, bool hide_caret,
 		int x, int y, int height, const struct rect *clip);
 
+/**
+ * Forget interaction state that refers to a box before the box is destroyed.
+ *
+ * Textarea focus and selection owners are raw box pointers. Call this while
+ * both the HTML content and box are still alive, including when a replaced
+ * layout tree is released after reconversion.
+ */
+void html_forget_box_interaction(html_content *html, struct box *box);
+
+/** Validate interaction owners before following raw box pointers. */
+bool html_interaction_focus_valid(html_content *html, const char *where);
+bool html_interaction_selection_valid(html_content *html, const char *where);
+bool html_interaction_drag_valid(html_content *html, const char *where);
+bool html_interaction_select_menu_valid(html_content *html, const char *where);
+
+/** Clear all interaction owners for the layout being retired. */
+void html_invalidate_layout_interactions(html_content *html,
+		void *retiring_bctx);
+
 
 #endif

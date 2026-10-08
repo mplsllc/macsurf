@@ -58,6 +58,7 @@
 #include "html/box_inspect.h"
 #include "html/font.h"
 #include "html/form_internal.h"
+#include "html/interaction.h"
 
 #define MAX_SELECT_HEIGHT 210
 #define SELECT_LINE_SPACING 0.2
@@ -1462,6 +1463,24 @@ void form_free_control(struct form_control *control)
 	struct form_control *c;
 	assert(control != NULL);
 
+	/* A control may be destroyed outside box teardown (for example during
+	 * form/content cleanup). Its textarea box must not remain the HTML
+	 * content's raw focus or selection owner. */
+	if (control->html != NULL &&
+			control->html->visible_select_menu == control) {
+#ifdef __MACOS9__
+		extern void macsurf_debug_log_writef(const char *fmt, ...);
+		macsurf_debug_log_writef(
+			"LIFE HTML_SELECT_MENU_DROP html=%p menu=%p reason=control-free",
+			(void *)control->html, (void *)control);
+#endif
+		control->html->visible_select_menu = NULL;
+		control->html->visible_select_menu_generation =
+			control->html->layout_generation;
+	}
+	if (control->html != NULL && control->box != NULL)
+		html_forget_box_interaction(control->html, control->box);
+
 	NSLOG(netsurf, INFO, "Control:%p name:%p value:%p initial:%p",
 	      control, control->name, control->value, control->initial_value);
 	free(control->name);
@@ -1984,6 +2003,9 @@ void form_select_menu_callback(void *client_data,
 	html_content *html = client_data;
 	int menu_x, menu_y;
 	struct box *box;
+	if (!html_interaction_select_menu_valid(html, "select-menu-redraw") ||
+			html->visible_select_menu == NULL)
+		return;
 
 	box = html->visible_select_menu->box;
 	box_coords(box, &menu_x, &menu_y);

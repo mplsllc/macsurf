@@ -66,6 +66,364 @@
 #include <libcss/unit.h>	/* css_unit_len2device_px (fixes656) */
 #include <libcss/fpmath.h>	/* FIXTOINT (fixes656) */
 
+static void *html_focus_owner_raw(const html_content *html)
+{
+	switch (html->focus_type) {
+	case HTML_FOCUS_CONTENT:
+		return html->focus_owner.content;
+	case HTML_FOCUS_TEXTAREA:
+		return html->focus_owner.textarea;
+	default:
+		return NULL;
+	}
+}
+
+static void *html_selection_owner_raw(const html_content *html)
+{
+	switch (html->selection_type) {
+	case HTML_SELECTION_TEXTAREA:
+		return html->selection_owner.textarea;
+	case HTML_SELECTION_CONTENT:
+		return html->selection_owner.content;
+	default:
+		return NULL;
+	}
+}
+
+static void *html_drag_owner_raw(const html_content *html)
+{
+	switch (html->drag_type) {
+	case HTML_DRAG_SCROLLBAR:
+		return html->drag_owner.scrollbar;
+	case HTML_DRAG_TEXTAREA_SELECTION:
+	case HTML_DRAG_TEXTAREA_SCROLLBAR:
+		return html->drag_owner.textarea;
+	case HTML_DRAG_CONTENT_SELECTION:
+	case HTML_DRAG_CONTENT_SCROLL:
+		return html->drag_owner.content;
+	default:
+		return NULL;
+	}
+}
+
+/* LIFE records are intentionally limited to focus transitions, key dispatch,
+ * and layout retirement.  The first line only prints stored pointer values;
+ * the optional route line dereferences a box only after its owner generation
+ * has been checked by the caller. */
+
+static __attribute__((noinline)) void
+html_interaction_log_state(const char *event,
+		html_content *html, void *retiring_bctx)
+{
+#ifdef __MACOS9__
+	extern unsigned long macsurf_reconvert_seq;
+	extern void macsurf_debug_log_writef(const char *fmt, ...);
+	macsurf_debug_log_writef(
+		"LIFE HTML_OWNER event=%s html=%p page=%p layout=%p bctx=%p "
+		"retiring=%p gen=%ld seq=%ld focus=%d/%ld/%p "
+		"selection=%d/%ld/%p drag=%d/%ld/%p selectmenu=%p/%ld",
+		event, (void *)html, (void *)html->page, (void *)html->layout,
+		(void *)html->bctx, retiring_bctx,
+		(long)html->layout_generation, (long)macsurf_reconvert_seq,
+		(int)html->focus_type, (long)html->focus_owner_generation,
+		html_focus_owner_raw(html), (int)html->selection_type,
+		(long)html->selection_owner_generation,
+		html_selection_owner_raw(html), (int)html->drag_type,
+		(long)html->drag_owner_generation, html_drag_owner_raw(html),
+		(void *)html->visible_select_menu,
+		(long)html->visible_select_menu_generation);
+#else
+	(void)event;
+	(void)html;
+	(void)retiring_bctx;
+#endif
+}
+
+
+static __attribute__((noinline)) void
+html_interaction_log_focus_route(const char *event,
+		html_content *html, bool owner_is_live)
+{
+#ifdef __MACOS9__
+	extern void macsurf_debug_log_writef(const char *fmt, ...);
+	struct box *box = NULL;
+	struct form_control *gadget;
+	struct textarea *textarea;
+	struct content *child;
+	struct hlcache_handle *child_handle;
+	html_content *child_html;
+
+	if (html->focus_type == HTML_FOCUS_TEXTAREA)
+		box = html->focus_owner.textarea;
+	else if (html->focus_type == HTML_FOCUS_CONTENT)
+		box = html->focus_owner.content;
+	if (!owner_is_live || box == NULL) {
+		macsurf_debug_log_writef(
+			"LIFE HTML_FOCUS_ROUTE event=%s html=%p gen=%ld type=%d "
+			"box=%p safe=0",
+			event, (void *)html, (long)html->layout_generation,
+			(int)html->focus_type, (void *)box);
+		return;
+	}
+	if (html->focus_type == HTML_FOCUS_TEXTAREA) {
+		gadget = box->gadget;
+		textarea = (gadget == NULL) ? NULL : gadget->data.text.ta;
+		macsurf_debug_log_writef(
+			"LIFE HTML_FOCUS_ROUTE event=%s html=%p gen=%ld "
+			"type=TEXTAREA box=%p gadget=%p textarea=%p safe=1",
+			event, (void *)html, (long)html->layout_generation,
+			(void *)box, (void *)gadget, (void *)textarea);
+	} else {
+		child_handle = box->object;
+		child = child_handle == NULL ? NULL :
+			hlcache_handle_get_content(child_handle);
+		child_html = (child_handle != NULL &&
+				content_get_type(child_handle) == CONTENT_HTML)
+				? (html_content *)child : NULL;
+		macsurf_debug_log_writef(
+			"LIFE HTML_FOCUS_ROUTE event=%s html=%p gen=%ld "
+			"type=CONTENT box=%p handle=%p child=%p child_page=%p safe=1",
+			event, (void *)html, (long)html->layout_generation,
+			(void *)box, (void *)child_handle, (void *)child_html,
+			child_html == NULL ? NULL : (void *)child_html->page);
+	}
+#else
+	(void)event;
+	(void)html;
+	(void)owner_is_live;
+#endif
+}
+
+__attribute__((noinline)) bool
+html_interaction_focus_valid(html_content *html, const char *where)
+{
+	bool pointer_owner;
+	union html_focus_owner owner;
+
+	if (html == NULL)
+		return false;
+	pointer_owner = html->focus_type == HTML_FOCUS_CONTENT ||
+			html->focus_type == HTML_FOCUS_TEXTAREA;
+	if (!pointer_owner) {
+		if (html->focus_type == HTML_FOCUS_SELF)
+			html->focus_owner_generation = html->layout_generation;
+		return html->focus_type == HTML_FOCUS_SELF;
+	}
+	if (html->focus_owner_generation == html->layout_generation &&
+			html_focus_owner_raw(html) != NULL)
+		return true;
+
+	#ifdef __MACOS9__
+	{
+		extern void macsurf_debug_log_writef(const char *fmt, ...);
+		macsurf_debug_log_writef(
+			"LIFE HTML_OWNER_STALE kind=focus where=%s html=%p "
+			"page=%p gen=%ld owner_gen=%ld type=%d owner=%p",
+			where, (void *)html, (void *)html->page,
+			(long)html->layout_generation,
+			(long)html->focus_owner_generation, (int)html->focus_type,
+			html_focus_owner_raw(html));
+	}
+	#endif
+	owner.self = true;
+	html_set_focus(html, HTML_FOCUS_SELF, owner, true, 0, 0, 0, NULL);
+	return false;
+}
+
+static void html_drop_stale_selection(html_content *html, const char *where)
+{
+	union content_msg_data msg_data;
+#ifdef __MACOS9__
+	extern void macsurf_debug_log_writef(const char *fmt, ...);
+	macsurf_debug_log_writef(
+		"LIFE HTML_OWNER_STALE kind=selection where=%s html=%p "
+		"page=%p gen=%ld owner_gen=%ld type=%d owner=%p",
+		where, (void *)html, (void *)html->page,
+		(long)html->layout_generation,
+		(long)html->selection_owner_generation,
+		(int)html->selection_type, html_selection_owner_raw(html));
+#else
+	(void)where;
+#endif
+	/* Do not call selection_clear() here: its internal range may itself
+	 * contain pointers into the retired tree. */
+	html->selection_type = HTML_SELECTION_NONE;
+	html->selection_owner.none = true;
+	html->selection_owner_generation = html->layout_generation;
+	if (html->sel != NULL)
+		selection_clear(html->sel, false);
+	msg_data.selection.selection = false;
+	msg_data.selection.read_only = true;
+	content_broadcast((struct content *)html, CONTENT_MSG_SELECTION,
+			&msg_data);
+}
+
+__attribute__((noinline)) bool
+html_interaction_selection_valid(html_content *html, const char *where)
+{
+	if (html == NULL)
+		return false;
+	if (html->selection_type == HTML_SELECTION_NONE) {
+		html->selection_owner_generation = html->layout_generation;
+		return true;
+	}
+	if (html->selection_owner_generation == html->layout_generation &&
+			(html->selection_type == HTML_SELECTION_SELF ||
+			 html_selection_owner_raw(html) != NULL))
+		return true;
+	html_drop_stale_selection(html, where);
+	return false;
+}
+
+__attribute__((noinline)) bool
+html_interaction_drag_valid(html_content *html, const char *where)
+{
+	union html_drag_owner owner;
+	bool owner_present;
+	if (html == NULL)
+		return false;
+	if (html->drag_type == HTML_DRAG_NONE) {
+		html->drag_owner_generation = html->layout_generation;
+		return true;
+	}
+	owner_present = html_drag_owner_raw(html) != NULL ||
+			html->drag_type == HTML_DRAG_SELECTION;
+	if (html->drag_owner_generation == html->layout_generation &&
+			owner_present)
+		return true;
+#ifdef __MACOS9__
+	{
+		extern void macsurf_debug_log_writef(const char *fmt, ...);
+		macsurf_debug_log_writef(
+			"LIFE HTML_OWNER_STALE kind=drag where=%s html=%p "
+			"page=%p gen=%ld owner_gen=%ld type=%d owner=%p",
+			where, (void *)html, (void *)html->page,
+			(long)html->layout_generation,
+			(long)html->drag_owner_generation, (int)html->drag_type,
+			html_drag_owner_raw(html));
+	}
+#else
+	(void)where;
+#endif
+	owner.no_owner = true;
+	html_set_drag_type(html, HTML_DRAG_NONE, owner, NULL);
+	return false;
+}
+
+__attribute__((noinline)) bool
+html_interaction_select_menu_valid(html_content *html, const char *where)
+{
+	if (html == NULL)
+		return false;
+	if (html->visible_select_menu == NULL) {
+		html->visible_select_menu_generation = html->layout_generation;
+		return true;
+	}
+	if (html->visible_select_menu_generation == html->layout_generation)
+		return true;
+#ifdef __MACOS9__
+	{
+		extern void macsurf_debug_log_writef(const char *fmt, ...);
+		macsurf_debug_log_writef(
+			"LIFE HTML_OWNER_STALE kind=select-menu where=%s html=%p "
+			"page=%p gen=%ld owner_gen=%ld owner=%p",
+			where, (void *)html, (void *)html->page,
+			(long)html->layout_generation,
+			(long)html->visible_select_menu_generation,
+			(void *)html->visible_select_menu);
+	}
+#else
+	(void)where;
+#endif
+	/* Clear the raw form-control pointer before any caller reads its box. */
+	html->visible_select_menu = NULL;
+	html->visible_select_menu_generation = html->layout_generation;
+	return false;
+}
+
+void html_invalidate_layout_interactions(html_content *html,
+		void *retiring_bctx)
+{
+	union html_selection_owner selection_owner;
+	union html_focus_owner focus_owner;
+	union html_drag_owner drag_owner;
+	unsigned long next_generation;
+
+	if (html == NULL)
+		return;
+
+	html_interaction_log_state("LAYOUT_RETIRE_BEFORE", html,
+			retiring_bctx);
+	{
+		bool focus_valid = html_interaction_focus_valid(html,
+				"layout-retire");
+		html_interaction_log_focus_route("LAYOUT_RETIRE_BEFORE", html,
+				focus_valid);
+	}
+	if (html->focus_type == HTML_FOCUS_TEXTAREA ||
+			html->focus_type == HTML_FOCUS_CONTENT) {
+		if (html->focus_type != HTML_FOCUS_SELF) {
+			focus_owner.self = true;
+			html_set_focus(html, HTML_FOCUS_SELF, focus_owner,
+					true, 0, 0, 0, NULL);
+		}
+	}
+	if (html->selection_type != HTML_SELECTION_NONE) {
+		if (html_interaction_selection_valid(html, "layout-retire")) {
+			selection_owner.none = true;
+			html_set_selection(html, HTML_SELECTION_NONE,
+					selection_owner, true);
+		}
+	}
+	if (html->drag_type != HTML_DRAG_NONE) {
+		(void)html_interaction_drag_valid(html, "layout-retire");
+		if (html->drag_type != HTML_DRAG_NONE) {
+			drag_owner.no_owner = true;
+			html_set_drag_type(html, HTML_DRAG_NONE,
+					drag_owner, NULL);
+		}
+	}
+	if (html->visible_select_menu != NULL) {
+#ifdef __MACOS9__
+		extern void macsurf_debug_log_writef(const char *fmt, ...);
+		macsurf_debug_log_writef(
+			"LIFE HTML_SELECT_MENU_DROP html=%p menu=%p gen=%ld owner_gen=%ld",
+			(void *)html, (void *)html->visible_select_menu,
+			(long)html->layout_generation,
+			(long)html->visible_select_menu_generation);
+#endif
+		html->visible_select_menu = NULL;
+	}
+
+	/* A successful conversion retires this entire generation. Normalize any
+	 * state re-entered by synchronous notifications before making old owners
+	 * unverifiable. No owner is rebound to the replacement tree implicitly. */
+	if (html->focus_type != HTML_FOCUS_SELF) {
+		focus_owner.self = true;
+		html_set_focus(html, HTML_FOCUS_SELF, focus_owner,
+				true, 0, 0, 0, NULL);
+	}
+	if (html->selection_type != HTML_SELECTION_NONE) {
+		selection_owner.none = true;
+		html_set_selection(html, HTML_SELECTION_NONE,
+				selection_owner, true);
+	}
+	if (html->drag_type != HTML_DRAG_NONE) {
+		drag_owner.no_owner = true;
+		html_set_drag_type(html, HTML_DRAG_NONE, drag_owner, NULL);
+	}
+	next_generation = html->layout_generation + 1;
+	if (next_generation == 0)
+		next_generation = 1;
+	html->layout_generation = next_generation;
+	html->focus_owner_generation = next_generation;
+	html->selection_owner_generation = next_generation;
+	html->drag_owner_generation = next_generation;
+	html->visible_select_menu_generation = next_generation;
+	html_interaction_log_state("LAYOUT_RETIRE_AFTER", html,
+			retiring_bctx);
+}
+
 /**
  * Get pointer shape for given box
  *
@@ -379,6 +737,7 @@ mouse_action_select_menu(html_content *html,
 	form_select_get_dimensions(html->visible_select_menu, &width, &height);
 
 	html->visible_select_menu = NULL;
+	html->visible_select_menu_generation = html->layout_generation;
 
 	bw_content = browser_window_get_content(bw);
 	content_request_redraw(bw_content,
@@ -1132,6 +1491,7 @@ gadget_mouse_action(html_content *html,
 		if (mouse & BROWSER_MOUSE_CLICK_1 &&
 		    nsoption_bool(core_select_menu)) {
 			html->visible_select_menu = mas->gadget.control;
+			html->visible_select_menu_generation = html->layout_generation;
 			res = form_open_select_menu(c,
 						    mas->gadget.control,
 						    form_select_menu_callback,
@@ -1140,6 +1500,7 @@ gadget_mouse_action(html_content *html,
 				NSLOG(netsurf, ERROR, "%s",
 				      messages_get_errorcode(res));
 				html->visible_select_menu = NULL;
+				html->visible_select_menu_generation = html->layout_generation;
 			}
 			mas->result.pointer = BROWSER_POINTER_DEFAULT;
 		} else if (mouse & BROWSER_MOUSE_CLICK_1) {
@@ -2173,6 +2534,14 @@ html_mouse_action(struct content *c,
 	html_content *html = (html_content *)c;
 	nserror res = NSERROR_OK;
 
+	/* Drag and selection owners can point into a box tree retired by a
+	 * reconvert. Validate before the handlers below inspect their union. */
+	(void)html_interaction_drag_valid(html, "mouse-dispatch");
+	(void)html_interaction_selection_valid(html, "mouse-dispatch");
+	(void)html_interaction_focus_valid(html, "mouse-dispatch");
+	(void)html_interaction_select_menu_valid(html, "mouse-dispatch");
+	(void)html_interaction_focus_valid(html, "mouse-dispatch");
+
 	/* handle open select menu */
 	if (html->visible_select_menu != NULL) {
 		return mouse_action_select_menu(html, bw, mouse, x, y);
@@ -2226,6 +2595,7 @@ bool html_keypress(struct content *c, uint32_t key)
 {
 	html_content *html = (html_content *) c;
 	struct selection *sel = html->sel;
+	unsigned long owner_generation = html->layout_generation;
 
 	/** \todo
 	 * At the moment, the front end interface for keypress only gives
@@ -2279,7 +2649,11 @@ bool html_keypress(struct content *c, uint32_t key)
 	{
 		dom_node *ktarget = NULL;
 		struct box *fbox = NULL;
+		bool focus_valid;
 
+		focus_valid = html_interaction_focus_valid(html, "key-pre-js");
+		html_interaction_log_state("KEY_PRE_JS", html, NULL);
+		html_interaction_log_focus_route("KEY_PRE_JS", html, focus_valid);
 		if (html->focus_type == HTML_FOCUS_TEXTAREA) {
 			fbox = html->focus_owner.textarea;
 		} else if (html->focus_type == HTML_FOCUS_CONTENT) {
@@ -2306,6 +2680,24 @@ bool html_keypress(struct content *c, uint32_t key)
 			macsurf_qjs_clear_event_detail();
 		}
 	}
+	/* Event handlers may synchronously mutate the DOM and complete a
+	 * reconvert. Discard the pre-event owner snapshot and validate the current
+	 * owner generation before default key handling follows any raw box. */
+	if (html->layout_generation != owner_generation) {
+#ifdef __MACOS9__
+		extern void macsurf_debug_log_writef(const char *fmt, ...);
+		macsurf_debug_log_writef(
+			"LIFE HTML_KEY_GENERATION html=%p before=%ld after=%ld key=%ld",
+			(void *)html, (long)owner_generation,
+			(long)html->layout_generation, (long)key);
+#endif
+	}
+	(void)html_interaction_focus_valid(html, "key-post-js");
+	html_interaction_log_state("KEY_POST_JS", html, NULL);
+	html_interaction_log_focus_route("KEY_POST_JS", html,
+		html->focus_type == HTML_FOCUS_SELF ||
+		html->focus_owner_generation == html->layout_generation);
+	sel = html->sel;
 #ifdef __MACOS9__
 	/* fixes160b - was "key=0x%lx". The minimal formatter in
 	 * macsurf_debug_log only knows %d/%ld/%p/%s/%%; %lx printed
@@ -2410,6 +2802,7 @@ void html_set_drag_type(html_content *html, html_drag_type drag_type,
 
 	html->drag_type = drag_type;
 	html->drag_owner = drag_owner;
+	html->drag_owner_generation = html->layout_generation;
 
 	switch (drag_type) {
 	case HTML_DRAG_NONE:
@@ -2450,13 +2843,20 @@ void html_set_focus(html_content *html, html_focus_type focus_type,
 			focus_type != HTML_FOCUS_TEXTAREA;
 
 	assert(html != NULL);
+	html_interaction_log_state("FOCUS_CHANGE_BEFORE", html, NULL);
+	html_interaction_log_focus_route("FOCUS_CHANGE_BEFORE", html,
+		html->focus_type == HTML_FOCUS_SELF ||
+		html->focus_owner_generation == html->layout_generation);
 
 	switch (focus_type) {
 	case HTML_FOCUS_SELF:
 		assert(focus_owner.self == true);
-		if (html->focus_type == HTML_FOCUS_SELF)
+		if (html->focus_type == HTML_FOCUS_SELF) {
+			html->focus_owner = focus_owner;
+			html->focus_owner_generation = html->layout_generation;
 			/* Don't need to tell anyone anything */
 			return;
+		}
 		break;
 
 	case HTML_FOCUS_CONTENT:
@@ -2470,6 +2870,9 @@ void html_set_focus(html_content *html, html_focus_type focus_type,
 
 	html->focus_type = focus_type;
 	html->focus_owner = focus_owner;
+	html->focus_owner_generation = html->layout_generation;
+	html_interaction_log_state("FOCUS_CHANGE_AFTER", html, NULL);
+	html_interaction_log_focus_route("FOCUS_CHANGE_AFTER", html, true);
 
 #ifdef __MACOS9__
 	{ extern void macsurf_debug_log_writef(const char *fmt, ...);
@@ -2519,6 +2922,8 @@ bool html_get_caret_colour(struct hlcache_handle *h, colour *colour_out)
 	if (html == NULL) {
 		return false;
 	}
+	if (!html_interaction_focus_valid(html, "caret-colour"))
+		return false;
 	if (html->focus_type == HTML_FOCUS_TEXTAREA) {
 		box = html->focus_owner.textarea;
 	} else if (html->focus_type == HTML_FOCUS_CONTENT) {
@@ -2549,9 +2954,11 @@ void html_set_selection(html_content *html, html_selection_type selection_type,
 	union content_msg_data msg_data;
 	struct box *box;
 	bool changed = false;
-	bool same_type = html->selection_type == selection_type;
+	bool same_type;
 
 	assert(html != NULL);
+	(void)html_interaction_selection_valid(html, "selection-change");
+	same_type = html->selection_type == selection_type;
 
 	if ((selection_type == HTML_SELECTION_NONE &&
 			html->selection_type != HTML_SELECTION_NONE) ||
@@ -2590,6 +2997,7 @@ void html_set_selection(html_content *html, html_selection_type selection_type,
 
 	html->selection_type = selection_type;
 	html->selection_owner = selection_owner;
+	html->selection_owner_generation = html->layout_generation;
 
 	if (!changed)
 		/* Don't need to report lack of change to owner */
@@ -2616,4 +3024,49 @@ void html_set_selection(html_content *html, html_selection_type selection_type,
 	/* Inform of the content's selection status change */
 	content_broadcast((struct content *)html, CONTENT_MSG_SELECTION,
 			&msg_data);
+}
+
+/* Documented in interaction.h */
+void html_forget_box_interaction(html_content *html, struct box *box)
+{
+	union html_selection_owner selection_owner;
+	union html_focus_owner focus_owner;
+	bool forget_selection;
+	bool forget_focus;
+
+	if (html == NULL || box == NULL)
+		return;
+	(void)html_interaction_selection_valid(html, "box-dtor");
+	(void)html_interaction_focus_valid(html, "box-dtor");
+
+	forget_selection = html->selection_type == HTML_SELECTION_TEXTAREA &&
+		html->selection_owner.textarea == box;
+	forget_focus = html->focus_type == HTML_FOCUS_TEXTAREA &&
+		html->focus_owner.textarea == box;
+
+#ifdef __MACOS9__
+	if (forget_selection || forget_focus) {
+		extern void macsurf_debug_log_writef(const char *fmt, ...);
+		macsurf_debug_log_writef(
+			"LIFE BOX_INTERACTION_DROP box=%p selection=%d focus=%d",
+			(void *)box, (int)forget_selection, (int)forget_focus);
+	}
+#endif
+
+	/* These owners are raw box pointers. Clear a matching textarea selection
+	 * before its gadget/textarea is released; html_set_selection performs the
+	 * normal widget and frontend notification while the box is still valid. */
+	if (forget_selection) {
+		selection_owner.none = true;
+		html_set_selection(html, HTML_SELECTION_NONE, selection_owner, true);
+	}
+
+	/* Key dispatch and caret updates also retain the textarea box directly.
+	 * Clearing through the regular focus path removes the caret and prevents a
+	 * later key event from reading a destroyed box/gadget. */
+	if (forget_focus) {
+		focus_owner.self = true;
+		html_set_focus(html, HTML_FOCUS_SELF, focus_owner, true,
+				0, 0, 0, NULL);
+	}
 }

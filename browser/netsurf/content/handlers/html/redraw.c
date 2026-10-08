@@ -85,6 +85,7 @@ extern void macsurf_recon_clamp(const char *field, long value);
 #include "html/font.h"
 #include "html/form_internal.h"
 #include "html/private.h"
+#include "html/interaction.h"
 #include "html/layout.h"
 #include "html/macsurf_dom_compat.h"
 #include "html/layout_safe.h"
@@ -5378,6 +5379,7 @@ bool html_redraw(struct content *c, struct content_redraw_data *data,
 
 	box = html->layout;
 	assert(box);
+	(void)html_interaction_select_menu_valid(html, "redraw");
 
 	/* The select menu needs special treating because, when opened, it
 	 * reaches beyond its layout box.
