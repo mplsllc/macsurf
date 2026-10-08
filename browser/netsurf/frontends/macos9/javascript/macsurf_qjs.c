@@ -28,6 +28,7 @@
 #include "macsurf_timebase.h"
 #include "macos9_js_fetch.h"
 #include "macsurf_diag.h"
+#include "macsurf_capability.h"
 /* fixes1245 (#167) - plot_font_style_t/gui_layout_table for canvas
  * measureText's real (not fabricated) width query. Neither was pulled in
  * transitively by anything already included here -- checked by trying
@@ -87,6 +88,8 @@ struct jsheap {
 	 * unmapped-memory exception at js_shape_hash_unlink+0004C.  The generation
 	 * never repeats, so (ctx, gen) does identify a realm. */
 	unsigned long ctx_gen;
+	unsigned long nav_id;
+	unsigned long heap_id;
 	int timeout;
 	/* fixes861 (#289) - every live heap, so macsurf_qjs_pump_all() can pump
 	 * ALL of them.  js_newheap() runs per browser_window AND per (i)frame
@@ -167,6 +170,31 @@ static void qjs_task_pop(void)
 	}
 }
 
+#define QJS_IO_TIMER_TARGET_CAP 64
+#define QJS_IO_TIMER_EXPECT_CAP 64
+static unsigned long qjs_ctx_gen(JSContext *ctx);
+struct qjs_io_timer_expect {
+	JSContext *ctx;
+	unsigned long ctx_gen, io_id, seq;
+	char target[QJS_IO_TIMER_TARGET_CAP];
+};
+static struct qjs_io_timer_expect
+	s_io_timer_expects[QJS_IO_TIMER_EXPECT_CAP];
+static unsigned long s_io_timer_expect_seq;
+
+static struct qjs_io_timer_expect *qjs_io_timer_expect_for_ctx(JSContext *ctx)
+{
+	struct qjs_io_timer_expect *expect = NULL;
+	int i;
+	unsigned long ctx_gen = qjs_ctx_gen(ctx);
+	for (i = 0; i < QJS_IO_TIMER_EXPECT_CAP; i++) {
+		struct qjs_io_timer_expect *candidate = &s_io_timer_expects[i];
+		if (candidate->ctx == ctx && candidate->ctx_gen == ctx_gen &&
+			(expect == NULL || candidate->seq < expect->seq))
+			expect = candidate;
+	}
+	return expect;
+}
 /* The authoritative ownership record for one JavaScript realm.  A heap can
  * briefly have both an old and replacement JSContext during navigation, while
  * global setup in the replacement synchronously calls native bindings (notably
@@ -180,6 +208,12 @@ struct qjs_realm_owner {
 	dom_document *document;
 	struct content *content;
 	struct qjs_realm_owner *next;
+	/* Realm diagnostic identity (for MSdg GET realms). */
+	unsigned long realm_id;
+	unsigned long frame_id;
+	unsigned long document_id;
+	unsigned long nav_id;
+	unsigned char state;	/* enum qjs_realm_diag_state */
 };
 
 static struct qjs_realm_owner *g_qjs_realm_owners = NULL;
@@ -195,6 +229,17 @@ static void qjs_thread_register(struct jsthread *t)
 { struct qjs_thread_owner *o = calloc(1, sizeof(*o)); if (o == NULL) return; o->thread=t; o->token=g_qjs_thread_token++; if (g_qjs_thread_token==0) g_qjs_thread_token=1; o->next=g_qjs_threads; g_qjs_threads=o; }
 static void qjs_thread_unregister(struct jsthread *t)
 { struct qjs_thread_owner **p=&g_qjs_threads; while (*p != NULL) { if ((*p)->thread == t) { struct qjs_thread_owner *o=*p; *p=o->next; free(o); return; } p=&(*p)->next; } }
+
+static unsigned long g_qjs_realm_id_seq = 0;
+static unsigned long g_qjs_heap_id_seq = 0;
+
+/* Retired contexts cannot remain registered: their pointers and runtime are
+ * invalid. Preserve only stable IDs and final ownership counts, in a bounded
+ * ring, so MSdg can distinguish a recently retired realm from no realm. */
+#define QJS_REALM_TOMBSTONE_N 32
+static struct qjs_realm_diag g_qjs_realm_tombstones[QJS_REALM_TOMBSTONE_N];
+static int g_qjs_realm_tombstone_head;
+static unsigned long g_qjs_realm_tombstone_total;
 
 static struct qjs_realm_owner *qjs_owner_for_ctx(JSContext *ctx)
 {
@@ -218,9 +263,161 @@ static int qjs_owner_register(JSContext *ctx, struct jsheap *heap,
 	owner->heap = heap;
 	owner->document = document;
 	owner->content = content;
+	owner->realm_id = ++g_qjs_realm_id_seq;
+	if (g_qjs_realm_id_seq == 0) owner->realm_id = ++g_qjs_realm_id_seq;
+	owner->state = QJS_REALM_LIVE;
 	owner->next = g_qjs_realm_owners;
 	g_qjs_realm_owners = owner;
 	return 1;
+}
+
+static unsigned long qjs_realm_timer_count(JSContext *ctx,
+		unsigned long ctx_gen);
+static unsigned long qjs_realm_wrapper_count(JSRuntime *rt);
+
+/* A page can execute parser-time script before html_begin_conversion().
+ * Deferred native work created by that script must therefore see the same
+ * document identity it will have at delivery time.  Open the diagnostic
+ * document lifetime at the point its JS realm is built; html_begin_conversion
+ * retains its idempotent fallback for non-JS and reparse paths. */
+static void qjs_document_identity_open(html_content *htmlc, void *win_priv)
+{
+	if (htmlc == NULL || htmlc->ms_diag_doc_id != 0) return;
+	htmlc->ms_diag_frame_id = ms_diag_frame_get(win_priv);
+	htmlc->ms_diag_doc_id = ms_diag_document_open(
+		content_get_nav_id((struct content *)htmlc), htmlc->ms_diag_frame_id);
+}
+
+static void qjs_owner_refresh(JSContext *ctx, void *win_priv,
+		html_content *htmlc)
+{
+	struct qjs_realm_owner *owner = qjs_owner_for_ctx(ctx);
+	if (owner == NULL) return;
+	owner->frame_id = ms_diag_frame_get(win_priv);
+	if (htmlc != NULL) {
+		owner->document = htmlc->document;
+		owner->content = (struct content *)htmlc;
+		owner->document_id = htmlc->ms_diag_doc_id;
+		owner->nav_id = content_get_nav_id((struct content *)htmlc);
+		if (owner->heap != NULL) owner->heap->nav_id = owner->nav_id;
+	}
+}
+
+static void qjs_owner_identity(const struct qjs_realm_owner *owner,
+		struct qjs_realm_identity *out)
+{
+	html_content *htmlc;
+	memset(out, 0, sizeof(*out));
+	if (owner == NULL) return;
+	htmlc = (html_content *)owner->content;
+	out->realm_id = owner->realm_id;
+	out->frame_id = owner->frame_id;
+	out->document_id = htmlc ? htmlc->ms_diag_doc_id : owner->document_id;
+	out->nav_id = htmlc ? content_get_nav_id((struct content *)htmlc) :
+		owner->nav_id;
+	out->heap_id = owner->heap ? owner->heap->heap_id : 0;
+	out->ctx_gen = owner->heap ? owner->heap->ctx_gen : 0;
+	out->rt = owner->heap ? owner->heap->rt : NULL;
+}
+
+int macsurf_qjs_realm_identity(JSContext *ctx, struct qjs_realm_identity *out)
+{
+	struct qjs_realm_owner *owner = qjs_owner_for_ctx(ctx);
+	if (out == NULL) return 0;
+	qjs_owner_identity(owner, out);
+	return owner != NULL && owner->state == QJS_REALM_LIVE;
+}
+
+int macsurf_qjs_realm_identity_check(JSContext *ctx,
+	const struct qjs_realm_identity *queued, struct qjs_realm_identity *live)
+{
+	struct qjs_realm_owner *owner = qjs_owner_for_ctx(ctx);
+	struct qjs_realm_identity observed;
+	qjs_owner_identity(owner, &observed);
+	if (live != NULL) *live = observed;
+	if (owner == NULL) return QJS_REALM_IDENTITY_CTX_NOT_REGISTERED;
+	if (owner->state == QJS_REALM_NAVIGATION_REQUESTED)
+		return QJS_REALM_IDENTITY_NAVIGATION_REQUESTED;
+	if (owner->state != QJS_REALM_LIVE) return QJS_REALM_IDENTITY_RETIRED;
+	if (queued == NULL) return QJS_REALM_IDENTITY_CTX_NOT_REGISTERED;
+	if (queued->realm_id != observed.realm_id ||
+		queued->heap_id != observed.heap_id)
+		return QJS_REALM_IDENTITY_GENERATION_MISMATCH;
+	if (queued->ctx_gen != observed.ctx_gen)
+		return QJS_REALM_IDENTITY_GENERATION_MISMATCH;
+	if (queued->rt != observed.rt)
+		return QJS_REALM_IDENTITY_RUNTIME_MISMATCH;
+	if (queued->document_id != observed.document_id)
+		return QJS_REALM_IDENTITY_DOCUMENT_MISMATCH;
+	if (queued->nav_id != observed.nav_id)
+		return QJS_REALM_IDENTITY_NAV_MISMATCH;
+	return QJS_REALM_IDENTITY_OK;
+}
+
+static void qjs_owner_tombstone(const struct qjs_realm_owner *owner)
+{
+	struct qjs_realm_diag *out;
+	html_content *htmlc;
+	if (owner == NULL) return;
+	htmlc = (html_content *)owner->content;
+	out = &g_qjs_realm_tombstones[g_qjs_realm_tombstone_head];
+	memset(out, 0, sizeof(*out));
+	out->realm_id = owner->realm_id;
+	out->frame_id = owner->frame_id;
+	out->document_id = htmlc ? htmlc->ms_diag_doc_id : owner->document_id;
+	out->nav_id = htmlc ? content_get_nav_id((struct content *)htmlc) :
+		owner->nav_id;
+	out->heap_id = owner->heap ? owner->heap->heap_id : 0;
+	out->ctx_gen = owner->heap ? owner->heap->ctx_gen : 0;
+	out->state = QJS_REALM_RETIRED;
+	out->timers_owned = qjs_realm_timer_count(owner->ctx, out->ctx_gen);
+	out->xhr_owned = macos9_js_fetch_realm_count(owner->ctx);
+	out->microtasks_pending = QJS_REALM_DIAG_UNAVAILABLE;
+	out->modules_waiting = QJS_REALM_DIAG_UNAVAILABLE;
+	out->event_listeners = QJS_REALM_DIAG_UNAVAILABLE;
+	out->wrappers = qjs_realm_wrapper_count(owner->heap ? owner->heap->rt : NULL);
+	out->deferred_notifications = QJS_REALM_DIAG_UNAVAILABLE;
+	if (out->timers_owned != 0 || out->xhr_owned != 0) {
+		ms_diag_realm_invariant_record(MS_RI_PENDING_WORK_ON_RETIRED_REALM,
+			MS_RIS_CANCELLED_REALM_RETIRED, out->realm_id, out->frame_id,
+			out->document_id, 0, out->nav_id, 0, out->heap_id,
+			out->ctx_gen, out->timers_owned + out->xhr_owned);
+	}
+	g_qjs_realm_tombstone_head = (g_qjs_realm_tombstone_head + 1) %
+		QJS_REALM_TOMBSTONE_N;
+	g_qjs_realm_tombstone_total++;
+}
+
+/* A script-originated navigation has been accepted but content replacement is
+ * asynchronous.  Stop post-callback old-realm work immediately; teardown
+ * later records and releases its remaining native slots. */
+void macsurf_qjs_realm_navigation_requested(JSContext *ctx)
+{
+	struct qjs_realm_owner *owner = qjs_owner_for_ctx(ctx);
+	if (owner != NULL && owner->state == QJS_REALM_LIVE)
+		owner->state = QJS_REALM_NAVIGATION_REQUESTED;
+}
+
+/* Called when a navigation starts replacing this realm's context.
+ * Transitions state to TEARING_DOWN. */
+void macsurf_qjs_realm_tearing_down(JSContext *ctx)
+{
+	struct qjs_realm_owner *owner = qjs_owner_for_ctx(ctx);
+	if (owner != NULL && owner->state != QJS_REALM_TEARING_DOWN &&
+			owner->state != QJS_REALM_RETIRED) {
+		struct qjs_realm_identity id;
+		unsigned long pending;
+		qjs_owner_identity(owner, &id);
+		pending = qjs_realm_timer_count(ctx, id.ctx_gen) +
+			macos9_js_fetch_realm_count(ctx);
+		if (pending != 0) {
+			ms_diag_realm_invariant_record(MS_RI_PENDING_WORK_ON_RETIRED_REALM,
+				MS_RIS_CANCELLED_REALM_RETIRED, id.realm_id, id.frame_id,
+				id.document_id, 0, id.nav_id, 0, id.heap_id, id.ctx_gen,
+				pending);
+		}
+		owner->state = QJS_REALM_TEARING_DOWN;
+	}
 }
 
 static void qjs_owner_unregister(JSContext *ctx)
@@ -230,6 +427,7 @@ static void qjs_owner_unregister(JSContext *ctx)
 		if ((*pp)->ctx == ctx) {
 			struct qjs_realm_owner *owner = *pp;
 			*pp = owner->next;
+			qjs_owner_tombstone(owner);
 			free(owner);
 			return;
 		}
@@ -650,15 +848,87 @@ double macsurf_qjs_get_now(void)
  * that had drifted apart over time. */
 static void qjs_short_name(const char *name, char *out, int cap);
 
-static void qjs_log_exc(JSContext *ctx, JSValueConst exc,
-		const char *what, const char *name)
+/* Registry lookup copies scalars only; no exception properties are inspected. */
+static void qjs_error_capture_realm(JSContext *ctx,
+	struct ms_diag_error_provenance *p)
+{
+	struct qjs_realm_identity r;
+	memset(p, 0, sizeof(*p));
+	/* The registry also supplies the tuple after a callback requests navigation. */
+	(void)macsurf_qjs_realm_identity(ctx, &r);
+	{
+		p->nav_id = r.nav_id;
+		p->frame_id = r.frame_id;
+		p->doc_id = r.document_id;
+		p->realm_id = r.realm_id;
+		p->heap_id = r.heap_id;
+		p->ctx_gen = r.ctx_gen;
+	}
+	ms_diag_js_context_set(p->nav_id, p->doc_id, p->frame_id);
+	p->task_id = ms_diag_cur_task();
+}
+
+/* JS shims that already swallow listener exceptions report scalars only.
+ * In particular this function never receives or coerces the thrown value. */
+static JSValue qjs_callback_error(JSContext *ctx, JSValueConst this_val,
+	int argc, JSValueConst *argv)
+{
+	struct ms_diag_error_provenance ep, callback;
+	int boundary = MS_BOUND_EVENT;
+	(void)this_val;
+	qjs_error_capture_realm(ctx, &ep);
+	if (argc > 0 && JS_IsBool(argv[0]) && JS_ToBool(ctx, argv[0])) {
+		boundary = MS_BOUND_XHR;
+		ms_diag_error_capture_callback(&callback);
+		if (callback.realm_id == ep.realm_id && callback.ctx_gen == ep.ctx_gen &&
+			callback.task_id != 0 && callback.task_id == ep.task_id)
+			ep = callback;
+	}
+	ms_diag_js_event_hit(MS_JS_EVENT_HANDLER_FAILED);
+	ms_diag_event_handler_hit("event", 1);
+	(void)ms_diag_error_record_ex(0, 0, MS_FAIL_HANDLER_FAILED,
+		MS_PHASE_CALLBACK, boundary, &ep, "Error", NULL);
+	return JS_UNDEFINED;
+}
+
+static JSValue qjs_async_listener_enter(JSContext *ctx, JSValueConst this_val,
+	int argc, JSValueConst *argv)
+{
+	int32_t id = 0;
+	unsigned long previous;
+	(void)this_val;
+	if (argc > 0) JS_ToInt32(ctx, &id, argv[0]);
+	ms_diag_async_swap((unsigned long)id, &previous);
+	ms_diag_async_state((unsigned long)id, MS_ASYNC_FIRING);
+	return JS_NewInt32(ctx, (int32_t)previous);
+}
+
+static JSValue qjs_async_listener_leave(JSContext *ctx, JSValueConst this_val,
+	int argc, JSValueConst *argv)
+{
+	int32_t id = 0, previous = 0;
+	(void)this_val;
+	if (argc > 0) JS_ToInt32(ctx, &id, argv[0]);
+	if (argc > 1) JS_ToInt32(ctx, &previous, argv[1]);
+	ms_diag_async_state((unsigned long)id, MS_ASYNC_FIRED);
+	ms_diag_async_swap((unsigned long)previous, NULL);
+	return JS_UNDEFINED;
+}
+
+static unsigned long qjs_log_exc_record(JSContext *ctx, JSValueConst exc,
+		const char *what, const char *name,
+		const struct ms_diag_error_provenance *p, int failure, int phase, int boundary)
 {
 	const char *msg;
 	JSValue stk;
 	const char *ss;
 	char sname[48];
+	unsigned long error_id = 0;
 
 	msg = JS_ToCString(ctx, exc);
+	if (p != NULL)
+		error_id = ms_diag_error_record_ex(0, 0, failure, phase, boundary,
+			p, "Error", msg);
 	macsurf_debug_log_writef("LIFE qjs %s: %s [%s]",
 			what, msg ? msg : "?",
 			name ? name : "?");
@@ -678,6 +948,14 @@ static void qjs_log_exc(JSContext *ctx, JSValueConst exc,
 		}
 	}
 	JS_FreeValue(ctx, stk);
+	return error_id;
+}
+
+static void qjs_log_exc(JSContext *ctx, JSValueConst exc,
+	const char *what, const char *name)
+{
+	(void)qjs_log_exc_record(ctx, exc, what, name, NULL,
+		MS_FAIL_NONE, MS_PHASE_NONE, MS_BOUND_NONE);
 }
 
 /* ------------------------------------------------------------------ */
@@ -1127,7 +1405,11 @@ static JSValue qjs_location_get(JSContext *ctx, JSValueConst this_val,
 	(void)this_val; (void)argc; (void)argv;
 #ifdef __MACOS9__
 	{
-		struct gui_window *win = macos9_window_list_head();
+		struct qjs_realm_owner *owner = qjs_owner_for_ctx(ctx);
+		html_content *htmlc = owner ? (html_content *)owner->content : NULL;
+		struct gui_window *win = (htmlc != NULL && htmlc->bw != NULL) ?
+			macos9_window_for_browser_window(htmlc->bw) :
+			macos9_window_list_head();
 		struct browser_window *bw = win ? macos9_gw_bw(win) : NULL;
 		const char *href = "about:blank";
 		if (bw != NULL) {
@@ -1155,8 +1437,34 @@ static JSValue qjs_location_set(JSContext *ctx, JSValueConst this_val,
 	if (argc > 0) {
 		const char *url = JS_ToCString(ctx, argv[0]);
 		if (url) {
-			struct gui_window *win = macos9_window_list_head();
-			if (win != NULL) macos9_window_navigate(win, url);
+			struct qjs_realm_owner *owner = qjs_owner_for_ctx(ctx);
+			html_content *htmlc = owner ? (html_content *)owner->content : NULL;
+			struct gui_window *win = (htmlc != NULL && htmlc->bw != NULL) ?
+				macos9_window_for_browser_window(htmlc->bw) :
+				macos9_window_list_head();
+			struct nsurl *resolved = NULL;
+			const struct nsurl *base = htmlc ?
+				content_get_url((struct content *)htmlc) : NULL;
+			/* Location navigation is URL-reference navigation.  Passing a
+			 * relative string to macos9_window_navigate reaches nsurl_create(),
+			 * which only accepts absolute URLs; resolve against this realm's
+			 * document first, as native XHR already does. */
+			if (base != NULL && nsurl_join(base, url, &resolved) == NSERROR_OK &&
+					resolved != NULL) {
+				if (win != NULL) {
+					/* Same-document hash navigation does not replace the document/realm. */
+					if (!nsurl_compare(base, resolved, NSURL_COMPLETE) ||
+							nsurl_has_component(resolved, NSURL_QUERY)) {
+						macsurf_qjs_realm_navigation_requested(ctx);
+					}
+					macos9_window_navigate(win, nsurl_access(resolved));
+				}
+				nsurl_unref(resolved);
+			} else if (win != NULL) {
+				if (url[0] != '#')
+					macsurf_qjs_realm_navigation_requested(ctx);
+				macos9_window_navigate(win, url);
+			}
 			JS_FreeCString(ctx, url);
 		}
 	}
@@ -1339,6 +1647,13 @@ struct qjs_timer {
 	 * generation bookkeeping is wrong -- which the hardware says it is, since
 	 * fixes875's gate passed and the free still blew up. */
 	JSRuntime *rt;
+	/* Immutable owner identity for this timer's JSValues. */
+	unsigned long realm_id, frame_id, document_id, heap_id;
+	/* MacSurf Trace 1b: causal origin, captured at setTimeout registration. */
+	unsigned long origin_script_id;
+	unsigned long origin_source_id; /* E3: source_id at registration time */
+	unsigned long nav_id;
+	unsigned long async_id;
 };
 
 static struct qjs_timer s_timer_arena[QJS_MAX_TIMERS];
@@ -1393,6 +1708,21 @@ static int qjs_timer_owned_by(struct qjs_timer *t, JSContext *ctx)
 	return t->ctx_gen == qjs_ctx_gen(ctx) && t->ctx_gen != 0;
 }
 
+static unsigned long qjs_realm_timer_count(JSContext *ctx,
+		unsigned long ctx_gen)
+{
+	unsigned long count = 0;
+	int i;
+
+	if (ctx == NULL || ctx_gen == 0) return 0;
+	for (i = 0; i < QJS_MAX_TIMERS; i++) {
+		if (s_timer_arena[i].live && s_timer_arena[i].ctx == ctx &&
+			s_timer_arena[i].ctx_gen == ctx_gen)
+			count++;
+	}
+	return count;
+}
+
 /* fixes875 (#304) - never-repeating realm id. Monotonic across the whole
  * process: the ONLY property required is that a value is never reused, which is
  * exactly what a JSContext* address fails to guarantee. */
@@ -1445,6 +1775,13 @@ static void timer_slot_clear(struct qjs_timer *t, int free_vals)
 	if (free_vals) {
 		JSRuntime *live_rt = qjs_ctx_live_rt(t->ctx);
 		if (live_rt == NULL || t->rt == NULL || live_rt != t->rt) {
+			struct qjs_realm_identity live;
+			(void)macsurf_qjs_realm_identity_check(t->ctx, NULL, &live);
+			ms_diag_realm_invariant_record(MS_RI_TIMER_REALM_OWNER_MISMATCH,
+				MS_RIS_REJECTED_RUNTIME_REALM_MISMATCH, t->realm_id,
+				t->frame_id, t->document_id, live.document_id, t->nav_id,
+				live.nav_id, t->heap_id, t->ctx_gen,
+				(unsigned long)t->id);
 			macsurf_debug_log_writef(
 				"WORK timer: REFUSING cross-runtime free id=%d ctx=%p "
 				"slot_rt=%p live_rt=%p -- abandoning instead",
@@ -1529,8 +1866,13 @@ static JSValue qjs_settimeout_impl(JSContext *ctx,
 	int id;
 	int extra;
 	int i;
+	struct qjs_io_timer_expect *expect;
 
 	(void)this_val;
+	expect = qjs_io_timer_expect_for_ctx(ctx);
+	if (expect != NULL)
+		ms_diag_io_timer_native_state(expect->io_id, expect->target,
+			MS_IO_TIMER_NATIVE_ENTERED);
 	if (argc < 1 || !JS_IsFunction(ctx, argv[0])) return JS_NewInt32(ctx, 0);
 	if (argc >= 2) JS_ToFloat64(ctx, &delay_ms, argv[1]);
 	if (delay_ms < 0.0) delay_ms = 0.0;
@@ -1566,6 +1908,15 @@ static JSValue qjs_settimeout_impl(JSContext *ctx,
 	 * against it. */
 	t->ctx = ctx;
 	t->ctx_gen = qjs_ctx_gen(ctx);
+	{
+		struct qjs_realm_identity owner;
+		if (macsurf_qjs_realm_identity(ctx, &owner)) {
+			t->realm_id = owner.realm_id;
+			t->frame_id = owner.frame_id;
+			t->document_id = owner.document_id;
+			t->heap_id = owner.heap_id;
+		}
+	}
 	/* fixes888 (#304) - capture the owning runtime alongside the dup. Safe to
 	 * dereference here: we are executing IN this context, so it is live. */
 	t->rt = JS_GetRuntime(ctx);
@@ -1573,6 +1924,34 @@ static JSValue qjs_settimeout_impl(JSContext *ctx,
 	/* Dup against the SAME ctx as `fn`, for the same reason. */
 	for (i = 0; i < extra; i++)
 		t->args[i] = JS_DupValue(ctx, argv[2 + i]);
+
+	/* MacSurf Trace 1b: capture the causal origin NOW (registration time),
+	 * not at fire -- by then current_script / current_nav have moved on. */
+	t->origin_script_id = ms_diag_cur_script();
+	t->origin_source_id = ms_diag_cur_source(); /* E3 */
+	t->nav_id = ms_diag_cur_nav();
+	{
+		struct ms_diag_error_provenance ap;
+		memset(&ap, 0, sizeof(ap));
+		ap.nav_id = t->nav_id;
+		ap.source_id = t->origin_source_id;
+		ap.script_id = t->origin_script_id;
+		ap.task_id = ms_diag_cur_task();
+		ap.realm_id = t->realm_id;
+		ap.frame_id = t->frame_id;
+		ap.doc_id = t->document_id;
+		ap.heap_id = t->heap_id;
+		ap.ctx_gen = t->ctx_gen;
+		t->async_id = ms_diag_async_register(MS_ASYNC_TIMER, &ap);
+		ms_diag_async_state(t->async_id, MS_ASYNC_QUEUED);
+	}
+	ms_diag_timer_arm((unsigned long)id, t->nav_id, t->origin_script_id,
+		ms_diag_cur_task(), t->ctx_gen);
+	if (expect != NULL) {
+		ms_diag_io_timer_bind(expect->io_id, expect->target,
+			(unsigned long)id);
+		memset(expect, 0, sizeof(*expect));
+	}
 
 	return JS_NewInt32(ctx, id);
 }
@@ -1611,6 +1990,8 @@ static JSValue qjs_cleartimeout(JSContext *ctx, JSValueConst this_val,
 			if (qjs_timer_owned_by(t, ctx) && t->id == target_id) {
 				/* owned_by() already proved t->ctx == ctx, so the
 				 * helper's free-against-t->ctx is this same ctx. */
+				ms_diag_timer_state((unsigned long)t->id, MS_TIMER_CANCELLED);
+				ms_diag_async_state(t->async_id, MS_ASYNC_CANCELLED);
 				timer_slot_clear(t, 1);
 				break;
 			}
@@ -1785,6 +2166,25 @@ void macsurf_qjs_run_timers(struct jscontext *ctx)
 				g_timer_due++;   /* fixes1273 */
 			}
 		} else if (s_timer_arena[i].live) {
+			/* Other live heaps normally own timers in this shared arena. That
+			 * is not an invariant failure. A same-address context whose saved
+			 * generation changed is the ABA case this diagnostic is for. */
+			if (s_timer_arena[i].ctx == qctx) {
+				struct qjs_realm_identity live;
+				(void)macsurf_qjs_realm_identity_check(qctx, NULL, &live);
+				ms_diag_realm_invariant_record(
+					MS_RI_TIMER_REALM_OWNER_MISMATCH,
+					MS_RIS_REJECTED_CTX_GENERATION_MISMATCH,
+					s_timer_arena[i].realm_id,
+					s_timer_arena[i].frame_id,
+					s_timer_arena[i].document_id, live.document_id,
+					s_timer_arena[i].nav_id, live.nav_id,
+					s_timer_arena[i].heap_id,
+					s_timer_arena[i].ctx_gen,
+					(unsigned long)s_timer_arena[i].id);
+			}
+			ms_diag_timer_state((unsigned long)s_timer_arena[i].id,
+				MS_TIMER_OWNER_MISMATCH);
 			/* fixes1273 - live, but belongs to another context.
 			 * Its own heap's pass fires it; counted so "registered
 			 * into a realm nobody pumps" is visible, not assumed
@@ -1803,6 +2203,12 @@ void macsurf_qjs_run_timers(struct jscontext *ctx)
 		JSValue this_obj;
 		int call_nargs;
 		int a;
+		struct ms_diag_scope __tsk;	/* MacSurf Trace 1b */
+		unsigned long __t_nav = t->nav_id;
+		unsigned long __t_scr = t->origin_script_id;
+		unsigned long __t_async = t->async_id;
+		struct ms_diag_error_provenance ep;
+		unsigned long prev_async;
 
 		/* Revalidate: a prior callback may have cleared this timer, or
 		 * timer_alloc may have evicted+reused this slot for a different
@@ -1812,6 +2218,17 @@ void macsurf_qjs_run_timers(struct jscontext *ctx)
 		 * DIFFERENT heap's setTimeout since we snapshotted, which would make
 		 * the JS_DupValue below cross-runtime. */
 		if (!qjs_timer_owned_by(t, qctx) || t->id != due_id[k]) continue;
+
+		memset(&ep, 0, sizeof(ep));
+		ep.nav_id = t->nav_id;
+		ep.frame_id = t->frame_id;
+		ep.doc_id = t->document_id;
+		ep.source_id = t->origin_source_id;
+		ep.script_id = t->origin_script_id;
+		ep.realm_id = t->realm_id;
+		ep.heap_id = t->heap_id;
+		ep.ctx_gen = t->ctx_gen;
+		ep.async_id = __t_async;
 
 		/* #265 - a timer callback is its own JS execution burst: clear the
 		 * settle-once geometry flag so its first read settles fresh. Two
@@ -1865,7 +2282,26 @@ void macsurf_qjs_run_timers(struct jscontext *ctx)
 		 * JS_UNDEFINED left strict-mode callbacks with `this === undefined`. */
 		this_obj = JS_GetGlobalObject(qctx);
 		qjs_task_push(MACSURF_JS_TASK_TIMER);
+		ms_diag_task_enter(&__tsk, MS_TASK_TIMER, __t_nav, __t_scr,
+			0, (const char *) 0);
+		ms_diag_async_swap(__t_async, &prev_async);
+		ms_diag_async_state(__t_async, MS_ASYNC_FIRING);
+		ep.task_id = ms_diag_cur_task();
+		ms_diag_timer_state((unsigned long)due_id[k], MS_TIMER_FIRING);
 		ret = JS_Call(qctx, fn, this_obj, call_nargs, call_args);
+		ms_diag_timer_state((unsigned long)due_id[k], MS_TIMER_FIRED);
+		/* Record an exception while the timer's causal task is still live.
+		 * Popping first turns a real handler failure into task=0 evidence. */
+		if (JS_IsException(ret))
+			ms_diag_js_event_hit(MS_JS_EVENT_HANDLER_FAILED);
+			ms_diag_event_handler_hit("timer", 1);
+		ms_diag_task_leave(&__tsk);
+		ms_diag_async_state(__t_async, MS_ASYNC_FIRED);
+		ms_diag_async_swap(prev_async, NULL);
+		if (t->repeating && t->live && t->id == due_id[k])
+			ms_diag_async_state(__t_async, MS_ASYNC_QUEUED);
+		else
+			ms_diag_async_state(__t_async, MS_ASYNC_RETIRED);
 		{	/* fixes1037 */
 			extern double macos9_micros(void);
 			double dt = macos9_micros() - g_timer_t0;
@@ -1874,7 +2310,8 @@ void macsurf_qjs_run_timers(struct jscontext *ctx)
 		JS_FreeValue(qctx, this_obj);
 		if (JS_IsException(ret)) {
 			JSValue exc = JS_GetException(qctx);
-			qjs_log_exc(qctx, exc, "timer exc", "setTimeout");
+			(void)qjs_log_exc_record(qctx, exc, "timer exc", "setTimeout",
+				&ep, MS_FAIL_HANDLER_FAILED, MS_PHASE_CALLBACK, MS_BOUND_TIMER);
 			JS_FreeValue(qctx, exc);
 			/* Deadline-abort of a still-live (repeating) timer: kill
 			 * it so the rogue interval can never re-freeze the UI. */
@@ -1887,6 +2324,7 @@ void macsurf_qjs_run_timers(struct jscontext *ctx)
 			    mydl != 0.0 && macsurf_qjs_get_now() >= mydl) {
 				macsurf_debug_log_writef(
 					"qjs: TIMER TIMEOUT -- repeating timer KILLED");
+				ms_diag_async_state(t->async_id, MS_ASYNC_RETIRED);
 				timer_slot_clear(t, 1);
 			}
 		}
@@ -1896,6 +2334,11 @@ void macsurf_qjs_run_timers(struct jscontext *ctx)
 		JS_FreeValue(qctx, fn);
 		for (a = 0; a < call_nargs; a++)
 			JS_FreeValue(qctx, call_args[a]);
+		{
+			struct qjs_realm_owner *owner = qjs_owner_for_ctx(qctx);
+			if (owner != NULL && owner->state == QJS_REALM_NAVIGATION_REQUESTED)
+				break;
+		}
 	}
 }
 
@@ -2742,6 +3185,91 @@ static void qjs_wrap_drain(JSRuntime *rt)
 	macsurf_debug_log_writef(
 		"WORK wrapmap drain freed=%d kept-foreign=%d heap=%p",
 		cleaned, kept, (void *)g_heap);
+}
+
+static unsigned long qjs_realm_wrapper_count(JSRuntime *rt)
+{
+	unsigned long count = 0;
+	unsigned int i;
+
+	if (rt == NULL) return 0;
+	for (i = 0; i < QJS_WRAP_BUCKETS; i++) {
+		struct qjs_wrap_entry *e;
+		for (e = s_wrap_buckets[i]; e != NULL; e = e->next) {
+			if (e->rt == rt) count++;
+		}
+	}
+	return count;
+}
+
+int macsurf_qjs_realm_count(void)
+{
+	int count = 0;
+	struct qjs_realm_owner *owner;
+	int i;
+
+	for (owner = g_qjs_realm_owners; owner != NULL; owner = owner->next)
+		count++;
+	for (i = 0; i < QJS_REALM_TOMBSTONE_N; i++) {
+		if (g_qjs_realm_tombstones[i].realm_id != 0) count++;
+	}
+	return count;
+}
+
+unsigned long macsurf_qjs_realm_retired_total(void)
+{
+	return g_qjs_realm_tombstone_total;
+}
+
+unsigned long macsurf_qjs_realm_retired_capacity(void)
+{
+	return QJS_REALM_TOMBSTONE_N;
+}
+
+int macsurf_qjs_realm_get(int index, struct qjs_realm_diag *out)
+{
+	struct qjs_realm_owner *owner;
+	int i;
+	int at = 0;
+
+	if (index < 0 || out == NULL) return 0;
+	for (owner = g_qjs_realm_owners; owner != NULL; owner = owner->next) {
+		html_content *htmlc;
+		if (at++ != index) continue;
+		memset(out, 0, sizeof(*out));
+		htmlc = (html_content *)owner->content;
+		out->realm_id = owner->realm_id;
+		out->frame_id = owner->frame_id;
+		/* The document identity is opened before qjs_build_context() for
+		 * document realms. Read the HTML content so an encoding reparse that
+		 * replaces its DOM is reflected immediately. */
+		out->document_id = htmlc ? htmlc->ms_diag_doc_id : owner->document_id;
+		out->nav_id = htmlc ? content_get_nav_id((struct content *)htmlc) :
+			owner->nav_id;
+		out->heap_id = owner->heap ? owner->heap->heap_id : 0;
+		out->ctx_gen = owner->heap ? owner->heap->ctx_gen : 0;
+		out->ctx = owner->ctx;
+		out->rt = owner->heap ? owner->heap->rt : NULL;
+		out->content = owner->content;
+		out->document = owner->document;
+		out->state = owner->state;
+		out->timers_owned = qjs_realm_timer_count(owner->ctx,
+			out->ctx_gen);
+		out->xhr_owned = macos9_js_fetch_realm_count(owner->ctx);
+		out->microtasks_pending = QJS_REALM_DIAG_UNAVAILABLE;
+		out->modules_waiting = QJS_REALM_DIAG_UNAVAILABLE;
+		out->event_listeners = QJS_REALM_DIAG_UNAVAILABLE;
+		out->wrappers = qjs_realm_wrapper_count(out->rt);
+		out->deferred_notifications = QJS_REALM_DIAG_UNAVAILABLE;
+		return 1;
+	}
+	for (i = 0; i < QJS_REALM_TOMBSTONE_N; i++) {
+		if (g_qjs_realm_tombstones[i].realm_id == 0) continue;
+		if (at++ != index) continue;
+		*out = g_qjs_realm_tombstones[i];
+		return 1;
+	}
+	return 0;
 }
 
 /* Pointer-validate guard (ON from phase one).  Single chokepoint every accessor
@@ -5538,6 +6066,7 @@ static void qjs_el_install_js_helpers(JSContext *ctx, JSValue proto)
 		"if(this._L&&this._L[t]){"
 		"var a=this._L[t].slice();"
 		"var c=(this._LC&&this._LC[t])?this._LC[t].slice():null;"
+		"var ids=(this._LA&&this._LA[t])?this._LA[t].slice():null;"
 		"var i;for(i=0;i<a.length;i++){"
 		/* stopImmediatePropagation, observed BETWEEN handlers -- see
 		 * qjs_ev_stop_immediate_data. Checked before each call so the
@@ -5547,14 +6076,14 @@ static void qjs_el_install_js_helpers(JSContext *ctx, JSValue proto)
 		"var cap=c?!!c[i]:false;"
 		"if(ph===1?!cap:cap)continue;"
 		"}"
-		"try{a[i].call(this,ev);}"
-		"catch(e){try{console.error('LIFE jsevent listener threw ['+t+']: '+"
-		"((e&&e.name)?(e.name+': '):'')+((e&&e.message)||e)+(e&&e.stack?(' STACK: '+e.stack):''));}catch(_){}}}}"
+		"var aid=ids?(ids[i]||0):0,old=__msAsyncListenerEnter(aid);try{a[i].call(this,ev);}"
+		"catch(e){__msCallbackError(false);try{console.error('LIFE jsevent listener threw ['+t+']: '+"
+		"((e&&e.name)?(e.name+': '):'')+((e&&e.message)||e)+(e&&e.stack?(' STACK: '+e.stack):''));}catch(_){}}finally{__msAsyncListenerLeave(aid,old);}}}"
 		"if(ev&&ev.__msStopNow)return true;"
 		/* on* handlers are non-capture by definition, so they must never
 		 * run in the capturing phase. */
 		"if(ph!==1&&this._H&&this._H[t]){try{this._H[t].call(this,ev);}"
-		"catch(e){try{console.error('LIFE jsevent on'+t+' threw: '+"
+		"catch(e){__msCallbackError(false);try{console.error('LIFE jsevent on'+t+' threw: '+"
 		"((e&&e.name)?(e.name+': '):'')+((e&&e.message)||e)+(e&&e.stack?(' STACK: '+e.stack):''));}catch(_){}}}"
 		"return true;};"
 		/* fixes1008 (2b) - THE MISSING DOM SURFACE.
@@ -6905,7 +7434,13 @@ static void qjs_fire_dispatch(JSContext *ctx, JSValueConst obj,
 		qjs_task_pop();
 		if (JS_IsException(ret)) {
 			JSValue ex = JS_GetException(ctx);
-			qjs_log_exc(ctx, ex, "event handler threw", what);
+			struct ms_diag_error_provenance ep;
+			qjs_error_capture_realm(ctx, &ep);
+			/* Listener registration origin is not carried by this dispatch. */
+			ms_diag_js_event_hit(MS_JS_EVENT_HANDLER_FAILED);
+			ms_diag_event_handler_hit(what, 1);
+			(void)qjs_log_exc_record(ctx, ex, "event handler threw", what,
+				&ep, MS_FAIL_HANDLER_FAILED, MS_PHASE_CALLBACK, MS_BOUND_EVENT);
 			JS_FreeValue(ctx, ex);
 		}
 		JS_FreeValue(ctx, ret);
@@ -7582,7 +8117,7 @@ static JSValue qjs_el_add_event_listener_data(JSContext *ctx,
 {
 	dom_node *node;
 	const char *type_c;
-	JSValue L, arr, lenv, C, carr, R, seen;
+	JSValue L, arr, lenv, C, carr, R, seen, A, aarr;
 	uint32_t len = 0;
 	int capture = 0;
 	int fresh = 0;
@@ -7628,6 +8163,25 @@ static JSValue qjs_el_add_event_listener_data(JSContext *ctx,
 	lenv = JS_GetPropertyStr(ctx, arr, "length");
 	JS_ToUint32(ctx, &len, lenv);
 	JS_FreeValue(ctx, lenv);
+	/* DOM listener identity is (type, callback, capture).  Do this before
+	 * allocating diagnostic state: a rejected duplicate has no accepted
+	 * continuation and must not consume an async ID. */
+	C = JS_GetPropertyStr(ctx, this_val, "_LC");
+	carr = JS_IsObject(C) ? JS_GetPropertyStr(ctx, C, type_c) : JS_UNDEFINED;
+	if (JS_IsObject(carr)) {
+		uint32_t j;
+		for (j = 0; j < len; j++) {
+			JSValue oldfn = JS_GetPropertyUint32(ctx, arr, j);
+			JSValue oldcap = JS_GetPropertyUint32(ctx, carr, j);
+			int same = JS_VALUE_GET_PTR(oldfn) == JS_VALUE_GET_PTR(argv[1]) &&
+				JS_ToBool(ctx, oldcap) == capture;
+			JS_FreeValue(ctx, oldfn); JS_FreeValue(ctx, oldcap);
+			if (same) { JS_FreeValue(ctx, carr); JS_FreeValue(ctx, C);
+				JS_FreeValue(ctx, arr); JS_FreeValue(ctx, L);
+				JS_FreeCString(ctx, type_c); return JS_UNDEFINED; }
+		}
+	}
+	JS_FreeValue(ctx, carr); JS_FreeValue(ctx, C);
 	JS_SetPropertyUint32(ctx, arr, len, JS_DupValue(ctx, argv[1]));
 	JS_FreeValue(ctx, arr);
 	JS_FreeValue(ctx, L);
@@ -7652,6 +8206,26 @@ static JSValue qjs_el_add_event_listener_data(JSContext *ctx,
 	JS_SetPropertyUint32(ctx, carr, len, JS_NewBool(ctx, capture));
 	JS_FreeValue(ctx, carr);
 	JS_FreeValue(ctx, C);
+	A = JS_GetPropertyStr(ctx, this_val, "_LA");
+	if (!JS_IsObject(A)) {
+		JS_FreeValue(ctx, A); A = JS_NewObject(ctx);
+		JS_SetPropertyStr(ctx, this_val, "_LA", JS_DupValue(ctx, A));
+	}
+	aarr = JS_GetPropertyStr(ctx, A, type_c);
+	if (JS_IsUndefined(aarr) || JS_IsNull(aarr)) {
+		JS_FreeValue(ctx, aarr); aarr = JS_NewArray(ctx);
+		JS_SetPropertyStr(ctx, A, type_c, JS_DupValue(ctx, aarr));
+	}
+	{
+		struct ms_diag_error_provenance ap;
+		qjs_error_capture_realm(ctx, &ap);
+		ap.source_id = ms_diag_cur_source();
+		ap.script_id = ms_diag_cur_script();
+		JS_SetPropertyUint32(ctx, aarr, len, JS_NewUint32(ctx,
+			ms_diag_async_register(MS_ASYNC_EVENT, &ap)));
+	}
+	JS_FreeValue(ctx, aarr);
+	JS_FreeValue(ctx, A);
 
 	/* fixes1040 (#264) - register with libdom once per (node, type, CAPTURE),
 	 * not once per (node, type).
@@ -7726,6 +8300,26 @@ static void qjs_lc_splice_at(JSContext *ctx, JSValueConst el,
 	JS_FreeValue(ctx, C);
 }
 
+static void qjs_la_splice_at(JSContext *ctx, JSValueConst el,
+	const char *type_c, uint32_t idx)
+{
+	JSValue A, aarr, sp;
+	A = JS_GetPropertyStr(ctx, el, "_LA");
+	if (!JS_IsObject(A)) { JS_FreeValue(ctx, A); return; }
+	aarr = JS_GetPropertyStr(ctx, A, type_c);
+	if (JS_IsObject(aarr)) {
+		sp = JS_GetPropertyStr(ctx, aarr, "splice");
+		if (JS_IsFunction(ctx, sp)) {
+			JSValue av[2], r;
+			av[0] = JS_NewUint32(ctx, idx); av[1] = JS_NewInt32(ctx, 1);
+			r = JS_Call(ctx, sp, aarr, 2, (JSValueConst *)av);
+			JS_FreeValue(ctx, r); JS_FreeValue(ctx, av[0]); JS_FreeValue(ctx, av[1]);
+		}
+		JS_FreeValue(ctx, sp);
+	}
+	JS_FreeValue(ctx, aarr); JS_FreeValue(ctx, A);
+}
+
 static JSValue qjs_el_remove_event_listener_data(JSContext *ctx,
 		JSValueConst this_val, int argc, JSValueConst *argv,
 		int magic, JSValueConst *func_data)
@@ -7773,6 +8367,7 @@ static JSValue qjs_el_remove_event_listener_data(JSContext *ctx,
 					 * the bug this whole change fixes. */
 					qjs_lc_splice_at(ctx, this_val,
 							type_c, i);
+					qjs_la_splice_at(ctx, this_val, type_c, i);
 					break;
 				}
 				JS_FreeValue(ctx, item);
@@ -10452,6 +11047,194 @@ static JSValue qjs_raf_fired(JSContext *ctx,
 	return JS_UNDEFINED;
 }
 
+/* Module Trace v1: native bridge for __msModEvent(name, dep_name, event_type, reason, depth) */
+static JSValue qjs_ms_mod_event(JSContext *ctx,
+	JSValueConst this_val, int argc, JSValueConst *argv)
+{
+	const char *name = NULL;
+	const char *dep_name = NULL;
+	int event_type = 0;
+	int reason = 0;
+	int depth = 0;
+	int32_t wait_id = 0;
+
+	(void)this_val;
+	if (argc < 3) return JS_UNDEFINED;
+
+	name = JS_ToCString(ctx, argv[0]);
+	if (argc > 1 && !JS_IsNull(argv[1]) && !JS_IsUndefined(argv[1]))
+		dep_name = JS_ToCString(ctx, argv[1]);
+
+	(void)JS_ToInt32(ctx, &event_type, argv[2]);
+	if (argc > 3)
+		(void)JS_ToInt32(ctx, &reason, argv[3]);
+	if (argc > 4)
+		(void)JS_ToInt32(ctx, &depth, argv[4]);
+	if (argc > 5)
+		(void)JS_ToInt32(ctx, &wait_id, argv[5]);
+
+	if (name != NULL) {
+		extern void ms_diag_module_record_by_name(const char *name,
+			const char *dep_name, int event_type, int reason, int depth,
+			unsigned long wait_id);
+		ms_diag_module_record_by_name(name, dep_name, event_type, reason, depth,
+			(unsigned long)wait_id);
+		JS_FreeCString(ctx, name);
+	}
+	if (dep_name != NULL)
+		JS_FreeCString(ctx, dep_name);
+
+	return JS_UNDEFINED;
+}
+
+/* IntersectionObserver Trace v1: native bridge for __msIOEvent(io_id, ev_type, target_name, x, y, w, h, intersecting, ratio_pct, entries) */
+static JSValue qjs_ms_io_event(JSContext *ctx,
+	JSValueConst this_val, int argc, JSValueConst *argv)
+{
+	int io_id = 0, ev_type = 0, intersecting = 0, ratio_pct = 0, entries = 0;
+	int x = 0, y = 0, w = 0, h = 0;
+	const char *target_name = NULL;
+
+	(void)this_val;
+	if (argc < 2) return JS_UNDEFINED;
+
+	(void)JS_ToInt32(ctx, &io_id, argv[0]);
+	(void)JS_ToInt32(ctx, &ev_type, argv[1]);
+	if (argc > 2 && !JS_IsNull(argv[2]) && !JS_IsUndefined(argv[2]))
+		target_name = JS_ToCString(ctx, argv[2]);
+	if (argc > 3) (void)JS_ToInt32(ctx, &x, argv[3]);
+	if (argc > 4) (void)JS_ToInt32(ctx, &y, argv[4]);
+	if (argc > 5) (void)JS_ToInt32(ctx, &w, argv[5]);
+	if (argc > 6) (void)JS_ToInt32(ctx, &h, argv[6]);
+	if (argc > 7) (void)JS_ToInt32(ctx, &intersecting, argv[7]);
+	if (argc > 8) (void)JS_ToInt32(ctx, &ratio_pct, argv[8]);
+	if (argc > 9) (void)JS_ToInt32(ctx, &entries, argv[9]);
+
+	ms_diag_io_record((unsigned long)io_id, ev_type, target_name,
+		(long)x, (long)y, (long)w, (long)h, intersecting, ratio_pct, entries);
+
+	if (target_name != NULL)
+		JS_FreeCString(ctx, target_name);
+
+	return JS_UNDEFINED;
+}
+
+/* The IO shim arms this one-shot expectation immediately before setTimeout.
+ * Native allocation consumes it, avoiding JS wrapper/public timer handles. */
+static JSValue qjs_ms_io_timer(JSContext *ctx,
+	JSValueConst this_val, int argc, JSValueConst *argv)
+{
+	int io_id = 0, i = 0, slot = -1;
+	const char *target_name = NULL;
+	struct qjs_io_timer_expect *expect;
+	(void)this_val;
+	if (argc < 2) return JS_UNDEFINED;
+	(void)JS_ToInt32(ctx, &io_id, argv[0]);
+	if (!JS_IsNull(argv[1]) && !JS_IsUndefined(argv[1]))
+		target_name = JS_ToCString(ctx, argv[1]);
+	for (i = 0; i < QJS_IO_TIMER_EXPECT_CAP; i++)
+		if (s_io_timer_expects[i].ctx == NULL) { slot = i; break; }
+	if (slot < 0) {
+		unsigned long oldest = 0;
+		slot = 0;
+		for (i = 0; i < QJS_IO_TIMER_EXPECT_CAP; i++)
+			if (oldest == 0 || s_io_timer_expects[i].seq < oldest) {
+				oldest = s_io_timer_expects[i].seq;
+				slot = i;
+			}
+	}
+	expect = &s_io_timer_expects[slot];
+	memset(expect, 0, sizeof(*expect));
+	expect->ctx = ctx;
+	expect->ctx_gen = qjs_ctx_gen(ctx);
+	expect->io_id = (unsigned long)io_id;
+	expect->seq = ++s_io_timer_expect_seq;
+	if (s_io_timer_expect_seq == 0) expect->seq = ++s_io_timer_expect_seq;
+	ms_diag_io_timer_expect(expect->io_id, target_name);
+	i = 0;
+	if (target_name != NULL) while (target_name[i] != '\0' &&
+		i < QJS_IO_TIMER_TARGET_CAP - 1) {
+		expect->target[i] = target_name[i]; i++;
+	}
+	expect->target[i] = '\0';
+	if (target_name != NULL) JS_FreeCString(ctx, target_name);
+	return JS_UNDEFINED;
+}
+
+/* Browser API attempts that occur before a native request exists.  JS returns
+ * the opaque id to its fetch/XHR shim; later native events join on it. */
+static JSValue qjs_ms_operation_begin(JSContext *ctx,
+	JSValueConst this_val, int argc, JSValueConst *argv)
+{
+	int kind = MS_OP_FETCH;
+	(void)this_val;
+	if (argc > 0) (void)JS_ToInt32(ctx, &kind, argv[0]);
+	return JS_NewInt32(ctx, (int32_t)ms_diag_operation_begin(kind,
+		MS_ANSWER_NATIVE));
+}
+
+static JSValue qjs_ms_operation_event(JSContext *ctx,
+	JSValueConst this_val, int argc, JSValueConst *argv)
+{
+	int32_t op = 0, kind = 0, phase = 0, result = 0, reason = 0, quality = 0;
+	int32_t req = 0;
+	(void)this_val;
+	if (argc < 6) return JS_UNDEFINED;
+	(void)JS_ToInt32(ctx, &op, argv[0]);
+	(void)JS_ToInt32(ctx, &kind, argv[1]);
+	(void)JS_ToInt32(ctx, &phase, argv[2]);
+	(void)JS_ToInt32(ctx, &result, argv[3]);
+	(void)JS_ToInt32(ctx, &reason, argv[4]);
+	(void)JS_ToInt32(ctx, &quality, argv[5]);
+	if (argc > 6) (void)JS_ToInt32(ctx, &req, argv[6]);
+	ms_diag_operation_record((unsigned long)op, kind, phase, result, reason,
+		quality, (unsigned long)req);
+	return JS_UNDEFINED;
+}
+
+static JSValue qjs_ms_error_event(JSContext *ctx,
+	JSValueConst this_val, int argc, JSValueConst *argv)
+{
+	int32_t op = 0, req = 0, kind = 0, boundary = 0, reason = 0;
+	const char *name = NULL;
+	const char *message = NULL;
+	(void)this_val;
+	if (argc < 5) return JS_UNDEFINED;
+	(void)JS_ToInt32(ctx, &op, argv[0]);
+	(void)JS_ToInt32(ctx, &req, argv[1]);
+	(void)JS_ToInt32(ctx, &kind, argv[2]);
+	(void)JS_ToInt32(ctx, &boundary, argv[3]);
+	(void)JS_ToInt32(ctx, &reason, argv[4]);
+	if (argc > 5 && !JS_IsNull(argv[5]) && !JS_IsUndefined(argv[5]))
+		name = JS_ToCString(ctx, argv[5]);
+	if (argc > 6 && !JS_IsNull(argv[6]) && !JS_IsUndefined(argv[6]))
+		message = JS_ToCString(ctx, argv[6]);
+	ms_diag_error_record((unsigned long)op, (unsigned long)req, kind,
+		boundary, reason, name, message);
+	if (name != NULL) JS_FreeCString(ctx, name);
+	if (message != NULL) JS_FreeCString(ctx, message);
+	return JS_UNDEFINED;
+}
+
+static JSValue qjs_ms_capability(JSContext *ctx, JSValueConst this_val,
+	int argc, JSValueConst *argv)
+{
+	int domain = 0, operation = 0, result = 0, quality = 0;
+	const char *name = NULL;
+	struct ms_diag_error_provenance ep;
+	(void)this_val;
+	if (argc < 5) return JS_UNDEFINED;
+	qjs_error_capture_realm(ctx, &ep);
+	(void)JS_ToInt32(ctx, &domain, argv[0]);
+	(void)JS_ToInt32(ctx, &operation, argv[1]);
+	name = JS_ToCString(ctx, argv[2]);
+	(void)JS_ToInt32(ctx, &result, argv[3]);
+	(void)JS_ToInt32(ctx, &quality, argv[4]);
+	ms_diag_capability_hit(domain, operation, name, result, quality);
+	if (name != NULL) JS_FreeCString(ctx, name);
+	return JS_UNDEFINED;
+}
+
 static JSValue qjs_crypto_random_uuid(JSContext *ctx,
 	JSValueConst this_val, int argc, JSValueConst *argv)
 {
@@ -10843,6 +11626,16 @@ static void register_browser_globals(JSContext *ctx)
 	qjs_set_func(ctx, global, "__msLife",    qjs_ms_life, 1); /* fixes1015 */
 	qjs_set_func(ctx, global, "__msScript",  qjs_ms_current_script, 0); /* fixes1312 */
 	qjs_set_func(ctx, global, "__msRafFired", qjs_raf_fired, 0); /* fixes1236 */
+	qjs_set_func(ctx, global, "__msModEvent", qjs_ms_mod_event, 6); /* Module Trace v2 */
+	qjs_set_func(ctx, global, "__msIOEvent",  qjs_ms_io_event, 10); /* IO Trace v1 */
+	qjs_set_func(ctx, global, "__msIOTimer",  qjs_ms_io_timer, 3);
+	qjs_set_func(ctx, global, "__msOperationBegin", qjs_ms_operation_begin, 1);
+	qjs_set_func(ctx, global, "__msOperationEvent", qjs_ms_operation_event, 7);
+	qjs_set_func(ctx, global, "__msErrorEvent", qjs_ms_error_event, 7);
+	qjs_set_func(ctx, global, "__msCallbackError", qjs_callback_error, 1);
+	qjs_set_func(ctx, global, "__msAsyncListenerEnter", qjs_async_listener_enter, 1);
+	qjs_set_func(ctx, global, "__msAsyncListenerLeave", qjs_async_listener_leave, 2);
+	qjs_set_func(ctx, global, "__msCapability", qjs_ms_capability, 5);
 	/* localStorage persistence backend, consumed by the _Storage shim
 	 * below (register_browser_globals runs per navigation, so the saved
 	 * map is reloaded on every realm build). */
@@ -11674,7 +12467,7 @@ static void register_browser_globals(JSContext *ctx)
 			   "t==='pageshow'){"
 				"try{if(typeof __msLife==='function')"
 					"__msLife('winevt type='+t+' n='+n);}catch(_){}}"
-			"if(arr)arr.forEach(function(f){try{f(ev);}catch(e){"
+			"if(arr)arr.forEach(function(f){try{f(ev);}catch(e){__msCallbackError(false);"
 				"try{if(typeof __msLife==='function')"
 					"__msLife('winevt THREW type='+t+': '+"
 						"((e&&e.name)?(e.name+': '):'')+((e&&e.message)||e)+(e&&e.stack?(' STACK: '+e.stack):''));}catch(_){}"
@@ -12012,9 +12805,9 @@ static void register_browser_globals(JSContext *ctx)
 		"};"
 		"XMLHttpRequest.prototype._fire=function(type){"
 			"var t='on'+type;"
-			"if(typeof this[t]==='function'){try{this[t]();}catch(e){}}"
+			"if(typeof this[t]==='function'){try{this[t]();}catch(e){__msCallbackError(true);}}"
 			"var a=this._listeners[type];"
-			"if(a)for(var i=0;i<a.length;i++){try{a[i]();}catch(e){}}"
+			"if(a)for(var i=0;i<a.length;i++){try{a[i]();}catch(e){__msCallbackError(true);}}"
 		"};"
 		"XMLHttpRequest.prototype.__onNativeComplete=function(){"
 			"var ok=this.status>=200&&this.status<300;"
@@ -14569,9 +15362,19 @@ static void qjs_promise_rejection_tracker(JSContext *ctx, JSValueConst promise,
 		JSValueConst reason, bool is_handled, void *opaque)
 {
 	const char *msg;
+	struct ms_diag_error_provenance ep;
 	(void)promise; (void)opaque;
 	if (is_handled) return;
+	ms_diag_js_event_hit(MS_JS_EVENT_PROMISE_REJECTION);
+	ms_diag_promise_rejection_hit(1);
+	/* Tracker reports rejection now; no origin is exposed for queued jobs. */
+	qjs_error_capture_realm(ctx, &ep);
 	msg = JS_ToCString(ctx, reason);
+	/* Source/script are unavailable; the tracker supplies only the realm. */
+	ms_diag_error_record_ex(0, 0,
+		MS_FAIL_PROMISE_REJECTION, MS_PHASE_PROMISE, MS_BOUND_PROMISE,
+		&ep,
+		"UnhandledRejection", msg ? msg : "(no reason)");
 	macsurf_debug_log_writef("LIFE js unhandled rejection: %s",
 			msg ? msg : "(no reason)");
 	if (msg) JS_FreeCString(ctx, msg);
@@ -15108,6 +15911,8 @@ nserror js_newheap(int timeout, struct jsheap **out_heap)
 	 * earlier either: heap->ctx does not exist until qjs_build_context returns,
 	 * so linking sooner would not help -- the list keys on heap->ctx. */
 	heap->ctx_gen = g_ctx_gen_next++;
+	heap->heap_id = ++g_qjs_heap_id_seq;
+	if (g_qjs_heap_id_seq == 0) heap->heap_id = ++g_qjs_heap_id_seq;
 
 	heap->timeout = timeout;
 
@@ -15219,8 +16024,12 @@ nserror js_newthread(struct jsheap *heap, void *win_priv, void *doc_priv,
 		 * by the "LIFE js src" line and the FBCR __d wrapper so both
 		 * can be diffed nav-by-nav. */
 		g_qjs_nav_seq++;
+		/* Must precede qjs_build_context(): global setup can synchronously
+		 * enter native bindings, and subsequent page script may queue work. */
+		qjs_document_identity_open(htmlc, win_priv);
 		html_content_set_diag_context((struct content *)htmlc,
 			(unsigned long)g_qjs_nav_seq, win_priv);
+		macsurf_qjs_realm_tearing_down(heap->ctx);
 		qjs_flush_timers(heap->ctx);
 		/* fixes846 (#167 S3) - same load-bearing ordering as the timer
 		 * flush above: abort every in-flight XHR and free its dup'd
@@ -15320,6 +16129,7 @@ nserror js_newthread(struct jsheap *heap, void *win_priv, void *doc_priv,
 		 * same access pattern as macsurf_js.c (Duktape). */
 		qjs_set_document(heap, htmlc->document);
 		qjs_set_content(heap, (struct content *)htmlc);
+		qjs_owner_refresh(heap->ctx, win_priv, htmlc);
 		/* Re-wire getElementById/querySelectorAll with real document now */
 		qjs_dom_install(heap->ctx);
 		MS_LOG("qjs: thread document wired");
@@ -15735,6 +16545,9 @@ unsigned char js_exec(struct jsthread *thread,
 	char *src;
 	struct ms_diag_scope diag_script_scope;
 	int diag_script_state = MS_SCR_DONE;
+	int compile_failed = 0;
+	long diag_c_us = 0;
+	long diag_r_us = 0;
 
 	/* fixes847 (#167 S1 census gap) - the other half of the js_exec
 	 * visibility fix below: if thread/ctx is NULL, js_exec bails before
@@ -16007,6 +16820,12 @@ unsigned char js_exec(struct jsthread *thread,
 		long c_us;
 		long r_us = 0;
 		JSValue fn;
+		unsigned long cur_sid = ms_diag_cur_script();
+		struct qjs_realm_identity r_id;
+
+		if (cur_sid != 0 && macsurf_qjs_realm_identity(thread->ctx, &r_id)) {
+			ms_diag_script_note_realm(cur_sid, r_id.realm_id, r_id.heap_id, r_id.ctx_gen);
+		}
 
 		qjs_task_push(MACSURF_JS_TASK_SCRIPT);
 		ms_diag_script_enter(&diag_script_scope,
@@ -16018,6 +16837,7 @@ unsigned char js_exec(struct jsthread *thread,
 				JS_EVAL_FLAG_COMPILE_ONLY);
 		t_mid = macos9_micros();
 		c_us = (long)(t_mid - t_js);
+		diag_c_us = c_us;
 		if (JS_IsException(fn)) {
 			diag_script_state = MS_SCR_COMPILE_FAIL;
 			/* Syntax error: fn IS the exception value, which is
@@ -16026,13 +16846,26 @@ unsigned char js_exec(struct jsthread *thread,
 			 * to before -- a failed compile must not start looking
 			 * like a different kind of failure. */
 			val = fn;
+			compile_failed = 1;
+			ms_diag_js_event_hit(MS_JS_EVENT_PARSE_FAILED);
 			/* R1.3 - compile failed; nothing ran. */
 			qjs_census_note(name, (long)txtlen, ctype,
 					0, 0, c_us, 0);
 		} else {
+			if (cur_sid != 0) {
+				ms_diag_script_note_compile(cur_sid, MS_COMPILE_OK, c_us, 0);
+			}
 			val = JS_EvalFunction(thread->ctx, fn);
 			if (JS_IsException(val)) diag_script_state = MS_SCR_RUN_FAIL;
 			r_us = (long)(macos9_micros() - t_mid);
+			diag_r_us = r_us;
+			if (JS_IsException(val)) {
+				ms_diag_js_event_hit(MS_JS_EVENT_RUNTIME_FAILED);
+			} else {
+				if (cur_sid != 0) {
+					ms_diag_script_note_execute(cur_sid, MS_EXEC_OK, r_us, 0);
+				}
+			}
 			/* R1.3 - compiled ok; ran to completion or threw. */
 			qjs_census_note(name, (long)txtlen, ctype,
 					JS_IsException(val) ? 0 : 1,
@@ -16046,8 +16879,29 @@ unsigned char js_exec(struct jsthread *thread,
 	free(src);
 	ok = !JS_IsException(val);
 	if (!ok) {
+		unsigned long err_id = 0;
+		unsigned long cur_sid = ms_diag_cur_script();
 		JSValue exc = JS_GetException(thread->ctx);
-		const char *estr = JS_ToCString(thread->ctx, exc);
+		const char *estr;
+		struct ms_diag_error_provenance ep;
+
+		ms_diag_error_capture_script(&ep);
+		estr = JS_ToCString(thread->ctx, exc);
+
+		err_id = ms_diag_error_record_ex(0, 0,
+			compile_failed ? MS_FAIL_PARSE_FAILED : MS_FAIL_RUNTIME_FAILED,
+			compile_failed ? MS_PHASE_COMPILE : MS_PHASE_EXECUTE,
+			MS_BOUND_SCRIPT,
+			&ep,
+			compile_failed ? "SyntaxError" : "Error",
+			estr ? estr : (compile_failed ? "Syntax error" : "Runtime error"));
+		if (cur_sid != 0) {
+			if (compile_failed) {
+				ms_diag_script_note_compile(cur_sid, MS_COMPILE_FAILED, diag_c_us, err_id);
+			} else {
+				ms_diag_script_note_execute(cur_sid, MS_EXEC_FAILED, diag_r_us, err_id);
+			}
+		}
 		/* fixes843b (#167 S1 census) - "err" (lowercase) never matched the
 		 * crash-only log gate's "ERROR" (uppercase) keyword, so every JS
 		 * exception on every page has been silently invisible in a normal
@@ -16182,36 +17036,69 @@ unsigned char js_exec_module(struct jsthread *thread,
 			name, src, txtlen);
 	}
 
-	/* Compile and execute as a module in one call (same pattern
-	 * as js_exec's JS_EVAL_TYPE_GLOBAL).  JS_EVAL_TYPE_MODULE
-	 * compiles with strict mode + import/export, resolves
-	 * dependencies via the loader callback, and executes. */
+	/* Preserve the compile/execute boundary just as for classic scripts.
+	 * QuickJS can return a Promise for module evaluation: its rejection
+	 * is a separate tracker occurrence, not a synchronous execution failure. */
 	{
 		extern double macos9_micros(void);
 		double t0 = macos9_micros();
 		long mus;
+		long compile_us;
+		int compile_failed;
+		JSValue compiled;
+		unsigned long cur_sid = ms_diag_cur_script();
+		struct qjs_realm_identity r_id;
+
+		if (cur_sid != 0 && macsurf_qjs_realm_identity(ctx, &r_id)) {
+			ms_diag_script_note_realm(cur_sid, r_id.realm_id, r_id.heap_id, r_id.ctx_gen);
+		}
+
 		qjs_task_push(MACSURF_JS_TASK_SCRIPT);
 		ms_diag_script_enter(&diag_script_scope,
 			(unsigned long)g_qjs_nav_seq, MS_SCRIPT_MODULE, name);
 		ms_diag_task_set_script(g_qjs_task_id, diag_script_scope.my_id);
-		val = JS_Eval(ctx, src, txtlen,
+		compiled = JS_Eval(ctx, src, txtlen,
 			name ? name : "<module>",
-			JS_EVAL_TYPE_MODULE);
+			JS_EVAL_TYPE_MODULE | JS_EVAL_FLAG_COMPILE_ONLY);
+		compile_us = (long)(macos9_micros() - t0);
+		compile_failed = JS_IsException(compiled);
+		if (compile_failed) {
+			val = compiled;
+			ms_diag_js_event_hit(MS_JS_EVENT_PARSE_FAILED);
+		} else {
+			ms_diag_script_note_compile(cur_sid, MS_COMPILE_OK, compile_us, 0);
+			val = JS_EvalFunction(ctx, compiled);
+			if (JS_IsException(val))
+				ms_diag_js_event_hit(MS_JS_EVENT_RUNTIME_FAILED);
+		}
 		free(src);
 
 		ok = !JS_IsException(val);
 		if (!ok) diag_script_state = MS_SCR_RUN_FAIL;
 		mus = (long)(macos9_micros() - t0);
-		/* R1.3 - a module is compiled, resolved and executed in the one
-		 * JS_Eval call, so a failure cannot be attributed to a phase
-		 * here; the whole time lands in run_us. */
+		/* Keep the existing census totals; the execution ledger has split timings. */
 		qjs_census_note(name, (long)txtlen, SCRIPT_CENSUS_MODULE,
 				ok ? 1 : 0, ok ? 1 : 0, 0, mus);
 		if (!ok) {
+			unsigned long err_id;
 			JSValue exc = JS_GetException(ctx);
-			qjs_log_exc(ctx, exc, "exec module err",
-				name ? name : "<module>");
+			struct ms_diag_error_provenance ep;
+			ms_diag_error_capture_script(&ep);
+			err_id = qjs_log_exc_record(ctx, exc, "exec module err", name,
+				&ep, compile_failed ? MS_FAIL_PARSE_FAILED : MS_FAIL_RUNTIME_FAILED,
+				compile_failed ? MS_PHASE_COMPILE : MS_PHASE_EXECUTE, MS_BOUND_MODULE);
+			if (cur_sid != 0) {
+				if (compile_failed)
+					ms_diag_script_note_compile(cur_sid, MS_COMPILE_FAILED, compile_us, err_id);
+				else
+					ms_diag_script_note_execute(cur_sid, MS_EXEC_FAILED, mus - compile_us, err_id);
+			}
 			JS_FreeValue(ctx, exc);
+		} else {
+			if (cur_sid != 0) {
+				ms_diag_script_note_compile(cur_sid, MS_COMPILE_OK, compile_us, 0);
+				ms_diag_script_note_execute(cur_sid, MS_EXEC_OK, mus - compile_us, 0);
+			}
 		}
 		JS_FreeValue(ctx, val);
 		macsurf_debug_log_writef(
@@ -16540,6 +17427,7 @@ unsigned char js_fire_script_load(struct jsthread *thread,
 	JSContext *ctx;
 	JSValue fn, el, args[2], ret;
 
+	if (!ok) ms_diag_js_event_hit(MS_JS_EVENT_SCRIPT_LOAD_FAILED);
 	if (thread == NULL || thread->ctx == NULL || node == NULL) return 0;
 	/* fixes1293 - Validate thread liveness before dispatching. */
 	{

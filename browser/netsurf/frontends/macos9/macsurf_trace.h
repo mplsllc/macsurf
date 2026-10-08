@@ -3,7 +3,7 @@
  *
  * MacSurf Trace: the compact universal event ring. Dev-mode only -- nothing is
  * recorded unless the ring is armed via `MSdg GET tracestart`. Every entry is
- * pointer-free integers: a timestamp, the live causal ids (pulled from
+ * pointer-free integers: a per-capture sequence number, a timestamp, the live causal ids (pulled from
  * macsurf_diag's ambient scope), a category/event/state/reason tuple, and a
  * two-slot u32 payload (`a`/`b`) for category-specific values (old/new bits,
  * mutation count, job count, ...). No strings, no formatting, no log write on
@@ -27,6 +27,7 @@ enum ms_trace_cat {
 	MS_TC_LAYOUT,
 	MS_TC_PAINT,
 	MS_TC_ERROR,
+	MS_TC_LIFETIME,
 	MS_TC__N
 };
 
@@ -50,7 +51,11 @@ enum ms_trace_ev {
 	MS_TE_LAYOUT_FAIL,
 	MS_TE_PAINT_INVALIDATE,
 	MS_TE_PAINT_BEGIN,
-	MS_TE_PAINT_DONE
+	MS_TE_PAINT_DONE,
+	/* Death-row lifecycle: a=the frozen pin-key generation, b=pin passes. */
+	MS_TE_DEATHROW_QUEUE,
+	MS_TE_DEATHROW_PIN,
+	MS_TE_DEATHROW_FREE
 };
 
 /* Arm/disarm. cat_mask is a bitmask of (1u << enum ms_trace_cat); pass 0 to
@@ -75,7 +80,15 @@ void macsurf_trace_emit_with_provenance(int cat, int event, int state,
 	int reason, const struct ms_diag_provenance *prov,
 	unsigned long a, unsigned long b);
 
-/* `MSdg GET trace`: newest-first dump of the ring (or a "disarmed" note). */
+/* `MSdg GET trace`: backwards-compatible dump of the current trace window.
+ *
+ * `MSdg GET trace after=<event_seq> limit=<n>` is the host-drained v2
+ * flight-recorder interface.  It emits events in chronological order, never
+ * hides an overwritten range, and says when the reply capacity stopped a page
+ * early.  The caller resumes from the returned `next_after` value.
+ */
 long macsurf_trace_serialize(char *buf, long cap);
+long macsurf_trace_serialize_since(char *buf, long cap,
+	unsigned long after, unsigned long limit);
 
 #endif /* MACSURF_TRACE_H */

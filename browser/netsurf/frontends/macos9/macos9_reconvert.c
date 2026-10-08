@@ -23,6 +23,10 @@
  * This is part of MacSurf, built on the NetSurf engine. Licensed under GPL v2.
  */
 
+/* Diagnostic CONTROL_RECONVERT_OFF remains available by defining
+ * MACSURF_RECONVERT_DISABLED in the CodeWarrior target.  Do not force it
+ * in-source on the implementation branch. */
+
 #include <string.h>
 
 #include "macos9.h"
@@ -43,6 +47,14 @@ extern void html_content_get_diag_identity(struct content *, unsigned long *,
 	unsigned long *);
 /* fixes1094 (#265 Round B) - see html.c. */
 extern int macsurf_html_has_droppable_inflight(struct content *c);
+/* The harness stub macos9.h does not define struct gui_window; declare it at
+ * file scope so the block-scope externs below agree on ONE type. */
+struct gui_window;
+extern struct hlcache_handle *browser_window_get_content(
+		struct browser_window *bw);
+/* macos9 frontend window accessors (window.c). */
+extern struct gui_window *macos9_window_list_head(void);
+extern struct browser_window *macos9_gw_bw(struct gui_window *g);
 
 /* Debounce: fire this long after the last DOM mutation. ~24 ticks at 60Hz. */
 #define RECONVERT_DEBOUNCE_MS	400
@@ -209,6 +221,57 @@ extern int macos9_content_token_valid(struct content *c, unsigned long token);
 #define macos9_content_token(c) (1UL)
 #define macos9_content_token_valid(c, t) (1)
 #endif
+
+/* stabilization/reconvert-rework: class/style invalidations live in a
+ * separate bounded queue. They can never be consumed by flush_now(), so a
+ * geometry read cannot turn cosmetic churn into a whole-document rebuild. */
+#define RECONVERT_MAX_COSMETIC 32
+#define RECONVERT_COSMETIC_DEBOUNCE_MS 80
+struct macos9_cosmetic_pending {
+	struct content *c;
+	unsigned long token;
+	void *node;
+	int kind;
+};
+static struct macos9_cosmetic_pending g_cosmetic[RECONVERT_MAX_COSMETIC];
+
+static void
+macos9_cosmetic_clear(int i)
+{
+	if (g_cosmetic[i].node != NULL)
+		macsurf_reconvert_node_unref(g_cosmetic[i].node);
+	g_cosmetic[i].c = NULL;
+	g_cosmetic[i].token = 0;
+	g_cosmetic[i].node = NULL;
+	g_cosmetic[i].kind = MACOS9_DOMMUT_UNKNOWN;
+}
+
+static void
+macos9_cosmetic_add(struct content *c, void *node, int kind)
+{
+	int i;
+	int free_slot = -1;
+
+	if (c == NULL || node == NULL)
+		return;
+	for (i = 0; i < RECONVERT_MAX_COSMETIC; i++) {
+		if (g_cosmetic[i].c == c && g_cosmetic[i].node == node &&
+		    g_cosmetic[i].kind == kind) {
+			g_cosmetic[i].token = macos9_content_token(c);
+			return;
+		}
+		if (g_cosmetic[i].c == NULL && free_slot < 0)
+			free_slot = i;
+	}
+	/* Cosmetic overflow is deliberately lossy. Never escalate paint/style
+	 * backlog into the full-document transaction we are trying to remove. */
+	if (free_slot < 0)
+		return;
+	g_cosmetic[free_slot].c = c;
+	g_cosmetic[free_slot].token = macos9_content_token(c);
+	g_cosmetic[free_slot].node = macsurf_reconvert_node_ref(node);
+	g_cosmetic[free_slot].kind = kind;
+}
 
 /*
  * fixes925 (census) - WHAT KIND of DOM mutation are real pages actually doing?
@@ -755,9 +818,13 @@ macos9_reconvert_flush_now(void *cv)
 	 * the safety argument there. This is the window `notdone` was counting
 	 * (565 of 1247 declines on hardware) and the one the featured slider
 	 * measures in. */
-	if (c->status != CONTENT_STATUS_LOADING &&
-	    c->status != CONTENT_STATUS_READY &&
-	    c->status != CONTENT_STATUS_DONE) {
+	/* stabilization/reconvert-rework: never tear down/rebuild the box tree
+	 * while the initial document is still loading or merely READY.  The OFF
+	 * control proved that reconvert is the destabilizing variable, and the
+	 * startup crash family is especially sensitive to rebuilding while object
+	 * callbacks and initial JS are still active.  Geometry therefore declines
+	 * until DONE instead of forcing a synchronous full reconvert. */
+	if (c->status != CONTENT_STATUS_DONE) {
 		g_sync_r_notdone++; g_sync_declined++; return 0;
 	}
 	if (c->active > 0 && macsurf_html_has_droppable_inflight(c)) {
@@ -824,6 +891,67 @@ macos9_reconvert_flush_now(void *cv)
 }
 
 
+/* The live front-window HTML content, or NULL. Never derefs a stale pointer. */
+static struct content *
+macos9_reconvert_front_content(void)
+{
+	struct gui_window *gw;
+	struct browser_window *bw;
+	struct hlcache_handle *h;
+
+	gw = macos9_window_list_head();
+	if (gw == NULL)
+		return NULL;
+	bw = macos9_gw_bw(gw);
+	if (bw == NULL)
+		return NULL;
+	h = browser_window_get_content(bw);
+	if (h == NULL)
+		return NULL;
+	if (content_get_type(h) != CONTENT_HTML)
+		return NULL;
+	return hlcache_handle_get_content(h);
+}
+
+static int
+macos9_process_cosmetic_pending(void)
+{
+	int i;
+	int remain = 0;
+	extern int html_reconvert_fast_style(struct content *c, void *node);
+	extern int html_reconvert_fast_inherited_color(struct content *c,
+		void *node);
+	extern struct gui_window *macos9_paint_gw;
+	extern int macsurf_reconvert_in_progress;
+
+	for (i = 0; i < RECONVERT_MAX_COSMETIC; i++) {
+		struct content *c = g_cosmetic[i].c;
+		int rc;
+		if (c == NULL)
+			continue;
+		if (!macos9_content_is_live(c) ||
+		    !macos9_content_token_valid(c, g_cosmetic[i].token)) {
+			macos9_cosmetic_clear(i);
+			continue;
+		}
+		if (c->status != CONTENT_STATUS_DONE || c->active != 0 ||
+		    macos9_paint_gw != NULL || macsurf_reconvert_in_progress != 0) {
+			remain = 1;
+			continue;
+		}
+		rc = html_reconvert_fast_style(c, g_cosmetic[i].node);
+		if (rc != 0)
+			rc = html_reconvert_fast_inherited_color(c,
+				g_cosmetic[i].node);
+		/* Geometry/topology differences intentionally do NOT fall back to
+		 * html_reconvert_content(). The DOM remains authoritative and a later
+		 * structural rebuild incorporates the change. */
+		(void) rc;
+		macos9_cosmetic_clear(i);
+	}
+	return remain;
+}
+
 static void
 macos9_reconvert_cb(void *p)
 {
@@ -844,6 +972,9 @@ macos9_reconvert_cb(void *p)
 	(void) p;	/* dedup key only - value is never dereferenced */
 
 	now = (unsigned long) TickCount();
+
+	if (macos9_process_cosmetic_pending())
+		busy = 1;
 
 	/* R1.4 - defer diagnostic. A batch whose mark-to-fire window grew well
 	 * past the base debounce (cosmetic cadence escalation to 6400ms, floor
@@ -900,6 +1031,15 @@ macos9_reconvert_cb(void *p)
 			continue;
 		}
 
+		/* stabilization/reconvert-rework: structural reconvert is only
+		 * allowed after the document reaches DONE.  Marks that arrive during
+		 * load remain coalesced in this slot and are retried later; we never
+		 * destroy the live box tree underneath initial layout/object/JS work. */
+		if (c->status != CONTENT_STATUS_DONE) {
+			busy = 1;
+			continue;
+		}
+
 		/* fixes1135 - cosmetic-only batch: if we have already run
 		 * MAX_CONSECUTIVE cosmetic rebuilds in a row without a
 		 * structural mutation, suppress this one. The timer-driven
@@ -926,11 +1066,15 @@ macos9_reconvert_cb(void *p)
 			 * a real fallback reconvert.  Never suppress it merely because
 			 * two earlier cosmetic batches ran: a multi-style batch can
 			 * contain geometry (for example parent colour plus child width).
-			 * Keep the animation-churn cap for the unsupported precise class
-			 * case only. */
+			 *
+			 * A class-only timer batch is different.  Its pending slot becomes
+			 * multi as soon as it touches a second node, but that is still the
+			 * cosmetic loop fixes1135 was meant to cap.  Requiring multi == 0
+			 * accidentally let the 68kmla scroll handler rebuild the whole
+			 * document for every 2-4 class changes. */
 			if (!any_structural &&
-			    g_pending[i].multi == 0 &&
 			    g_pending[i].kind == MACOS9_DOMMUT_SETATTR_CLASS &&
+			    g_mut_counts[MACOS9_DOMMUT_SETATTR_STYLE] == 0 &&
 			    g_consecutive_cosmetic >=
 			    RECONVERT_COSMETIC_MAX_CONSECUTIVE) {
 				macsurf_debug_log_writef(
@@ -1057,6 +1201,30 @@ macos9_reconvert_cb(void *p)
 				g_consecutive_cosmetic++;
 			else
 				g_consecutive_cosmetic = 0;
+
+			/* Cadence is a property of the completed batch, not of each
+			 * individual DOM write.  A scroll handler can toggle several
+			 * classes in one synchronous turn; advancing here prevents that
+			 * one turn from multiplying 400ms through to 6400ms before its
+			 * first reconvert has even run. */
+			if (!any_structural) {
+				if (g_reconvert_debounce_ms < RECONVERT_DEBOUNCE_MAX_MS) {
+					g_reconvert_debounce_ms *= 2;
+					if (g_reconvert_debounce_ms >
+						RECONVERT_DEBOUNCE_MAX_MS) {
+						g_reconvert_debounce_ms =
+							RECONVERT_DEBOUNCE_MAX_MS;
+					}
+					if (g_reconvert_debounce_ms ==
+						RECONVERT_DEBOUNCE_MAX_MS)
+						macsurf_debug_log_writef(
+							"LIFE reconvert cosmetic-only, debounce "
+							"capped at %dms",
+							g_reconvert_debounce_ms);
+				}
+			} else {
+				g_reconvert_debounce_ms = RECONVERT_DEBOUNCE_MS;
+			}
 		}
 
 		/* fixes925 - dump the census for the batch this reconvert answers.
@@ -1106,12 +1274,54 @@ macos9_js_mark_dom_dirty(struct content *c)
 void
 macos9_js_mark_dom_dirty_node(struct content *c, void *node, int kind)
 {
+	struct ms_diag_provenance ms_prov;	/* MacSurf Trace 1c */
+
 	/* fixes489 - master switch. Still here as an emergency global
 	 * kill (macsurf_js_set_reconvert_enabled(0)); nothing currently calls
 	 * the setter, so it stays at its compiled-in default (armed - see
 	 * fixes843 below) unless a future round wires an explicit override. */
 	if (!g_reconvert_enabled)
 		return;
+
+#ifdef MACSURF_RECONVERT_DISABLED
+	/* DIAGNOSTIC A/B EXPERIMENT - CONTROL_RECONVERT_OFF.
+	 *
+	 * This build suppresses the entire JS-driven reconvert transaction.
+	 * DOM mutations still occur; JS, timers, events, networking, and
+	 * navigation are all fully operational.  The independent variable is
+	 * RECONVERT ON vs RECONVERT OFF; nothing else differs.
+	 *
+	 * Gate placement: BEFORE macos9_reconvert_pending_add() and before
+	 * macos9_schedule(), so no pending slot is allocated, no dom_node ref
+	 * is taken, and no callback is queued.  No dirty state, no lifetime
+	 * exposure.  The initial document conversion (html_reconvert_content
+	 * called directly by html.c, not through this file) is NOT affected.
+	 *
+	 * Log once per session; not per mutation. */
+	{
+		static int s_disabled_logged = 0;
+		if (!s_disabled_logged) {
+			s_disabled_logged = 1;
+			macsurf_debug_log_writef("LIFE RECONVERT DISABLED");
+		}
+	}
+	(void) node; (void) kind; (void) c; (void) ms_prov;
+	return;
+#endif /* MACSURF_RECONVERT_DISABLED */
+
+	/* Class/style writes use the incremental queue only. They never enter the
+	 * full-reconvert pending table and therefore never trigger a document
+	 * rebuild merely because targeted styling declines. */
+	if (macos9_reconvert_kind_is_cosmetic(kind)) {
+		extern int macos9_sched_is_queued(
+			void (*callback)(void *p), void *p);
+		macos9_cosmetic_add(c, node, kind);
+		if (!macos9_sched_is_queued(macos9_reconvert_cb, NULL)) {
+			(void) macos9_schedule(RECONVERT_COSMETIC_DEBOUNCE_MS,
+				macos9_reconvert_cb, NULL);
+		}
+		return;
+	}
 
 	/* fixes874 (#303) - the facebook.com-family allow-list that used to sit
 	 * here is GONE. JS-mutated DOM now repaints on every site.
@@ -1156,29 +1366,33 @@ macos9_js_mark_dom_dirty_node(struct content *c, void *node, int kind)
 	}
 	g_mut_total++;
 
-	/* fixes1024 - cadence control, decided by WHAT changed. */
-	if (macos9_reconvert_kind_is_cosmetic(kind)) {
-		if (g_reconvert_debounce_ms < RECONVERT_DEBOUNCE_MAX_MS) {
-			g_reconvert_debounce_ms *= 2;
-			if (g_reconvert_debounce_ms > RECONVERT_DEBOUNCE_MAX_MS)
-				g_reconvert_debounce_ms =
-					RECONVERT_DEBOUNCE_MAX_MS;
-			/* fixes1032 - log only on reaching the CAP. The
-			 * cosmetic/structural pair flapped 108 times in one
-			 * session, which is 108 flushed writes to say the
-			 * cadence is working. */
-			if (g_reconvert_debounce_ms == RECONVERT_DEBOUNCE_MAX_MS)
-				macsurf_debug_log_writef(
-					"LIFE reconvert cosmetic-only, debounce "
-					"capped at %dms", g_reconvert_debounce_ms);
-		}
-	} else if (g_reconvert_debounce_ms != RECONVERT_DEBOUNCE_MS) {
-		g_reconvert_debounce_ms = RECONVERT_DEBOUNCE_MS;   /* silent */
+	/* MacSurf Trace 1c: freeze the causal tuple HERE, at mutation time. The
+	 * debounced callback fires ~400ms+ later and must NEVER ask "what task
+	 * is running now" (R3). nav is birth-stamped on the content; script/task
+	 * come from the live execution scope. */
+	{
+		extern unsigned long content_get_nav_id(struct content *c);
+		extern unsigned long html_content_get_doc_id(struct content *c);
+		extern unsigned long html_content_get_frame_id(struct content *c);
+		unsigned long ms_cur_nav = ms_diag_cur_nav();
+		ms_prov.nav = (ms_cur_nav != 0) ? ms_cur_nav
+			: content_get_nav_id(c);
+		ms_prov.frame = html_content_get_frame_id(c);
+		ms_prov.doc = html_content_get_doc_id(c);
+		ms_prov.script = ms_diag_cur_script();
+		ms_prov.task = ms_diag_cur_task();
+		ms_prov.batch = 0;
+		ms_prov.pass = 0;
 	}
-	/* fixes1135 -- structural mutation resets the cosmetic-suppression
-	 * counter so the page can converge after the animation stops. */
-	if (!macos9_reconvert_kind_is_cosmetic(kind))
+
+	/* Cosmetic cadence advances only when the pending batch completes.
+	 * Doing so per mark makes one six-class scroll callback wait 6400ms
+	 * instead of the intended initial 400ms.  Structural changes still end
+	 * a cosmetic run immediately, so the following batch starts normally. */
+	if (!macos9_reconvert_kind_is_cosmetic(kind)) {
+		g_reconvert_debounce_ms = RECONVERT_DEBOUNCE_MS;
 		g_consecutive_cosmetic = 0;
+	}
 
 	/* R1.4 - start the batch clock on the first mark of a batch. A
 	 * non-zero tick means a batch is in flight, so later marks in the

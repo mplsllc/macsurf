@@ -140,6 +140,22 @@ pipeline, everything in this section down to the rebuild happens without you —
 but adding a *new* `.c` file to the CodeWarrior project is still manual, and
 always will be.) On the Mac side, the file gets unpacked into the source tree, and if you've added a *new* `.c` file it has to be added to the CodeWarrior project by hand — CodeWarrior does not auto-discover source files. Before rebuilding after any file change, the project needs **"Remove Object Code"** run first so CodeWarrior recompiles everything cleanly; a header-only edit in particular won't trigger a rebuild of the `.c` files that include it unless you force it. The mechanics of the Mac-side build, the project file list, and the access-path structure all live in [CodeWarrior Project Settings](CodeWarrior-Project-Settings) and [Building MacSurf](Building-MacSurf).
 
+### Macro-inclusion dependency audit
+
+For a source whose storage or tables are emitted by an included macro list,
+inspect that target file's recorded prerequisites whenever the list changes.
+`Bring Up To Date` can only follow those recorded edges. If the header edge is
+absent, explicitly compile the existing owner, then Bring Up To Date and link.
+
+This was established by the Phase 2 diagnostic build: `utils/corestrings.c`
+was already present and linked, but had no `corestringlist.h` prerequisite.
+Adding `__ns_key_diag_node_id` to that macro list required compiling
+`corestrings.c` so it emitted the new DOM corestring symbol. No project
+membership, basename, access-path, or local duplicate-definition change was
+appropriate. Apply the same audit to generated tables, registries, and other
+generated-by-inclusion sources; compile the one confirmed owner rather than
+starting with a whole-project clean.
+
 When something behaves wrong after a transfer, resist the urge to blame the transfer. A correctly converted, correctly copied file is what it is; if the symptom looks like staleness, the real cause is almost always in the code — a missing include, a mismatched guard, a wrong field path — and that's where the time is best spent. [Diagnostics & Debugging](Diagnostics-and-Debugging) covers the file-backed log and the crash-reading techniques that find those real causes, and [Contributing & Expanding](Contributing-and-Expanding) covers the regression-audit habits that keep a change from quietly breaking something three files away.
 
 ## Sources

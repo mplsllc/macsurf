@@ -37,6 +37,7 @@
 
 #include "content/mimesniff.h"
 #include "content/hlcache.h"
+#include "content/macsurf_nav_seed.h"
 // Note, this is *ONLY* so that we can abort cleanly during shutdown of the cache
 #include "content/content_protected.h"
 #include "content/content_factory.h"
@@ -135,6 +136,26 @@ struct hlcache_s {
 /** high level cache state */
 static struct hlcache_s *hlcache = NULL;
 
+/* MacSurf Trace 1a: hlcache-boundary seed for the TOP-LEVEL document retrieve
+ * (child fetches carry nav_id on hlcache_child_context instead). One-shot:
+ * set immediately before hlcache_handle_retrieve, consumed at its first line. */
+static unsigned long ms_hlcache_seed_nav;
+static int ms_hlcache_seed_valid;
+
+void macsurf_hlcache_seed_nav(unsigned long nav_id)
+{
+	ms_hlcache_seed_nav = nav_id;
+	ms_hlcache_seed_valid = 1;
+}
+
+unsigned long macsurf_hlcache_consume_seed(void)
+{
+	unsigned long nav = ms_hlcache_seed_valid ? ms_hlcache_seed_nav : 0;
+	ms_hlcache_seed_nav = 0;
+	ms_hlcache_seed_valid = 0;
+	return nav;
+}
+
 /** fixes515: set while a broadcast catch-up pump is scheduled but not yet
  * run, so repeated requests coalesce into a single pass. */
 static bool hlcache_broadcast_catchup_scheduled = false;
@@ -159,14 +180,14 @@ hlcache_node_deathrow_teardown(void *p)
 }
 
 static void
-hlcache_entry_deferred_free(hlcache_entry *entry)
+hlcache_entry_deferred_free(hlcache_entry *entry, struct content *pin_key)
 {
 	if (entry == NULL || entry->dr_queued) {
 		return;
 	}
 	entry->dr_queued = 1;
 	macos9_deathrow_add(entry, hlcache_node_deathrow_teardown,
-			entry->content);
+			pin_key, MACOS9_DR_HLCACHE_ENTRY);
 }
 
 static void
@@ -186,7 +207,8 @@ hlcache_handle_deferred_free(hlcache_handle *handle)
 			c = NULL;
 		}
 	}
-	macos9_deathrow_add(handle, hlcache_node_deathrow_teardown, c);
+	macos9_deathrow_add(handle, hlcache_node_deathrow_teardown, c,
+			MACOS9_DR_HLCACHE_HANDLE);
 }
 
 /* fixes600 - a nascent retrieval context is freed synchronously from the
@@ -210,7 +232,8 @@ hlcache_rctx_deferred_free(hlcache_retrieval_ctx *ctx)
 		return;
 	}
 	ctx->dr_queued = 1;
-	macos9_deathrow_add(ctx, hlcache_rctx_deathrow_teardown, NULL);
+	macos9_deathrow_add(ctx, hlcache_rctx_deathrow_teardown, NULL,
+			MACOS9_DR_HLCACHE_RCTX);
 }
 
 
@@ -220,6 +243,7 @@ hlcache_rctx_deferred_free(hlcache_retrieval_ctx *ctx)
 static void hlcache_clean(void *force_clean_flag)
 {
 	hlcache_entry *entry, *next;
+	struct content *c_to_destroy;
 	bool force_clean = (force_clean_flag != NULL);
 
 	for (entry = hlcache->content_list; entry != NULL; entry = next) {
@@ -282,7 +306,7 @@ static void hlcache_clean(void *force_clean_flag)
 		 * the double-destroy, but we skip the call entirely here
 		 * to avoid even entering content_destroy on freed memory. */
 		{
-			struct content *c_to_destroy = entry->content;
+			c_to_destroy = entry->content;
 			if (c_to_destroy->handler == NULL) {
 				macsurf_debug_log_writef(
 					"hlcache: skip already-destroyed entry=%p content=%p",
@@ -297,9 +321,11 @@ static void hlcache_clean(void *force_clean_flag)
 			}
 		}
 
-		/* Destroy entry (Stage 1: deferred to the quiescent drain,
-		 * gated on its content's pending continuations) */
-		hlcache_entry_deferred_free(entry);
+		/* entry->content must be cleared before content_destroy so a stale
+		 * handle cannot follow it.  Keep the pre-clear content as the death-row
+		 * pin key, though: scheduling work is keyed by that content and must
+		 * finish before the entry itself can be reclaimed. */
+		hlcache_entry_deferred_free(entry, c_to_destroy);
 	}
 
 	/* Attempt to clean the llcache */
@@ -915,6 +941,12 @@ hlcache_handle_retrieve(nsurl *url,
 {
 	hlcache_retrieval_ctx *ctx;
 	nserror error;
+	/* MacSurf Trace 1a: a child fetch carries its parent's nav on the
+	 * child context; a top-level document fetch (child == NULL) takes the
+	 * one-shot hlcache seed. Consumed here, before any early return. */
+	unsigned long ms_nav = (child != NULL) ?
+			child->nav_id : macsurf_hlcache_consume_seed();
+	unsigned long ms_doc = (child != NULL) ? child->doc_id : 0;
 
 	assert(cb != NULL);
 
@@ -964,9 +996,15 @@ hlcache_handle_retrieve(nsurl *url,
 
 	ctx->flags = flags;
 	ctx->accepted_types = accepted_types;
+	ctx->child.nav_id = ms_nav;	/* MacSurf Trace 1a */
+	ctx->child.doc_id = ms_doc;
 
 	ctx->handle->cb = cb;
 	ctx->handle->pw = pw;
+
+	/* MacSurf Trace 1a: hand the nav to the llcache layer for the request
+	 * it is about to (maybe) issue. */
+	macsurf_llcache_seed_nav(ms_nav);
 
 	error = llcache_handle_retrieve(url, flags, referer, post,
 			hlcache_llcache_callback, ctx,

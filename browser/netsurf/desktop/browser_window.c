@@ -45,6 +45,7 @@
 #include "netsurf/plotters.h"
 #include "content/content.h"
 #include "content/hlcache.h"
+#include "content/macsurf_nav_seed.h"
 #include "content/urldb.h"
 #include "content/content_debug.h"
 
@@ -342,6 +343,7 @@ browser_window_download(struct browser_window *bw,
 	fetch_flags |= LLCACHE_RETRIEVE_FORCE_FETCH;
 	fetch_flags |= LLCACHE_RETRIEVE_STREAM_DATA;
 
+	macsurf_llcache_seed_nav(bw->nav_id);	/* MacSurf Trace 1a */
 	error = llcache_handle_retrieve(url, fetch_flags, nsref,
 					fetch_is_post ? post : NULL,
 					NULL, NULL, &l);
@@ -3551,7 +3553,7 @@ browser_window_navigate(struct browser_window *bw,
 	uint32_t fetch_flags = 0;
 	bool fetch_is_post = (post_urlenc != NULL || post_multipart != NULL);
 	llcache_post_data post;
-	hlcache_child_context child;
+	hlcache_child_context child = { NULL, false };
 	nserror error;
 	bool is_internal = false;
 	struct browser_fetch_parameters params, *pass_params = NULL;
@@ -3692,6 +3694,27 @@ browser_window_navigate(struct browser_window *bw,
 		}
 	}
 
+	/* MacSurf Trace 1a: past the same-document fragment short-circuit, this
+	 * is a real network/document navigation -- allocate its id here, the one
+	 * convergence point every genuinely-new nav reaches (URL bar, GURL, JS
+	 * location, link, form, back/forward, reload, meta refresh). Internal
+	 * redirects and about:query interstitials go straight to
+	 * browser_window__navigate_internal and keep this id. */
+	if (bw->browser_window_type == BROWSER_WINDOW_IFRAME &&
+		bw->parent != NULL) {
+		/* A child document belongs to its root navigation.  Its frame and
+		 * document identities remain distinct; only the causal navigation
+		 * transaction is inherited. */
+		bw->nav_id = bw->parent->nav_id;
+	} else {
+		static unsigned long ms_nav_id_seq;
+		ms_nav_id_seq++;
+		if (ms_nav_id_seq == 0) {
+			ms_nav_id_seq = 1;
+		}
+		bw->nav_id = ms_nav_id_seq;
+	}
+
 	browser_window_stop(bw);
 	browser_window_remove_caret(bw, false);
 	browser_window_destroy_children(bw);
@@ -3787,7 +3810,13 @@ navigate_internal_real(struct browser_window *bw,
 	if (params->parent_charset != NULL) {
 		child.charset = params->parent_charset;
 		child.quirks = params->parent_quirks;
+		child.nav_id = bw->nav_id;	/* MacSurf Trace 1a */
+		child.doc_id = 0;
 	}
+
+	/* MacSurf Trace 1a: covers the top-level (child == NULL) case; the
+	 * frame case above carries nav_id on the child context instead. */
+	macsurf_hlcache_seed_nav(bw->nav_id);
 
 	browser_window_set_status(bw, messages_get("Loading"));
 	bw->history_add = (params->flags & BW_NAVIGATE_HISTORY);

@@ -415,6 +415,9 @@ static void html_box_convert_done(html_content *c, bool success)
 		return;
 	}
 
+	/* Box tree successfully published for this content */
+	c->live_box_generation++;
+
 
 #if ALWAYS_DUMP_BOX
 	box_dump(stderr, c->layout->children, 0, true);
@@ -3658,6 +3661,35 @@ static void html_reconvert_relink_objects(html_content *c)
 	}
 }
 
+/* stabilization/reconvert-rework: targeted style work must never trust the
+ * DOM -> box backlink. Full reconvert has repeatedly made that backlink a
+ * lifetime hazard. Search the current live rendered tree instead. */
+static struct box *
+html_find_live_box_for_node(html_content *c, dom_node *node)
+{
+	struct box *root;
+	struct box *b;
+
+	if (c == NULL || node == NULL || c->layout == NULL)
+		return NULL;
+	root = c->layout;
+	b = root;
+	while (b != NULL) {
+		if (b->node == node && !(b->flags & CLONE))
+			return b;
+		if (b->children != NULL) {
+			b = b->children;
+			continue;
+		}
+		while (b != root && b->next == NULL)
+			b = b->parent;
+		if (b == root)
+			break;
+		b = b->next;
+	}
+	return NULL;
+}
+
 int html_reconvert_fast_style(struct content *base_c, void *vnode)
 {
 	html_content *c = (html_content *)base_c;
@@ -3673,11 +3705,12 @@ int html_reconvert_fast_style(struct content *base_c, void *vnode)
 	css_color border_color;
 
 	if (node == NULL || c == NULL) return -1;
-	if (c->select_ctx == NULL) return -1;
+	if (c->select_ctx == NULL || c->layout == NULL) return -1;
+	if (base_c->status != CONTENT_STATUS_DONE) return -1;
 	
 	if (macos9_paint_gw != NULL || macsurf_reconvert_in_progress != 0 || base_c->active != 0) return -1;
 
-	box = box_for_node(node);
+	box = html_find_live_box_for_node(c, node);
 	if (box == NULL || box->styles == NULL || box->style == NULL) return -1;
 
 	if (box->type == BOX_CONTENTS) return -1;
@@ -3781,11 +3814,12 @@ html_reconvert_fast_inherited_color(struct content *base_c, void *vnode)
 	decline_tag[0] = '\0';
 
 	if (c == NULL || node == NULL || c->select_ctx == NULL ||
-		c->layout == NULL || macos9_paint_gw != NULL ||
-		macsurf_reconvert_in_progress != 0 || base_c->active != 0)
+		c->layout == NULL || base_c->status != CONTENT_STATUS_DONE ||
+		macos9_paint_gw != NULL || macsurf_reconvert_in_progress != 0 ||
+		base_c->active != 0)
 		return -1;
 
-	root = box_for_node(node);
+	root = html_find_live_box_for_node(c, node);
 	if (root == NULL || root->styles == NULL || root->style == NULL ||
 		root->type == BOX_CONTENTS)
 		return -1;
@@ -4314,6 +4348,8 @@ static void html_reconvert_done(html_content *c, bool success)
 		html_reconvert_free_old();
 		html_reconv_ph_add(RECONV_PH_FREEOLD, t0);
 	}
+	/* Replacement box tree published */
+	c->live_box_generation++;
 	macsurf_reconv_pos_set("after-free_old", (long) macsurf_reconvert_seq,
 			0, "");
 	macsurf_reconv_pos_flush();
@@ -6269,7 +6305,6 @@ html_open(struct content *c,
 	return NSERROR_OK;
 }
 
-#ifdef __MACOS9__
 void html_content_get_diag_identity(struct content *c, unsigned long *doc,
 	unsigned long *frame)
 {
@@ -6288,7 +6323,6 @@ void html_content_set_diag_context(struct content *c, unsigned long nav,
 		html->ms_diag_frame_id = ms_diag_frame_get(bw);
 	}
 }
-#endif
 
 
 /**
@@ -6946,6 +6980,24 @@ dom_document *html_get_document(hlcache_handle *h)
 	assert(c != NULL);
 
 	return c->document;
+}
+
+/* MacSurf Trace 1c: read the document / frame id off an HTML content. Used by
+ * the frontend reconvert path, which only has `struct content *` in scope. The
+ * DOM-mutation callers only ever operate on the page's HTML document, so a
+ * NULL guard is sufficient. New uniquely-named symbols: no existing signature
+ * widened. */
+unsigned long html_content_get_doc_id(struct content *c)
+{
+	if (c == NULL)
+		return 0;
+	return ((html_content *) c)->ms_diag_doc_id;
+}
+unsigned long html_content_get_frame_id(struct content *c)
+{
+	if (c == NULL)
+		return 0;
+	return ((html_content *) c)->ms_diag_frame_id;
 }
 
 /**

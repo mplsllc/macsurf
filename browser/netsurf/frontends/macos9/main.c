@@ -1760,88 +1760,61 @@ static void macos9_deferred_home_load(void *pw)
 }
 
 #ifdef __MACOS9__
-/* Read-only, on-demand diagnostic endpoint.  Serialisation happens only in
- * this AppleEvent handler; browser hot paths continue to record integers. */
-static pascal OSErr macos9_ae_diag(const AppleEvent *ae, AppleEvent *reply,
+/* ------------------------------------------------------------------ */
+/* AppleEvent handlers                                                 */
+/*                                                                    */
+/* MacSurf had none: the Finder's 'quit' went nowhere (Shut Down would */
+/* stall), and there was no way to drive it from a script. This adds   */
+/* the classic required suite (oapp/odoc/pdoc/quit) + rapp + the URL   */
+/* suite's 'GURL', following the idiom in macIRC's ui_app.c: a bare    */
+/* file-static reach-back rather than a refCon pointer round-trip,     */
+/* handlers return through the WNE loop (AEProcessAppleEvent is called  */
+/* from the kHighLevelEvent case), never ExitToShell.                  */
+/* ------------------------------------------------------------------ */
+
+static pascal OSErr macos9_ae_get_url(const AppleEvent *ae, AppleEvent *reply,
 		long refcon)
 {
 	DescType rt;
 	Size actual = 0;
 	OSErr err;
-	char verb[32];
-	static char out[16384];
-	long n;
-
-	(void)refcon;
-	err = AEGetParamPtr(ae, keyDirectObject, typeChar, &rt,
-			(Ptr)verb, (Size)(sizeof(verb) - 1), &actual);
-	if (err != noErr) return err;
-	if (actual < 0 || (unsigned long)actual >
-			(unsigned long)(sizeof(verb) - 1)) return errAEEventNotHandled;
-	verb[actual] = '\0';
-
-	if (strcmp(verb, "summary") == 0) n = macsurf_diag_serialize_summary(out, (long)sizeof(out));
-	else if (strcmp(verb, "prefs") == 0) n = macsurf_diag_serialize_prefs(out, (long)sizeof(out));
-	else if (strcmp(verb, "gaps") == 0) n = macsurf_diag_serialize_gaps(out, (long)sizeof(out));
-	else if (strcmp(verb, "network") == 0) n = macsurf_diag_serialize_network(out, (long)sizeof(out));
-	else if (strcmp(verb, "scripts") == 0) n = macsurf_diag_serialize_scripts(out, (long)sizeof(out));
-	else if (strcmp(verb, "tasks") == 0) n = macsurf_diag_serialize_tasks(out, (long)sizeof(out));
-	else if (strcmp(verb, "documents") == 0) n = macsurf_diag_serialize_documents(out, (long)sizeof(out));
-	else if (strcmp(verb, "mutations") == 0) n = macsurf_diag_serialize_mutations(out, (long)sizeof(out));
-	else if (strcmp(verb, "layout") == 0) n = macsurf_diag_serialize_layout(out, (long)sizeof(out));
-	else if (strcmp(verb, "modules") == 0) n = macsurf_diag_serialize_modules(out, (long)sizeof(out));
-	else if (strcmp(verb, "io") == 0) n = macsurf_diag_serialize_io(out, (long)sizeof(out));
-	else if (strcmp(verb, "operations") == 0) n = macsurf_diag_serialize_operations(out, (long)sizeof(out));
-	else if (strcmp(verb, "errors") == 0) n = macsurf_diag_serialize_errors(out, (long)sizeof(out));
-	else if (strcmp(verb, "pending") == 0) n = macsurf_diag_serialize_pending(out, (long)sizeof(out));
-	else if (strcmp(verb, "settlement") == 0) n = macsurf_diag_serialize_settlement(out, (long)sizeof(out));
-	else if (strcmp(verb, "timers") == 0) n = macsurf_diag_serialize_timers(out, (long)sizeof(out));
-	else if (strcmp(verb, "readiness") == 0) n = macsurf_diag_serialize_readiness(out, (long)sizeof(out));
-	else if (strcmp(verb, "trace") == 0) n = macsurf_trace_serialize(out, (long)sizeof(out));
-	else if (strcmp(verb, "tracestart") == 0) {
-		macsurf_trace_arm(0UL, 2);
-		n = macsurf_trace_serialize(out, (long)sizeof(out));
-	} else if (strcmp(verb, "tracestop") == 0) {
-		macsurf_trace_disarm();
-		n = macsurf_trace_serialize(out, (long)sizeof(out));
-	} else {
-		return errAEEventNotHandled;
-	}
-	if (n <= 0) return errAECorruptData;
-	macsurf_debug_log_writef("LIFE AE MSdg GET %s -> %ld bytes", verb, n);
-	if (reply != NULL) {
-		err = AEPutParamPtr(reply, keyDirectObject, typeChar, (Ptr)out,
-			(Size)n);
-		if (err != noErr) return err;
-	}
-	return noErr;
-}
-
-static pascal OSErr macos9_ae_get_url(const AppleEvent *ae,
-		AppleEvent *reply, long refcon)
-{
-	DescType rt;
-	Size actual = 0;
-	OSErr err;
-	char url[2048];
+	char buf[2048];
 	WindowRef fw;
 	struct gui_window *g;
 
 	(void)reply;
 	(void)refcon;
-	err = AEGetParamPtr(ae, keyDirectObject, typeChar, &rt, (Ptr)url,
-			(Size)(sizeof(url) - 1), &actual);
-	if (err != noErr) return err;
-	if (actual < 0 || (unsigned long)actual >
-			(unsigned long)(sizeof(url) - 1)) return errAEEventNotHandled;
-	url[actual] = '\0';
+
+	err = AEGetParamPtr(ae, keyDirectObject, typeChar, &rt,
+			(Ptr)buf, (Size)(sizeof(buf) - 1), &actual);
+	if (err != noErr) {
+		macsurf_debug_log_writef("LIFE AE GURL param err=%d", (int)err);
+		return err;
+	}
+	if (actual < 0 || (unsigned long)actual > (unsigned long)(sizeof(buf) - 1)) {
+		macsurf_debug_log_writef("LIFE AE GURL reject len=%ld",
+			(long)actual);
+		return errAEEventNotHandled;
+	}
+	buf[actual] = '\0';
+	macsurf_debug_log_writef("LIFE AE GURL received len=%ld", (long)actual);
+
+	/* macos9_poll dispatches this event BEFORE macos9_schedule_run, so on a
+	 * cold launch we may beat the deferred home load - claim the slot. */
 	macos9_startup_home_pending = 0;
+
 	fw = FrontWindow();
-	g = (fw != NULL) ? macos9_find_window(fw) : macos9_window_list_head();
-	if (g == NULL) g = macos9_create_initial_window();
-	if (g == NULL) return errAEEventNotHandled;
-	macsurf_debug_log_writef("LIFE AE GURL navigate url=%s", url);
-	macos9_window_navigate(g, url);
+	g = (fw != NULL) ? macos9_find_window(fw) : NULL;
+	if (g == NULL)
+		g = macos9_window_list_head();
+	if (g == NULL)
+		g = macos9_create_initial_window();
+	if (g == NULL) {
+		macsurf_debug_log_writef("LIFE AE GURL no window");
+		return errAEEventNotHandled;
+	}
+	macsurf_debug_log_writef("LIFE AE GURL navigate url=%s", buf);
+	macos9_window_navigate(g, buf);
 	return noErr;
 }
 
@@ -1857,30 +1830,341 @@ static pascal OSErr macos9_ae_quit(const AppleEvent *ae, AppleEvent *reply,
 	return noErr;
 }
 
-static pascal OSErr macos9_ae_noop(const AppleEvent *ae, AppleEvent *reply,
+static pascal OSErr macos9_ae_open_app(const AppleEvent *ae, AppleEvent *reply,
 		long refcon)
 {
 	(void)ae;
 	(void)reply;
 	(void)refcon;
+	/* The first window is already open by the time any event can arrive; the
+	 * handler must still exist or the Finder reports the app as broken. */
+	return noErr;
+}
+
+static pascal OSErr macos9_ae_reopen(const AppleEvent *ae, AppleEvent *reply,
+		long refcon)
+{
+	WindowRef fw;
+	struct gui_window *g;
+
+	(void)ae;
+	(void)reply;
+	(void)refcon;
+
+	fw = FrontWindow();
+	if (fw != NULL) {
+		ShowWindow(fw);
+		SelectWindow(fw);
+		return noErr;
+	}
+	g = macos9_window_list_head();
+	if (g != NULL && g->window != NULL) {
+		ShowWindow(g->window);
+		SelectWindow(g->window);
+		return noErr;
+	}
+	macos9_create_initial_window();
+	return noErr;
+}
+
+static pascal OSErr macos9_ae_open_docs(const AppleEvent *ae, AppleEvent *reply,
+		long refcon)
+{
+	(void)ae;
+	(void)reply;
+	(void)refcon;
+	/* MacSurf owns no document type yet. errAEEventNotHandled is honest -
+	 * noErr would tell the Finder the files opened. */
+	return errAEEventNotHandled;
+}
+
+static pascal OSErr macos9_ae_print_docs(const AppleEvent *ae, AppleEvent *reply,
+		long refcon)
+{
+	(void)ae;
+	(void)reply;
+	(void)refcon;
+	return errAEEventNotHandled;
+}
+
+/* Parse the cursor form without strtoul: the AppleEvent verb is untrusted
+ * text, and this keeps the protocol parser small and C89/Carbon-lib friendly. */
+static int macos9_diag_parse_ulong(const char **p, unsigned long *out)
+{
+	const char *s = *p;
+	unsigned long value = 0;
+	unsigned long max = ~0UL;
+	int digits = 0;
+
+	while (*s >= '0' && *s <= '9') {
+		unsigned long digit = (unsigned long)(*s - '0');
+		if (value > (max - digit) / 10UL) return 0;
+		value = value * 10UL + digit;
+		s++;
+		digits = 1;
+	}
+	if (!digits) return 0;
+	*p = s;
+	*out = value;
+	return 1;
+}
+
+/* Accept only `trace after=<event_seq> limit=<n>` tokens.  Exact `trace`
+ * remains the v1 compatibility view, so old host tools keep working. */
+static int macos9_diag_parse_trace_cursor(const char *verb,
+	unsigned long *after, unsigned long *limit)
+{
+	const char *p;
+	int got_after = 0;
+	int got_limit = 0;
+
+	if (strncmp(verb, "trace ", 6) != 0) return 0;
+	p = verb + 6;
+	while (*p != '\0') {
+		while (*p == ' ') p++;
+		if (*p == '\0') break;
+		if (strncmp(p, "after=", 6) == 0 && !got_after) {
+			p += 6;
+			if (!macos9_diag_parse_ulong(&p, after)) return 0;
+			got_after = 1;
+		} else if (strncmp(p, "limit=", 6) == 0 && !got_limit) {
+			p += 6;
+			if (!macos9_diag_parse_ulong(&p, limit)) return 0;
+			got_limit = 1;
+		} else {
+			return 0;
+		}
+		if (*p != '\0' && *p != ' ') return 0;
+	}
+	return got_after && got_limit;
+}
+
+static int macos9_diag_parse_cursor(const char *verb, const char *prefix,
+	unsigned long *after, unsigned long *limit)
+{
+	const char *p;
+	size_t plen = strlen(prefix);
+	int got_after = 0;
+	int got_limit = 0;
+
+	if (strncmp(verb, prefix, plen) != 0 || verb[plen] != ' ') return 0;
+	p = verb + plen + 1;
+	while (*p != '\0') {
+		while (*p == ' ') p++;
+		if (*p == '\0') break;
+		if (strncmp(p, "after=", 6) == 0 && !got_after) {
+			p += 6;
+			if (!macos9_diag_parse_ulong(&p, after)) return 0;
+			got_after = 1;
+		} else if (strncmp(p, "limit=", 6) == 0 && !got_limit) {
+			p += 6;
+			if (!macos9_diag_parse_ulong(&p, limit)) return 0;
+			got_limit = 1;
+		} else {
+			return 0;
+		}
+		if (*p != '\0' && *p != ' ') return 0;
+	}
+	return got_after && got_limit;
+}
+
+static int macos9_diag_parse_domstart(const char *verb, unsigned long *doc_id)
+{
+	const char *p;
+	*doc_id = 0;
+	if (strcmp(verb, "domstart") == 0) return 1;
+	if (strncmp(verb, "domstart ", 9) != 0) return 0;
+	p = verb + 9;
+	while (*p == ' ') p++;
+	if (strncmp(p, "doc=", 4) == 0) {
+		p += 4;
+		if (!macos9_diag_parse_ulong(&p, doc_id)) return 0;
+		while (*p == ' ') p++;
+		if (*p != '\0') return 0;
+		return 1;
+	}
+	return 0;
+}
+
+
+/* MacSurf Trace: `MSdg`/`GET ` -- serialise MacSurf-owned diagnostic state into
+ * the reply. Deliberately stupid: read the verb, pick a serialiser, emit text.
+ * No hlcache / fetch-ring / window traversal, no state mutation. Runs on the
+ * main thread from the WNE loop, same context as macos9_ae_get_url. */
+static pascal OSErr macos9_ae_diag(const AppleEvent *ae, AppleEvent *reply,
+		long refcon)
+{
+	DescType rt;
+	Size actual = 0;
+	OSErr err;
+	char verb[64];
+	/* static: `layout` / `trace` replies run to ~16 KB and the OS 9 main
+	 * stack should not carry that. The AE handler is only entered from the
+	 * cooperative event loop, one query at a time -- no reentrancy. */
+	static char out[16384];
+	long n;
+	unsigned long trace_after = 0;
+	unsigned long trace_limit = 0;
+	unsigned long scripts_after = 0;
+	unsigned long scripts_limit = 0;
+	unsigned long sources_after = 0;
+	unsigned long sources_limit = 0;
+	unsigned long errors_after = 0;
+	unsigned long errors_limit = 0;
+	unsigned long async_after = 0;
+	unsigned long async_limit = 0;
+	unsigned long dom_doc_id = 0;
+	unsigned long dom_after = 0;
+	unsigned long dom_limit = 0;
+
+	(void)refcon;
+
+	err = AEGetParamPtr(ae, keyDirectObject, typeChar, &rt,
+			(Ptr)verb, (Size)(sizeof(verb) - 1), &actual);
+	if (err != noErr) {
+		return err;
+	}
+	if (actual < 0 || (unsigned long)actual > (unsigned long)(sizeof(verb) - 1)) {
+		return errAEEventNotHandled;
+	}
+	verb[actual] = '\0';
+
+	if (strcmp(verb, "summary") == 0) {
+		n = macsurf_diag_serialize_summary(out, (long)sizeof(out));
+	} else if (strcmp(verb, "prefs") == 0) {
+		n = macsurf_diag_serialize_prefs(out, (long)sizeof(out));
+	} else if (strcmp(verb, "gaps") == 0) {
+		n = macsurf_diag_serialize_gaps(out, (long)sizeof(out));
+	} else if (strcmp(verb, "network") == 0) {
+		n = macsurf_diag_serialize_network(out, (long)sizeof(out));
+	} else if (strcmp(verb, "realms") == 0) {
+		n = macsurf_diag_serialize_realms(out, (long)sizeof(out));
+	} else if (strcmp(verb, "warnings") == 0 || strcmp(verb, "invariants") == 0) {
+		n = macsurf_diag_serialize_warnings(out, (long)sizeof(out));
+	} else if (strcmp(verb, "scripts") == 0) {
+		n = macsurf_diag_serialize_scripts(out, (long)sizeof(out));
+	} else if (macos9_diag_parse_cursor(verb, "scripts", &scripts_after,
+			&scripts_limit)) {
+		n = macsurf_diag_serialize_scripts_since(out, (long)sizeof(out),
+			scripts_after, scripts_limit);
+	} else if (strcmp(verb, "sources") == 0) {
+		n = macsurf_diag_serialize_sources(out, (long)sizeof(out));
+	} else if (macos9_diag_parse_cursor(verb, "sources", &sources_after,
+			&sources_limit)) {
+		n = macsurf_diag_serialize_sources_since(out, (long)sizeof(out),
+			sources_after, sources_limit);
+	} else if (strcmp(verb, "tasks") == 0) {
+		n = macsurf_diag_serialize_tasks(out, (long)sizeof(out));
+	} else if (strcmp(verb, "documents") == 0) {
+		n = macsurf_diag_serialize_documents(out, (long)sizeof(out));
+	} else if (strcmp(verb, "mutations") == 0) {
+		n = macsurf_diag_serialize_mutations(out, (long)sizeof(out));
+	} else if (strcmp(verb, "layout") == 0) {
+		n = macsurf_diag_serialize_layout(out, (long)sizeof(out));
+	} else if (strcmp(verb, "trace") == 0) {
+		n = macsurf_trace_serialize(out, (long)sizeof(out));
+	} else if (macos9_diag_parse_trace_cursor(verb, &trace_after,
+			&trace_limit)) {
+		n = macsurf_trace_serialize_since(out, (long)sizeof(out),
+			trace_after, trace_limit);
+	} else if (strcmp(verb, "modules") == 0) {
+		n = macsurf_diag_serialize_modules(out, (long)sizeof(out));
+	} else if (strcmp(verb, "io") == 0) {
+		n = macsurf_diag_serialize_io(out, (long)sizeof(out));
+	} else if (strcmp(verb, "capabilities") == 0) {
+		n = macsurf_diag_serialize_capabilities(out, (long)sizeof(out));
+	} else if (strcmp(verb, "javascript") == 0) {
+		n = macsurf_diag_serialize_javascript(out, (long)sizeof(out));
+	} else if (strcmp(verb, "js_api_gaps") == 0) {
+		n = macsurf_diag_serialize_js_api_gaps(out, (long)sizeof(out));
+	} else if (strcmp(verb, "promise_rejections") == 0) {
+		n = macsurf_diag_serialize_promise_rejections(out, (long)sizeof(out));
+	} else if (strcmp(verb, "event_handlers") == 0) {
+		n = macsurf_diag_serialize_event_handlers(out, (long)sizeof(out));
+	} else if (strcmp(verb, "cssgaps") == 0) {
+		n = macsurf_diag_serialize_css_gaps(out, (long)sizeof(out));
+	} else if (strcmp(verb, "gapreport") == 0) {
+		n = macsurf_diag_serialize_gapreport(out, (long)sizeof(out));
+	} else if (strcmp(verb, "operations") == 0) {
+		n = macsurf_diag_serialize_operations(out, (long)sizeof(out));
+	} else if (strcmp(verb, "errors") == 0) {
+		n = macsurf_diag_serialize_errors(out, (long)sizeof(out));
+	} else if (macos9_diag_parse_cursor(verb, "errors", &errors_after,
+			&errors_limit)) {
+		n = macsurf_diag_serialize_errors_since(out, (long)sizeof(out),
+			errors_after, errors_limit);
+	} else if (macos9_diag_parse_cursor(verb, "async", &async_after,
+			&async_limit)) {
+		n = macsurf_diag_serialize_async_since(out, (long)sizeof(out),
+			async_after, async_limit);
+	} else if (strcmp(verb, "pending") == 0) {
+		n = macsurf_diag_serialize_pending(out, (long)sizeof(out));
+	} else if (strcmp(verb, "settlement") == 0) {
+		n = macsurf_diag_serialize_settlement(out, (long)sizeof(out));
+	} else if (strcmp(verb, "timers") == 0) {
+		n = macsurf_diag_serialize_timers(out, (long)sizeof(out));
+	} else if (strcmp(verb, "readiness") == 0) {
+		n = macsurf_diag_serialize_readiness(out, (long)sizeof(out));
+	} else if (strcmp(verb, "tracestart") == 0) {
+		macsurf_trace_arm(0UL, 2);	/* all categories, level 2 */
+		n = macsurf_trace_serialize(out, (long)sizeof(out));
+	} else if (strcmp(verb, "tracestop") == 0) {
+		macsurf_trace_disarm();
+		n = macsurf_trace_serialize(out, (long)sizeof(out));
+	} else if (macos9_diag_parse_domstart(verb, &dom_doc_id)) {
+		n = macsurf_diag_dom_start(dom_doc_id, out, (long)sizeof(out));
+	} else if (strcmp(verb, "dom") == 0) {
+		n = macsurf_diag_serialize_dom(out, (long)sizeof(out), 0, 64);
+	} else if (macos9_diag_parse_cursor(verb, "dom", &dom_after, &dom_limit)) {
+		n = macsurf_diag_serialize_dom(out, (long)sizeof(out), dom_after, dom_limit);
+	} else if (strcmp(verb, "boxes") == 0) {
+		n = macsurf_diag_serialize_boxes(out, (long)sizeof(out), 0, 64);
+	} else if (macos9_diag_parse_cursor(verb, "boxes", &dom_after, &dom_limit)) {
+		n = macsurf_diag_serialize_boxes(out, (long)sizeof(out), dom_after, dom_limit);
+	} else {
+		macsurf_debug_log_writef("LIFE AE MSdg unknown verb=%s", verb);
+		return errAEEventNotHandled;
+	}
+
+	if (n <= 0) {
+		return errAECorruptData;
+	}
+	macsurf_debug_log_writef("LIFE AE MSdg GET %s -> %ld bytes", verb, n);
+	if (reply != NULL) {
+		err = AEPutParamPtr(reply, keyDirectObject, typeChar,
+				(Ptr)out, (Size)n);
+		if (err != noErr) {
+			return err;
+		}
+	}
 	return noErr;
 }
 
 static void macos9_install_ae_handlers(void)
 {
-	OSErr e1, e2, e3;
-	e1 = AEInstallEventHandler(kCoreEventClass, kAEQuitApplication,
+	OSErr e_oapp, e_odoc, e_pdoc, e_quit, e_rapp, e_gurl, e_diag;
+
+	e_oapp = AEInstallEventHandler(kCoreEventClass, kAEOpenApplication,
+			NewAEEventHandlerUPP(macos9_ae_open_app), 0, false);
+	e_odoc = AEInstallEventHandler(kCoreEventClass, kAEOpenDocuments,
+			NewAEEventHandlerUPP(macos9_ae_open_docs), 0, false);
+	e_pdoc = AEInstallEventHandler(kCoreEventClass, kAEPrintDocuments,
+			NewAEEventHandlerUPP(macos9_ae_print_docs), 0, false);
+	e_quit = AEInstallEventHandler(kCoreEventClass, kAEQuitApplication,
 			NewAEEventHandlerUPP(macos9_ae_quit), 0, false);
-	e2 = AEInstallEventHandler(kInternetEventClass, kAEGetURL,
+	e_rapp = AEInstallEventHandler(kCoreEventClass, kAEReopenApplication,
+			NewAEEventHandlerUPP(macos9_ae_reopen), 0, false);
+	e_gurl = AEInstallEventHandler(kInternetEventClass, kAEGetURL,
 			NewAEEventHandlerUPP(macos9_ae_get_url), 0, false);
-	e3 = AEInstallEventHandler(kMacSurfDiagEventClass, kMacSurfDiagGet,
+	e_diag = AEInstallEventHandler(kMacSurfDiagEventClass, kMacSurfDiagGet,
 			NewAEEventHandlerUPP(macos9_ae_diag), 0, false);
-	(void)AEInstallEventHandler(kCoreEventClass, kAEOpenApplication,
-			NewAEEventHandlerUPP(macos9_ae_noop), 0, false);
-	macsurf_debug_log_writef("LIFE AE install quit=%d GURL=%d MSdg=%d",
-		(int)e1, (int)e2, (int)e3);
+
+	macsurf_debug_log_writef(
+		"LIFE AE install oapp=%d odoc=%d pdoc=%d quit=%d rapp=%d GURL=%d MSdg=%d",
+		(int)e_oapp, (int)e_odoc, (int)e_pdoc,
+		(int)e_quit, (int)e_rapp, (int)e_gurl, (int)e_diag);
 }
-#endif
+#endif /* __MACOS9__ */
 
 
 /* fixes983 -- claim the custom-icon bit on our own application file.

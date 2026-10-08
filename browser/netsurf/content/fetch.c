@@ -51,6 +51,7 @@
 #include "desktop/gui_internal.h"
 
 #include "content/fetch.h"
+#include "content/macsurf_nav_seed.h"
 #include "content/fetchers.h"
 #include "content/fetchers/resource.h"
 #include "content/fetchers/about/about.h"
@@ -101,10 +102,59 @@ struct fetch {
 	fetch_msg_type last_msg;/**< The last message sent for this fetch */
 	struct fetch *r_prev;	/**< Previous active fetch in ::fetch_ring. */
 	struct fetch *r_next;	/**< Next active fetch in ::fetch_ring. */
+	/* MacSurf Trace 1a: birth-stamped, immutable for this fetch's life. */
+	unsigned long nav_id;		/**< Owning navigation, or 0 (chrome). */
+	unsigned long request_id;	/**< Monotonic session-local wire id. */
+	unsigned long redirect_from;	/**< Previous hop's request_id, or 0. */
 };
 
 static struct fetch *fetch_ring = NULL;	/**< Ring of active fetches. */
 static struct fetch *queue_ring = NULL;	/**< Ring of queued fetches */
+
+/* MacSurf Trace 1a: fetch-boundary seed (see content/macsurf_nav_seed.h) +
+ * the monotonic wire-request id. All main-thread / notifier context; no lock. */
+static unsigned long ms_fetch_seed_nav;
+static unsigned long ms_fetch_seed_redir;
+static int ms_fetch_seed_valid;
+static unsigned long ms_request_id_seq;
+
+void macsurf_fetch_seed(unsigned long nav_id, unsigned long redirect_from)
+{
+	ms_fetch_seed_nav = nav_id;
+	ms_fetch_seed_redir = redirect_from;
+	ms_fetch_seed_valid = 1;
+}
+
+void macsurf_fetch_consume_seed(unsigned long *nav_id_out,
+			       unsigned long *redirect_from_out)
+{
+	unsigned long nav = 0;
+	unsigned long redir = 0;
+
+	if (ms_fetch_seed_valid) {
+		nav = ms_fetch_seed_nav;
+		redir = ms_fetch_seed_redir;
+	}
+	ms_fetch_seed_nav = 0;
+	ms_fetch_seed_redir = 0;
+	ms_fetch_seed_valid = 0;
+
+	if (nav_id_out != NULL) {
+		*nav_id_out = nav;
+	}
+	if (redirect_from_out != NULL) {
+		*redirect_from_out = redir;
+	}
+}
+
+unsigned long macsurf_next_request_id(void)
+{
+	ms_request_id_seq++;
+	if (ms_request_id_seq == 0) {
+		ms_request_id_seq = 1;	/* never hand back 0 */
+	}
+	return ms_request_id_seq;
+}
 
 /******************************************************************************
  * fetch internals							      *
@@ -480,6 +530,12 @@ fetch_start(nsurl *url,
 {
 	struct fetch *fetch;
 	lwc_string *scheme;
+	unsigned long ms_nav = 0;
+	unsigned long ms_redir = 0;
+
+	/* MacSurf Trace 1a: consume the pending fetch seed BEFORE any alloc or
+	 * early return, so an aborted fetch_start can't leak it to the next. */
+	macsurf_fetch_consume_seed(&ms_nav, &ms_redir);
 
 	fetch = calloc(1, sizeof (*fetch));
 	if (fetch == NULL) {
@@ -506,6 +562,11 @@ fetch_start(nsurl *url,
 	fetch->verifiable = verifiable;
 	fetch->p = p;
 	fetch->host = nsurl_get_component(url, NSURL_HOST);
+
+	/* MacSurf Trace 1a: birth-stamp identity; immutable from here on. */
+	fetch->nav_id = ms_nav;
+	fetch->request_id = macsurf_next_request_id();
+	fetch->redirect_from = ms_redir;
 
 	if (referer != NULL) {
 		fetch->referer = nsurl_ref(referer);
@@ -628,6 +689,22 @@ void fetch_change_callback(struct fetch *fetch,
 http_response_code fetch_http_code(struct fetch *fetch)
 {
 	return fetch->http_code;
+}
+
+/* MacSurf Trace 1a: read the birth-stamped identity (content/fetch.h). */
+unsigned long fetch_get_nav_id(const struct fetch *fetch)
+{
+	return (fetch != NULL) ? fetch->nav_id : 0;
+}
+
+unsigned long fetch_get_request_id(const struct fetch *fetch)
+{
+	return (fetch != NULL) ? fetch->request_id : 0;
+}
+
+unsigned long fetch_get_redirect_from(const struct fetch *fetch)
+{
+	return (fetch != NULL) ? fetch->redirect_from : 0;
 }
 
 

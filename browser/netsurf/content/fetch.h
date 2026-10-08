@@ -195,6 +195,15 @@ void fetch_change_callback(struct fetch *fetch, fetch_callback callback, void *p
  */
 http_response_code fetch_http_code(struct fetch *fetch);
 
+/**
+ * MacSurf Trace 1a: birth-stamped identity of a wire request.
+ * Immutable for the life of the struct fetch; NULL-safe (returns 0).
+ * nav_id 0 == unattributed (chrome / favicon / built-in stylesheet).
+ */
+unsigned long fetch_get_nav_id(const struct fetch *fetch);
+unsigned long fetch_get_request_id(const struct fetch *fetch);
+unsigned long fetch_get_redirect_from(const struct fetch *fetch);
+
 
 /**
  * Free a linked list of fetch_multipart_data.

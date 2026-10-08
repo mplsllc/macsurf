@@ -529,7 +529,8 @@ void content_destroy(struct content *c)
 		return;
 	}
 	c->dr_queued = 1;
-	macos9_deathrow_add(c, content_deathrow_teardown, c);
+	macos9_deathrow_add(c, content_deathrow_teardown, c,
+			MACOS9_DR_CONTENT);
 }
 
 static void
@@ -768,8 +769,15 @@ void content__request_redraw(struct content *c,
 			     int x, int y, int width, int height)
 {
 	union content_msg_data data;
+	/* MacSurf Trace 1c: bind this invalidation to the live render pass (if
+	 * any). No-op when no pass is on the stack -- caret blink, text
+	 * selection, form menus etc. request redraws with no render scope.
+	 * Uniquely-named frontend symbol; implemented in macsurf_diag.c. */
+	extern void ms_diag_paint_note(void);
 
 	CONTENT_CHECK_VOID(c);
+
+	ms_diag_paint_note();
 
 	data.redraw.x = x;
 	data.redraw.y = y;
@@ -984,6 +992,10 @@ content_add_user(struct content *c,
 	user = malloc(sizeof(struct content_user));
 	if (!user)
 		return false;
+	/* The OS 9 deferred-free path reads this after unlinking.  This record
+	 * predates that field and is allocated with malloc, so initialise it
+	 * explicitly instead of inheriting a prior allocator tenant's state. */
+	user->dr_queued = 0;
 	user->callback = callback;
 	user->pw = pw;
 	user->next = c->user_list->next;
@@ -1053,7 +1065,8 @@ content_remove_user(struct content *c,
 	 * the stack. dr_queued gates against a double-enqueue. */
 	if (!next->dr_queued) {
 		next->dr_queued = 1;
-		macos9_deathrow_add(next, content_user_deathrow_teardown, c);
+		macos9_deathrow_add(next, content_user_deathrow_teardown, c,
+				MACOS9_DR_CONTENT_USER);
 	}
 #else
 	free(next);
@@ -1639,6 +1652,18 @@ content__add_rfc5988_link(struct content *c,
 
 
 /* exported interface documented in content/content.h */
+/* MacSurf Trace 1a: navigation that fetched this content's llcache object
+ * (0 == unattributed, or the content is no longer cache-backed). Derived, not
+ * stored -- see the note in content_protected.h. */
+unsigned long content_get_nav_id(struct content *c)
+{
+	if (c == NULL || c->llcache == NULL) {
+		return 0;
+	}
+	return llcache_handle_get_nav_id(c->llcache);
+}
+
+
 nsurl *content_get_url(struct content *c)
 {
 	CONTENT_CHECK_RETURN(c, NULL);

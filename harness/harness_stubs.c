@@ -37,8 +37,8 @@ int macos9_op_depth = 0;
 struct dr_ent { void *ptr; void (*teardown)(void*); struct dr_ent *next; };
 static struct dr_ent *g_dr = NULL;
 struct content;
-void macos9_deathrow_add(void *ptr, void (*teardown)(void *ptr), struct content *pin_key){
-  struct dr_ent *e; (void)pin_key; if(!teardown){return;}
+void macos9_deathrow_add(void *ptr, void (*teardown)(void *ptr), struct content *pin_key, unsigned int kind){
+  struct dr_ent *e; (void)pin_key; (void)kind; if(!teardown){return;}
   e=(struct dr_ent*)malloc(sizeof *e); if(!e){teardown(ptr);return;}
   e->ptr=ptr; e->teardown=teardown; e->next=g_dr; g_dr=e;
 }
@@ -161,3 +161,12 @@ static struct gui_layout_table harness_layout_table_impl = {
 	harness_font_width, NULL, NULL
 };
 struct gui_layout_table *macos9_layout_table = &harness_layout_table_impl;
+
+/* The production implementation lives in macos9_prefs.c, which the Linux
+ * harness intentionally does not link.  Master defaults diagnostics off, so
+ * this preserves the shipped default and prevents profiling-only branches
+ * from changing harness behavior. */
+int macos9_debug_integrations_enabled(void)
+{
+	return 0;
+}

@@ -47,8 +47,20 @@ extern int macos9_op_depth;
  * freed-then-reused address (dr_queued==0 on fresh memory) is never
  * mistaken for a still-queued prior tenant.
  */
+enum macos9_deathrow_kind {
+	MACOS9_DR_HLCACHE_ENTRY = 1,
+	MACOS9_DR_HLCACHE_HANDLE,
+	MACOS9_DR_HLCACHE_RCTX,
+	MACOS9_DR_LLCACHE_USER,
+	MACOS9_DR_LLCACHE_OBJECT,
+	MACOS9_DR_CONTENT,
+	MACOS9_DR_CONTENT_USER,
+	MACOS9_DR_BITMAP
+};
+
+/* kind is a stable pointer-free owner classification for trace/crash evidence. */
 void macos9_deathrow_add(void *ptr, void (*teardown)(void *ptr),
-		struct content *pin_key);
+		struct content *pin_key, unsigned int kind);
 
 /* Drain at the quiescent point (top of macos9_poll, outermost only). */
 void macos9_deathrow_drain(void);

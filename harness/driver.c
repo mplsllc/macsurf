@@ -1,3 +1,4 @@
+extern void macsurf_qjs_pump_all(void);
 /* S0 harness driver — reconvert dom_string UAF repro.
  *
  * Sequence: parse a small HTML doc -> build the box tree (like the initial
@@ -68,6 +69,10 @@ extern int macsurf_imgdims_lookup(struct nsurl *url, int *w, int *h);	/* fixes92
 #include "cssprobe.h"
 
 #include "macos9_content_registry.h"
+#include "macsurf_diag.h"
+#include "macsurf_trace.h"
+#include "macsurf_capability.h"
+#include "macsurf_qjs.h"
 
 extern int html_reconvert_content(struct content *c);
 /* fixes866 (#292): the real parser hooks html.c uses, so the harness exercises
@@ -208,6 +213,8 @@ static struct gui_misc_table g_misc_table;
 struct netsurf_table *guit = NULL;
 static struct nsoption_s g_nsoptions_storage[NSOPTION_LISTEND];
 struct nsoption_s *nsoptions = g_nsoptions_storage;
+static struct nsoption_s g_nsoptions_default_storage[NSOPTION_LISTEND];
+struct nsoption_s *nsoptions_default = g_nsoptions_default_storage;
 
 /* ------------------------------------------------------------------ */
 /* Box tree completion callback for the INITIAL build.                  */
@@ -665,6 +672,298 @@ static JSValue t93_job_mark_b(JSContext *ctx, int argc, JSValueConst *argv)
 	return JS_UNDEFINED;
 }
 
+extern void macsurf_qjs_pump_all(void);
+
+/* E3 uses real engine failure boundaries, in a fresh process so text dictionaries
+ * and aggregate counters have a known starting point. */
+#define E3_CHECK(x) do { if (!(x)) { fprintf(stderr, "FAIL: E3 line %d: %s\n", __LINE__, #x); return 1; } } while (0)
+static unsigned long e3_exec(struct jsthread *t, const char *code,
+	unsigned long source, int expected, int module)
+{
+	struct ms_diag_scope s;
+	unsigned char ok;
+	ms_diag_script_enter(&s, 700, module ? MS_SCRIPT_MODULE : MS_SCRIPT_CLASSIC, "e3");
+	ms_diag_script_set_provenance(&s, 701, 702);
+	ms_diag_script_set_source_id(&s, source);
+	ok = module ? js_exec_module(t, (const unsigned char *)code, strlen(code), "e3-module") :
+		js_exec(t, (const unsigned char *)code, strlen(code), "e3-script");
+	ms_diag_script_leave(&s, ok ? MS_SCR_DONE : MS_SCR_RUN_FAIL);
+	if (ok != expected) return 0;
+	return s.my_id;
+}
+
+extern int macos9_js_fetch_test_deliver(JSContext *, JSValueConst, unsigned long, unsigned long);
+
+static int e3_count(const char *text, const char *key)
+{
+	int count = 0;
+	while ((text = strstr(text, key)) != NULL) { count++; text += strlen(key); }
+	return count;
+}
+
+static int e3_test(void)
+{
+	struct jsheap *h = NULL;
+	struct jsthread *t = NULL;
+	struct ms_diag_scope a, b;
+	struct ms_diag_error_provenance ep;
+	char page[32768], again[32768], scripts[32768], needle[160];
+	char text[120], tiny[300], medium[1400];
+	unsigned long sid, timer_sid, source, id, after;
+	int i;
+	struct qjs_realm_diag realm;
+	JSValue xhr;
+	extern void macsurf_qjs_pump_all(void);
+
+	fprintf(stderr, "=== Test 102f: JavaScript error provenance ===\n");
+	ms_diag_script_enter(&a, 700, MS_SCRIPT_CLASSIC, "outer");
+	ms_diag_script_set_source_id(&a, 101);
+	ms_diag_script_enter(&b, 700, MS_SCRIPT_CLASSIC, "inner");
+	E3_CHECK(ms_diag_cur_source() == 0);
+	ms_diag_script_set_source_id(&b, 202);
+	ms_diag_script_leave(&b, MS_SCR_DONE);
+	E3_CHECK(ms_diag_cur_source() == 101);
+	ms_diag_script_leave(&a, MS_SCR_DONE);
+	E3_CHECK(ms_diag_cur_source() == 0);
+
+	E3_CHECK(js_newheap(20000, &h) == NSERROR_OK);
+	E3_CHECK(js_newthread(h, NULL, NULL, &t) == NSERROR_OK);
+	sid = e3_exec(t, "var touched=0, stackReads=0;", 103, 1, 0);
+	E3_CHECK(sid != 0);
+	E3_CHECK(e3_exec(t, "var = ;", 104, 0, 0));
+	E3_CHECK(e3_exec(t, "throw 123;", 105, 0, 0));
+	E3_CHECK(e3_exec(t, "throw 'string';", 106, 0, 0));
+	E3_CHECK(e3_exec(t, "throw {};", 107, 0, 0));
+	E3_CHECK(e3_exec(t, "throw {toString:function(){touched++;return 'boom';},get stack(){stackReads++;return 'stack';}};", 108, 0, 0));
+	E3_CHECK(e3_exec(t, "if(touched!==1||stackReads!==1)throw 'extra observation';", 109, 1, 0));
+	E3_CHECK(e3_exec(t, "throw new Proxy({},{get:function(o,k){if(k==='stack'){stackReads++;return 'stack';}if(k==='toString')return function(){touched++;return 'proxy';};}});", 110, 0, 0));
+	E3_CHECK(e3_exec(t, "if(touched!==2||stackReads!==2)throw 'extra proxy observation';", 111, 1, 0));
+	E3_CHECK(e3_exec(t, "Promise.resolve(1); Promise.reject('rejected');", 112, 1, 0));
+	E3_CHECK(e3_exec(t, "Promise.resolve().then(function(){throw 'job rejected';});", 113, 1, 0));
+	E3_CHECK(e3_exec(t, "export var = ;", 114, 0, 1));
+	E3_CHECK(e3_exec(t, "throw 'module runtime';", 115, 1, 1));
+	(void)macsurf_diag_serialize_errors_since(page, sizeof(page), 0, 32);
+	E3_CHECK(strstr(page, "failure=parse_failed phase=compile boundary=script") != NULL);
+	E3_CHECK(strstr(page, "failure=runtime_failed phase=execute boundary=script") != NULL);
+	E3_CHECK(strstr(page, "frame=701 doc=702 source=104 realm=0") == NULL);
+	E3_CHECK(strstr(page, "failure=parse_failed phase=compile boundary=module") != NULL);
+	/* QuickJS module evaluation returns a Promise; rejection is separate. */
+	E3_CHECK(strstr(page, "err=1 nav=700 script=4") != NULL);
+	(void)macsurf_diag_serialize_scripts(scripts, sizeof(scripts));
+	E3_CHECK(strstr(scripts, "state=compile_fail reason=compile_failed error=1") != NULL);
+	E3_CHECK(strstr(scripts, "state=run_fail reason=runtime_failed error=2") != NULL);
+	snprintf(needle, sizeof(needle), "script=%lu ", sid);
+	E3_CHECK(strstr(scripts, needle) != NULL);
+
+	source = ms_diag_source_create(700, 701, 702);
+	timer_sid = e3_exec(t, "setTimeout(function(){throw {toString:function(){touched++;return 'timer';},get stack(){stackReads++;return 'stack';}};},0);", source, 1, 0);
+	E3_CHECK(timer_sid != 0);
+	(void)macsurf_diag_serialize_scripts(scripts, sizeof(scripts));
+	E3_CHECK(strstr(scripts, "error=0") != NULL);
+	for (i = 0; i < 140; i++) {
+		ms_diag_source_create(700, 701, 702);
+		ms_diag_script_enter(&a, 700, MS_SCRIPT_CLASSIC, "rollover");
+		ms_diag_script_set_source_id(&a, 500 + i);
+		ms_diag_script_leave(&a, MS_SCR_DONE);
+	}
+	for (i = 0; i < 5; i++) macsurf_qjs_pump_all();
+	E3_CHECK(e3_exec(t, "if(touched!==3||stackReads!==3)throw 'timer observation';", 116, 1, 0));
+	(void)macsurf_diag_serialize_errors_since(page, sizeof(page), 0, 32);
+	E3_CHECK(strstr(page, "failure=handler_failed phase=callback boundary=timer") != NULL);
+	snprintf(needle, sizeof(needle), "script=%lu task=0", timer_sid);
+	E3_CHECK(strstr(page, needle) == NULL);
+	snprintf(needle, sizeof(needle), "script=%lu task=", timer_sid);
+	E3_CHECK(strstr(page, needle) != NULL);
+	snprintf(needle, sizeof(needle), "source=%lu realm=", source);
+	E3_CHECK(strstr(page, needle) != NULL);
+	(void)macsurf_diag_serialize_javascript(again, sizeof(again));
+	E3_CHECK(e3_count(page, "failure=parse_failed") == 2);
+	E3_CHECK(e3_count(page, "failure=runtime_failed") == 5);
+	E3_CHECK(e3_count(page, "failure=promise_rejection") == 4);
+	E3_CHECK(e3_count(page, "failure=handler_failed") == 1);
+	E3_CHECK(strstr(again, "kind=script_parse_failed count=2") != NULL);
+	E3_CHECK(strstr(again, "kind=script_runtime_exception count=5") != NULL);
+	E3_CHECK(strstr(again, "kind=promise_rejection_unhandled count=4") != NULL);
+	E3_CHECK(strstr(again, "kind=event_handler_exception count=1") != NULL);
+	/* Both shims swallow exceptions. XHR previously never inspected e. */
+	E3_CHECK(e3_exec(t, "var xhrTouched=0; var e3xhr=new XMLHttpRequest(); e3xhr.onload=function(){throw {get message(){xhrTouched++;},toString:function(){xhrTouched++;return 'xhr';}};}; window.addEventListener('e3',function(){throw 'event';}); window.dispatchEvent({type:'e3'});", 117, 1, 0));
+	for (i = 0; i < macsurf_qjs_realm_count(); i++) {
+		if (macsurf_qjs_realm_get(i, &realm) && realm.state == QJS_REALM_LIVE && realm.ctx != NULL) break;
+	}
+	E3_CHECK(i < macsurf_qjs_realm_count());
+	xhr = JS_Eval(realm.ctx, "e3xhr", 5, "test", JS_EVAL_TYPE_GLOBAL);
+	E3_CHECK(macos9_js_fetch_test_deliver(realm.ctx, xhr, 117, timer_sid));
+	JS_FreeValue(realm.ctx, xhr);
+	E3_CHECK(e3_exec(t, "if(xhrTouched!==0)throw 'XHR coerced exception';", 118, 1, 0));
+	(void)macsurf_diag_serialize_errors_since(page, sizeof(page), 0, 32);
+	E3_CHECK(strstr(page, "failure=handler_failed phase=callback boundary=xhr") != NULL);
+	E3_CHECK(strstr(page, "failure=handler_failed phase=callback boundary=event") != NULL);
+	E3_CHECK(strstr(page, "source=117 realm=") != NULL);
+	js_destroythread(t);
+	js_destroyheap(h);
+	(void)macsurf_diag_serialize_errors_since(again, sizeof(again), 0, 32);
+	E3_CHECK(strcmp(page, again) == 0);
+
+	/* Max-width scalars and fully percent-encoded retained text exceed 1024. */
+	memset(&ep, 0, sizeof(ep));
+	ep.nav_id = ep.frame_id = ep.doc_id = ep.source_id = ep.script_id =
+		ep.task_id = ep.realm_id = ep.heap_id = ep.ctx_gen = 4294967295UL;
+	memset(text, '%', sizeof(text)-1); text[sizeof(text)-1] = 0;
+	id = ms_diag_error_record_ex(4294967295UL, 4294967295UL,
+		MS_FAIL_PROMISE_REJECTION, MS_PHASE_PROMISE, MS_BOUND_PROMISE, &ep, text, text);
+	(void)macsurf_diag_serialize_errors_since(page, sizeof(page), id-1, 1);
+	E3_CHECK(strstr(page, "message_len=119 message_truncated=0") != NULL);
+	E3_CHECK(strstr(page, "%25%25%25\n") != NULL);
+	E3_CHECK(strstr(page, "truncated=0\n") != NULL);
+	(void)macsurf_diag_serialize_errors_since(tiny, sizeof(tiny), id-1, 1);
+	E3_CHECK(strstr(tiny, "returned=0\n") != NULL);
+	E3_CHECK(strstr(tiny, "truncated=1\n") != NULL);
+	snprintf(needle, sizeof(needle), "next_after=%lu\n", id-1);
+	E3_CHECK(strstr(tiny, needle) != NULL);
+	(void)macsurf_diag_serialize_errors_since(medium, sizeof(medium), id-1, 1);
+	if (strstr(medium, "returned=0\n")) E3_CHECK(strstr(medium, needle) != NULL);
+	for (i = 0; i < 150; i++) {
+		snprintf(text, sizeof(text), "distinct-%d", i);
+		id = ms_diag_error_record_ex(0, 0, MS_FAIL_RUNTIME_FAILED,
+			MS_PHASE_EXECUTE, MS_BOUND_SCRIPT, &ep, text, text);
+	}
+	(void)macsurf_diag_serialize_errors_since(page, sizeof(page), id-1, 1);
+	E3_CHECK(strstr(page, "name_status=dropped") != NULL);
+	E3_CHECK(strstr(page, "message_status=dropped") != NULL);
+	E3_CHECK(strstr(page, "source=4294967295") != NULL);
+	after = id - 128;
+	while (after < id) {
+		unsigned long next;
+		(void)macsurf_diag_serialize_errors_since(page, sizeof(page), after, 7);
+		(void)macsurf_diag_serialize_errors_since(again, sizeof(again), after, 7);
+		E3_CHECK(strcmp(page, again) == 0);
+		E3_CHECK(strstr(page, "truncated=0\n") != NULL);
+		E3_CHECK(strstr(page, "lost=0\n") != NULL);
+		next = after + 7; if (next > id) next = id;
+		for (sid = after+1; sid <= next; sid++) {
+			snprintf(needle, sizeof(needle), "err=%lu ", sid);
+			E3_CHECK(strstr(page, needle) != NULL);
+		}
+		snprintf(needle, sizeof(needle), "next_after=%lu\n", next);
+		E3_CHECK(strstr(page, needle) != NULL);
+		after = next;
+	}
+	fprintf(stderr, "=== Test 102f PASS ===\n");
+	return 0;
+}
+#undef E3_CHECK
+
+#define E4_CHECK(x) do { if (!(x)) { fprintf(stderr, "E4 FAIL %s:%d: %s\n", __FILE__, __LINE__, #x); return 1; } } while (0)
+static int e4_test(void)
+{
+	struct ms_diag_error_provenance p;
+	char page[32768], again[32768], needle[80];
+	unsigned long id[130], parent, child, i;
+	struct jsheap *h = NULL;
+	struct jsthread *t = NULL;
+	struct qjs_realm_diag realm;
+	JSValue xhr;
+	const char *code;
+	extern void macsurf_qjs_pump_all(void);
+	memset(&p, 0, sizeof(p));
+	p.nav_id = 7; p.frame_id = 8; p.doc_id = 9; p.source_id = 10;
+	p.script_id = 11; p.task_id = 12; p.realm_id = 13; p.heap_id = 14; p.ctx_gen = 15;
+	for (i = 0; i < 130; i++) id[i] = ms_diag_async_register(MS_ASYNC_TIMER, &p);
+	(void)macsurf_diag_serialize_async_since(page, sizeof(page), 0, 10);
+	E4_CHECK(strstr(page, "async=3 ") != NULL);
+	E4_CHECK(strstr(page, "next_after=12\n") != NULL);
+	(void)macsurf_diag_serialize_async_since(again, sizeof(again), 12, 10);
+	E4_CHECK(strstr(again, "async=13 ") != NULL);
+	ms_diag_async_state(id[129], MS_ASYNC_CANCELLED);
+	ms_diag_async_state(id[129], MS_ASYNC_FIRING);
+	(void)macsurf_diag_serialize_async_since(page, sizeof(page), id[129] - 1, 1);
+	E4_CHECK(strstr(page, "state=cancelled") != NULL);
+	ms_diag_async_swap(id[128], &parent);
+	child = ms_diag_async_register(MS_ASYNC_XHR, &p);
+	ms_diag_async_swap(parent, NULL);
+	(void)macsurf_diag_serialize_async_since(page, sizeof(page), child - 1, 1);
+	snprintf(needle, sizeof(needle), "parent_async=%lu", id[128]);
+	E4_CHECK(strstr(page, needle) != NULL);
+	(void)macsurf_diag_serialize_async_since(page, sizeof(page), child - 1, 1);
+	(void)macsurf_diag_serialize_async_since(again, sizeof(again), child - 1, 1);
+	E4_CHECK(strcmp(page, again) == 0);
+	E4_CHECK(js_newheap(20000, &h) == NSERROR_OK);
+	E4_CHECK(js_newthread(h, NULL, NULL, &t) == NSERROR_OK);
+	code = "setTimeout(function(){throw new Error('e4 timer');},0);";
+	E4_CHECK(js_exec(t, (const unsigned char *)code, strlen(code), "e4-timer"));
+	macsurf_qjs_pump_all();
+	(void)macsurf_diag_serialize_async_since(page, sizeof(page), child, 8);
+	E4_CHECK(strstr(page, "kind=timer state=retired") != NULL);
+	(void)macsurf_diag_serialize_errors(page, sizeof(page));
+	E4_CHECK(strstr(page, "boundary=timer") != NULL);
+	E4_CHECK(strstr(page, "async=0") == NULL);
+	code = "var e4xhr=new XMLHttpRequest();e4xhr.onload=function(){throw new Error('e4 xhr');};";
+	E4_CHECK(js_exec(t, (const unsigned char *)code, strlen(code), "e4-xhr"));
+	for (i = 0; i < macsurf_qjs_realm_count(); i++) {
+		if (macsurf_qjs_realm_get(i, &realm) && realm.state == QJS_REALM_LIVE && realm.ctx != NULL) break;
+	}
+	E4_CHECK(i < macsurf_qjs_realm_count());
+	xhr = JS_Eval(realm.ctx, "e4xhr", 5, "e4", JS_EVAL_TYPE_GLOBAL);
+	E4_CHECK(macos9_js_fetch_test_deliver(realm.ctx, xhr, 401, 402));
+	JS_FreeValue(realm.ctx, xhr);
+	(void)macsurf_diag_serialize_async_since(page, sizeof(page), 0, 128);
+	E4_CHECK(strstr(page, "kind=xhr state=retired") != NULL);
+	(void)macsurf_diag_serialize_errors(page, sizeof(page));
+	E4_CHECK(strstr(page, "boundary=xhr") != NULL);
+	code = "var e4el=document.createElement('div'),e4hits=[];document.body.appendChild(e4el);"
+		"function e4a(){e4hits.push('a');setTimeout(function(){e4hits.push('t');},0);}"
+		"function e4b(){e4hits.push('b');throw new Error('e4 event');}"
+		"function e4c(){e4hits.push('c');}"
+		"e4el.addEventListener('e4',e4a,false);"
+		"e4el.addEventListener('e4',e4b,true);"
+		"e4el.addEventListener('e4',e4c,false);"
+		"e4el.addEventListener('e4',e4a,false);"
+		"e4el.removeEventListener('e4',e4b,true);"
+		"e4el.__msFireLocal({type:'e4'});";
+	E4_CHECK(js_exec(t, (const unsigned char *)code, strlen(code), "e4-event"));
+	code = "if(e4hits.join('')!=='')throw new Error('e4 event alignment');";
+	E4_CHECK(js_exec(t, (const unsigned char *)code, strlen(code), "e4-event-check"));
+	macsurf_qjs_pump_all();
+	code = "if(e4hits.join('')!=='')throw new Error('e4 child timer');";
+	E4_CHECK(js_exec(t, (const unsigned char *)code, strlen(code), "e4-event-timer-check"));
+	(void)macsurf_diag_serialize_async_since(page, sizeof(page), 0, 128);
+	js_destroythread(t); js_destroyheap(h);
+	fprintf(stderr, "=== Test E4 ledger PASS ===\n");
+	return 0;
+}
+#undef E4_CHECK
+
+static int e3_coercion_test(void)
+{
+	struct jsheap *h = NULL;
+	struct jsthread *t = NULL;
+	const char *code;
+	unsigned char ok;
+	extern void macsurf_qjs_pump_all(void);
+	if (js_newheap(20000, &h) != NSERROR_OK || js_newthread(h, NULL, NULL, &t) != NSERROR_OK) return 1;
+	code = "var touched=0,reads=0; throw {toString:function(){touched++;return 'boom';},get stack(){reads++;return 'stack';}};";
+	ok = js_exec(t, (const unsigned char *)code, strlen(code), "coercion");
+	if (ok) return 1;
+	code = "if(touched!==1||reads!==1)throw 'coercion count';setTimeout(function(){throw {toString:function(){touched++;return 'timer';},get stack(){reads++;return 'stack';}};},0);";
+	if (!js_exec(t, (const unsigned char *)code, strlen(code), "arm")) return 1;
+	macsurf_qjs_pump_all();
+	code = "if(touched!==2||reads!==2)throw 'timer coercion count';";
+	if (!js_exec(t, (const unsigned char *)code, strlen(code), "check")) return 1;
+	js_destroythread(t); js_destroyheap(h);
+	fprintf(stderr, "COERCION PASS: script=1+1 timer=1+1 (toString+stack getter)\n");
+	return 0;
+}
+
+static void
+content_user_regression_cb(struct content *c, content_msg msg,
+		const union content_msg_data *data, void *pw)
+{
+	(void)c;
+	(void)msg;
+	(void)data;
+	(void)pw;
+}
+
 int main(int argc, char **argv)
 {
 	char *html_src_big = build_large_doc(300);
@@ -715,6 +1014,19 @@ int main(int argc, char **argv)
 	/* Defined only by the harness build. It injects a post-detach box-build
 	 * failure, so we can prove that the old rendered tree is restored. */
 	extern void macsurf_reconvert_test_fail_once(void);
+	/* The full reconvert harness intentionally exercises unrelated browser
+	 * surfaces before Test 102.  Keep a focused entry point for this bounded
+	 * diagnostics-state test so it remains independently runnable. */
+	if (argc == 2 && strcmp(argv[1], "--diag-e3") == 0) return e3_test();
+	if (argc == 2 && strcmp(argv[1], "--diag-e4") == 0) return e4_test();
+	if (argc == 2 && strcmp(argv[1], "--error-coercion") == 0) return e3_coercion_test();
+	if (argc == 2 && (strcmp(argv[1], "--diag-phase2") == 0 ||
+			strcmp(argv[1], "--diag-phase3") == 0 ||
+			strcmp(argv[1], "--diag-phase4") == 0))
+		goto phase2_diag;
+
+	if (argc == 2 && strcmp(argv[1], "--cssprobe") == 0)
+		return cssprobe_test_css_transitions() ? 0 : 1;
 
 	if (argc >= 4 && strcmp(argv[1], "--layout") == 0) {
 		g_layout_html_path = argv[2];
@@ -8832,6 +9144,7 @@ box_coords(bx, &cx, &cy);
 					struct content *c);
 			macsurf_js_notify_content_freed((struct content *)&t69c);
 		}
+		macos9_content_unregister((struct content *)&t69c);
 		js_destroyheap(t69heap);
 	}
 	fprintf(stderr, "=== Test 69 PASS: MutationObserver delivers a real "
@@ -9096,6 +9409,7 @@ box_coords(bx, &cx, &cy);
 					struct content *c);
 			macsurf_js_notify_content_freed((struct content *)&t70c);
 		}
+		macos9_content_unregister((struct content *)&t70c);
 		js_destroyheap(t70heap);
 	}
 	fprintf(stderr, "=== Test 70 PASS: querySelectorAll + textContent + "
@@ -12483,6 +12797,1458 @@ box_coords(bx, &cx, &cy);
 		}
 		fprintf(stderr, "=== Test 101 PASS ===\n");
 	} /* End of Test 99 scope */
+
+	phase2_diag:
+	if (guit == NULL) {
+		memset(&g_misc_table, 0, sizeof(g_misc_table));
+		g_misc_table.schedule = harness_schedule;
+		{
+			static struct netsurf_table nt;
+			memset(&nt, 0, sizeof(nt));
+			nt.misc = &g_misc_table;
+			guit = &nt;
+		}
+		corestrings_init();
+		if (css_hint_init() != NSERROR_OK) {
+			fprintf(stderr, "FAIL: css_hint_init\n");
+			return 1;
+		}
+	}
+	/* --- Test 102: Phase 2 negative-state diagnostics ------------------
+	 * Exercise the diagnostic boundary directly: these are deterministic
+	 * MacSurf-owned state transitions, not an attempt to emulate a page or
+	 * network stack in the Linux harness. */
+	{
+		char p0[4096], p1[4096], p2[4096], settle[1024], ops[4096], timers[2048];
+		char trace[16384], trace_short[512];
+		char readiness[2048];
+		char needle[128];
+		unsigned long op;
+		unsigned long mod;
+		int ti;
+
+		fprintf(stderr, "\n=== Test 102: Phase 2 negative-state diagnostics ===\n");
+
+		/* A decline before wire start is terminal and leaves no pending
+		 * request contract; its structured operation still retains req=0. */
+		op = ms_diag_operation_begin(MS_OP_FETCH, MS_ANSWER_NATIVE);
+		ms_diag_operation_record(op, MS_OP_FETCH, MS_OP_ATTEMPT,
+				MS_OP_DECLINE, MS_OPR_PRE_ABORTED,
+				MS_ANSWER_NATIVE, 0);
+		(void)macsurf_diag_serialize_operations(ops, (long)sizeof(ops));
+		snprintf(needle, sizeof(needle), "op=%lu", op);
+		if (strstr(ops, needle) == NULL ||
+				strstr(ops, "reason=pre_aborted") == NULL ||
+				strstr(ops, "req=0") == NULL) {
+			fprintf(stderr, "FAIL: Test 102 pre-wire decline missing\n");
+			return 1;
+		}
+		/* Readiness is a progress state machine, not an elapsed-load guess.
+		 * The deterministic harness clock is zero, but a real transition still
+		 * makes its progress sequence visible and reports active. */
+		(void)macsurf_diag_serialize_readiness(readiness, (long)sizeof(readiness));
+		if (strstr(readiness, "MSDIAG 1 readiness\n") == NULL ||
+				strstr(readiness, "progress_seq=0") != NULL ||
+				strstr(readiness, "state=active\n") == NULL ||
+				strstr(readiness, "capture_ready=0\n") == NULL) {
+			fprintf(stderr, "FAIL: Test 102 readiness progress state\n");
+			return 1;
+		}
+
+		/* A wire-started operation remains visible as WAITING until its
+		 * explicit settle record, and serialisation must not mutate it. */
+		op = ms_diag_operation_begin(MS_OP_FETCH, MS_ANSWER_NATIVE);
+		ms_diag_operation_record(op, MS_OP_FETCH, MS_OP_WIRE_START,
+				MS_OP_OK, MS_OPR_NONE, MS_ANSWER_NATIVE, 8123);
+		(void)macsurf_diag_serialize_pending(p0, (long)sizeof(p0));
+		(void)macsurf_diag_serialize_pending(p1, (long)sizeof(p1));
+		snprintf(needle, sizeof(needle), "op=%lu", op);
+		if (strcmp(p0, p1) != 0 || strstr(p0, needle) == NULL ||
+				strstr(p0, "expected=settle") == NULL) {
+			fprintf(stderr, "FAIL: Test 102 operation pending/reread\n");
+			return 1;
+		}
+		(void)macsurf_diag_serialize_settlement(settle, (long)sizeof(settle));
+		if (strstr(settle, "settled=0\nreason=unresolved_contracts") == NULL) {
+			fprintf(stderr, "FAIL: Test 102 unresolved settlement\n");
+			return 1;
+		}
+		/* A new top-level run must not inherit this old session contract into
+		 * its readiness decision; `pending` still retains it for diagnosis. */
+		macsurf_diag_navigation_begin();
+		(void)macsurf_diag_serialize_readiness(readiness, (long)sizeof(readiness));
+		if (strstr(readiness, "run_epoch=1\n") == NULL ||
+				strstr(readiness, "pending_contracts=0\n") == NULL ||
+				strstr(readiness, "state=active\n") == NULL) {
+			fprintf(stderr, "FAIL: Test 102 readiness navigation epoch\n");
+			return 1;
+		}
+		ms_diag_operation_record(op, MS_OP_FETCH, MS_OP_SETTLE,
+				MS_OP_RESOLVE, MS_OPR_NONE, MS_ANSWER_NATIVE, 8123);
+		(void)macsurf_diag_serialize_pending(p2, (long)sizeof(p2));
+		if (strstr(p2, needle) != NULL) {
+			fprintf(stderr, "FAIL: Test 102 resolved operation still pending\n");
+			return 1;
+		}
+
+		/* Observe -> check -> callback is a real shim-owned contract.  The
+		 * callback is terminal for the currently scheduled check; no later
+		 * scroll reevaluation is invented by diagnostics. */
+		ms_diag_io_record(991, MS_IO_OBSERVE, ".diag-pending",
+				0, 0, 0, 0, 0, 0, 0);
+		ms_diag_timer_arm(9191, 77, 88, 99, 3);
+		ms_diag_io_timer_bind(991, ".diag-pending", 9191);
+		(void)macsurf_diag_serialize_pending(p0, (long)sizeof(p0));
+		if (strstr(p0, "kind=io io=991") == NULL ||
+				strstr(p0, "expected=check") == NULL ||
+				strstr(p0, "timer=9191 timer_state=armed") == NULL) {
+			fprintf(stderr, "FAIL: Test 102 IO observe pending\n");
+			return 1;
+		}
+		ms_diag_timer_state(9191, MS_TIMER_FIRING);
+		ms_diag_timer_state(9191, MS_TIMER_FIRED);
+		/* Long-lived pages create enough unrelated timers to wrap the bounded
+		 * table. A joined IO record must survive that rotation. */
+		for (ti = 0; ti < 300; ti++)
+			ms_diag_timer_arm((unsigned long)(10000 + ti), 1, 2, 3, 4);
+		(void)macsurf_diag_serialize_timers(timers, (long)sizeof(timers));
+		if (strstr(timers, "timer=9191 nav=77 origin_script=88 origin_task=99 ctx_gen=3 state=fired") == NULL) {
+			fprintf(stderr, "FAIL: Test 102 IO timer join\n");
+			return 1;
+		}
+		/* If ordinary history already rotated before the JS-side bind, the
+		 * contract still retains a lifecycle record for its exact timer id. */
+		ms_diag_io_record(992, MS_IO_OBSERVE, ".diag-recover",
+				0, 0, 0, 0, 0, 0, 0);
+		ms_diag_io_timer_bind(992, ".diag-recover", 9292);
+		ms_diag_timer_state(9292, MS_TIMER_FIRED);
+		(void)macsurf_diag_serialize_timers(timers, (long)sizeof(timers));
+		if (strstr(timers, "timer=9292 nav=") == NULL ||
+				strstr(timers, "state=fired") == NULL) {
+			fprintf(stderr, "FAIL: Test 102 IO timer recovery\n");
+			return 1;
+		}
+		/* The JS shim can report that it has armed an expectation before the
+		 * native scheduler allocates its authoritative timer id.  Do not render
+		 * that zero id as a fictitious armed timer. */
+		ms_diag_io_record(993, MS_IO_OBSERVE, ".diag-expect",
+				0, 0, 0, 0, 0, 0, 0);
+		ms_diag_io_timer_expect(993, ".diag-expect");
+		(void)macsurf_diag_serialize_pending(p0, (long)sizeof(p0));
+		if (strstr(p0, "kind=io io=993") == NULL ||
+				strstr(p0, "timer=0 timer_state=awaiting_native_allocation timer_native=not_entered") == NULL) {
+			fprintf(stderr, "FAIL: Test 102 IO native allocation expectation\n");
+			return 1;
+		}
+		ms_diag_io_timer_native_state(993, ".diag-expect",
+				MS_IO_TIMER_NATIVE_ENTERED);
+		(void)macsurf_diag_serialize_pending(p0, (long)sizeof(p0));
+		if (strstr(p0, "timer_native=entered") == NULL) {
+			fprintf(stderr, "FAIL: Test 102 IO native timer entry\n");
+			return 1;
+		}
+		ms_diag_io_record(994, MS_IO_OBSERVE, ".diag-reject",
+				0, 0, 0, 0, 0, 0, 0);
+		ms_diag_io_timer_expect(994, ".diag-reject");
+		ms_diag_io_timer_native_state(994, ".diag-reject",
+				MS_IO_TIMER_NATIVE_NO_SLOT);
+		(void)macsurf_diag_serialize_pending(p0, (long)sizeof(p0));
+		if (strstr(p0, "kind=io io=994") == NULL ||
+				strstr(p0, "timer=0 timer_state=unbound timer_native=rejected_no_slot") == NULL) {
+			fprintf(stderr, "FAIL: Test 102 IO native timer rejection\n");
+			return 1;
+		}
+		ms_diag_io_record(994, MS_IO_UNOBSERVE, ".diag-reject",
+				0, 0, 0, 0, 0, 0, 0);
+		ms_diag_timer_arm(9393, 7, 8, 9, 10);
+		ms_diag_io_timer_bind(993, ".diag-expect", 9393);
+		ms_diag_io_record(992, MS_IO_CHECK, ".diag-recover",
+				0, 0, 0, 0, 1, 100, 0);
+		ms_diag_io_record(992, MS_IO_CALLBACK, ".diag-recover",
+				0, 0, 0, 0, 0, 0, 1);
+		ms_diag_io_record(991, MS_IO_CHECK, ".diag-pending",
+				0, 0, 0, 0, 1, 100, 0);
+		ms_diag_io_record(991, MS_IO_CALLBACK, ".diag-pending",
+				0, 0, 0, 0, 0, 0, 1);
+		ms_diag_io_record(993, MS_IO_CHECK, ".diag-expect",
+				0, 0, 0, 0, 1, 100, 0);
+		ms_diag_io_record(993, MS_IO_CALLBACK, ".diag-expect",
+				0, 0, 0, 0, 0, 0, 1);
+		(void)macsurf_diag_serialize_pending(p1, (long)sizeof(p1));
+		if (strstr(p1, "kind=io io=991") != NULL) {
+			fprintf(stderr, "FAIL: Test 102 IO callback still pending\n");
+			return 1;
+		}
+
+		/* A known module definition makes its lazy waiter eligible, but only
+		 * the callback release completes the contract. */
+		mod = ms_diag_module_id("diag-wait-module");
+		ms_diag_module_record(mod, 0, MS_MOD_WAIT_REGISTERED,
+				MS_MOD_REASON_NONE, 0, 761);
+		ms_diag_module_record(mod, 0, MS_MOD_DEFINE,
+				MS_MOD_REASON_NONE, 0, 0);
+		(void)macsurf_diag_serialize_pending(p0, (long)sizeof(p0));
+		if (strstr(p0, "kind=module_wait wait=761") == NULL ||
+				strstr(p0, "eligible=1") == NULL ||
+				strstr(p0, "expected=release") == NULL) {
+			fprintf(stderr, "FAIL: Test 102 eligible module wait\n");
+			return 1;
+		}
+		ms_diag_module_record(mod, 0, MS_MOD_CALLBACK_BEGIN,
+				MS_MOD_REASON_NONE, 0, 761);
+		(void)macsurf_diag_serialize_pending(p1, (long)sizeof(p1));
+		if (strstr(p1, "expected=callback_return") == NULL) {
+			fprintf(stderr, "FAIL: Test 102 module callback begin\n");
+			return 1;
+		}
+		ms_diag_module_record(mod, 0, MS_MOD_CALLBACK_RETURN,
+				MS_MOD_REASON_NONE, 0, 761);
+		(void)macsurf_diag_serialize_pending(p2, (long)sizeof(p2));
+		if (strstr(p2, "kind=module_wait wait=761") != NULL) {
+			fprintf(stderr, "FAIL: Test 102 module callback still pending\n");
+			return 1;
+		}
+		(void)macsurf_diag_serialize_settlement(settle, (long)sizeof(settle));
+		if (strstr(settle, "settled=1\nreason=no_known_unresolved_contracts") == NULL ||
+				strstr(settle, "page_complete=unknown") == NULL) {
+			fprintf(stderr, "FAIL: Test 102 conservative settled state\n");
+			return 1;
+		}
+
+		/* The flight recorder is host-drained in chronological pages.  Once
+		 * its bounded RAM window rolls, the exact unavailable range must be
+		 * reported; a short AppleEvent reply must say it stopped early too. */
+		macsurf_trace_arm(0UL, 2);
+		for (ti = 0; ti < 260; ti++) {
+			macsurf_trace_emit(MS_TC_LAYOUT, MS_TE_LAYOUT_DONE, 0, 0,
+				(unsigned long)ti, 0);
+		}
+		(void)macsurf_trace_serialize_since(trace, (long)sizeof(trace), 0, 8);
+		if (strstr(trace, "MSDIAG 2 trace\n") == NULL ||
+				strstr(trace, "ring_capacity=256\n") == NULL ||
+				strstr(trace, "lost=1\n") == NULL ||
+				strstr(trace, "lost_from=1\n") == NULL ||
+				strstr(trace, "lost_to=4\n") == NULL ||
+				strstr(trace, "event seq=5 ") == NULL ||
+				strstr(trace, "event seq=12 ") == NULL ||
+				strstr(trace, "returned=8\nnext_after=12\n") == NULL ||
+				strstr(trace, "complete=0\ntruncated=0\n") == NULL) {
+			fprintf(stderr, "FAIL: Test 102 trace cursor/loss accounting\n");
+			return 1;
+		}
+		(void)macsurf_trace_serialize_since(trace, (long)sizeof(trace), 12, 2);
+		if (strstr(trace, "lost=0\n") == NULL ||
+				strstr(trace, "event seq=13 ") == NULL ||
+				strstr(trace, "event seq=14 ") == NULL ||
+				strstr(trace, "returned=2\nnext_after=14\n") == NULL) {
+			fprintf(stderr, "FAIL: Test 102 trace cursor resume\n");
+			return 1;
+		}
+		(void)macsurf_trace_serialize_since(trace, (long)sizeof(trace), 260, 8);
+		if (strstr(trace, "returned=0\nnext_after=260\n") == NULL ||
+				strstr(trace, "complete=1\ntruncated=0\n") == NULL ||
+				strstr(trace, "event seq=") != NULL) {
+			fprintf(stderr, "FAIL: Test 102 trace cursor at latest\n");
+			return 1;
+		}
+		(void)macsurf_trace_serialize_since(trace_short,
+				(long)sizeof(trace_short), 14, 4);
+		if (strstr(trace_short, "truncated=1\n") == NULL ||
+				strstr(trace_short, "complete=0\n") == NULL) {
+			fprintf(stderr, "FAIL: Test 102 trace reply truncation\n");
+			return 1;
+		}
+		macsurf_trace_disarm();
+		fprintf(stderr, "=== Test 102 PASS: contracts retain negative state and settle conservatively ===\n");
+	}
+
+	/* --- Test 102a: script execution history must disclose rotation ------- */
+	{
+		char scripts[16384];
+		char page[16384];
+		char tiny[400];
+		char name[32];
+		int i;
+		fprintf(stderr, "\n=== Test 102a: script history loss accounting ===\n");
+		for (i = 0; i < 65; i++) {
+			struct ms_diag_scope scope;
+			snprintf(name, sizeof(name), "history-script-%d", i);
+			ms_diag_script_enter(&scope, 601, MS_SCRIPT_CLASSIC, name);
+			ms_diag_script_leave(&scope, MS_SCR_DONE);
+		}
+		(void)macsurf_diag_serialize_scripts(scripts, (long)sizeof(scripts));
+		if (strstr(scripts, "history=scripts records_total=65 capacity=64 first_available=2 latest=65 overwritten=1") == NULL ||
+				strstr(scripts, "name=history-script-0") != NULL ||
+				strstr(scripts, "name=history-script-64") == NULL) {
+			fprintf(stderr, "FAIL: Test 102a script history loss contract\n"); return 1;
+		}
+		(void)macsurf_diag_serialize_scripts_since(page, (long)sizeof(page),
+			0, 3);
+		if (strstr(page, "lost_from=1\nlost_to=1\n") == NULL ||
+				strstr(page, "returned=3\nnext_after=4\ncomplete=0\ntruncated=0\n") == NULL ||
+				strstr(page, "script=2 ") == NULL ||
+				strstr(page, "script=4 ") == NULL ||
+				strstr(page, "script=5 ") != NULL) {
+			fprintf(stderr, "FAIL: Test 102a first script page\n"); return 1;
+		}
+		(void)macsurf_diag_serialize_scripts_since(page, (long)sizeof(page),
+			4, 60);
+		if (strstr(page, "returned=60\nnext_after=64\ncomplete=0\ntruncated=0\n") == NULL ||
+				strstr(page, "script=5 ") == NULL ||
+				strstr(page, "script=64 ") == NULL ||
+				strstr(page, "script=65 ") != NULL) {
+			fprintf(stderr, "FAIL: Test 102a continuation script page\n"); return 1;
+		}
+		(void)macsurf_diag_serialize_scripts_since(page, (long)sizeof(page),
+			64, 60);
+		if (strstr(page, "returned=1\nnext_after=65\ncomplete=1\ntruncated=0\n") == NULL ||
+				strstr(page, "script=65 ") == NULL) {
+			fprintf(stderr, "FAIL: Test 102a final script page\n"); return 1;
+		}
+		(void)macsurf_diag_serialize_scripts_since(page, (long)sizeof(page),
+			65, 60);
+		if (strstr(page, "returned=0\nnext_after=65\ncomplete=1\ntruncated=0\n") == NULL ||
+				strstr(page, "script=") != NULL) {
+			fprintf(stderr, "FAIL: Test 102a exhausted script cursor\n"); return 1;
+		}
+		(void)macsurf_diag_serialize_scripts_since(tiny, (long)sizeof(tiny),
+			2, 3);
+		if (strstr(tiny, "returned=0\nnext_after=2\ncomplete=0\ntruncated=1\n") == NULL) {
+			fprintf(stderr, "FAIL: Test 102a script reply truncation\n"); return 1;
+		}
+		fprintf(stderr, "=== Test 102a PASS: script history loss is explicit ===\n");
+	}
+
+	/* --- Test 102b: per-script execution ledger and provenance ------------ */
+	{
+		char scripts[16384];
+		char page[16384];
+		struct ms_diag_scope scope;
+		struct ms_diag_scope outer_scope;
+		char name[32];
+		int i;
+
+		fprintf(stderr, "\n=== Test 102b: per-script execution ledger ===\n");
+
+		/* 1. Successful inline execution with provenance and realm attribution */
+		ms_diag_script_enter(&scope, 601, MS_SCRIPT_CLASSIC, "ledger_inline_ok");
+		ms_diag_script_set_provenance(&scope, 11, 12);
+		ms_diag_script_set_source(&scope, MS_SCR_SRC_INLINE, 1, 16, 0x12345678UL);
+		ms_diag_script_note_realm(scope.my_id, 21, 22, 23);
+		ms_diag_script_note_compile(scope.my_id, MS_COMPILE_OK, 100, 0);
+		ms_diag_script_note_execute(scope.my_id, MS_EXEC_OK, 200, 0);
+		ms_diag_script_leave(&scope, MS_SCR_DONE);
+
+		(void)macsurf_diag_serialize_scripts(scripts, (long)sizeof(scripts));
+		if (strstr(scripts, "coverage=execution_attempts\n") == NULL ||
+				strstr(scripts, "name=ledger_inline_ok") == NULL ||
+				strstr(scripts, "frame=11 doc=12 realm=21 heap=22 ctx_gen=23") == NULL ||
+				strstr(scripts, "source_kind=inline ord=1 len=16 hash=12345678") == NULL ||
+				strstr(scripts, "compile=ok compile_us=100 execute=ok run_us=200 state=done reason=ok error=0") == NULL) {
+			fprintf(stderr, "FAIL: Test 102b positive execution ledger entry\n"); return 1;
+		}
+
+		/* 2. Parse / compile failure with error id join */
+		ms_diag_script_enter(&scope, 601, MS_SCRIPT_CLASSIC, "ledger_syntax_fail");
+		ms_diag_script_set_provenance(&scope, 11, 12);
+		ms_diag_script_set_source(&scope, MS_SCR_SRC_INLINE, 2, 24, 0x87654321UL);
+		ms_diag_script_note_compile(scope.my_id, MS_COMPILE_FAILED, 80, 77);
+		ms_diag_script_leave(&scope, MS_SCR_COMPILE_FAIL);
+
+		(void)macsurf_diag_serialize_scripts(scripts, (long)sizeof(scripts));
+		if (strstr(scripts, "name=ledger_syntax_fail") == NULL ||
+				strstr(scripts, "compile=failed compile_us=80 execute=not_started run_us=0 state=compile_fail reason=compile_failed error=77") == NULL) {
+			fprintf(stderr, "FAIL: Test 102b compile failure ledger entry\n"); return 1;
+		}
+
+		/* 3. Runtime failure with error id join */
+		ms_diag_script_enter(&scope, 601, MS_SCRIPT_CLASSIC, "ledger_runtime_fail");
+		ms_diag_script_set_provenance(&scope, 11, 12);
+		ms_diag_script_set_source(&scope, MS_SCR_SRC_INLINE, 3, 32, 0xabcdef01UL);
+		ms_diag_script_note_compile(scope.my_id, MS_COMPILE_OK, 90, 0);
+		ms_diag_script_note_execute(scope.my_id, MS_EXEC_FAILED, 300, 88);
+		ms_diag_script_leave(&scope, MS_SCR_RUN_FAIL);
+
+		(void)macsurf_diag_serialize_scripts(scripts, (long)sizeof(scripts));
+		if (strstr(scripts, "name=ledger_runtime_fail") == NULL ||
+				strstr(scripts, "compile=ok compile_us=90 execute=failed run_us=300 state=run_fail reason=runtime_failed error=88") == NULL) {
+			fprintf(stderr, "FAIL: Test 102b runtime failure ledger entry\n"); return 1;
+		}
+
+		/* 4. Monotonicity: specific engine compile failure cannot be downgraded to run_fail */
+		ms_diag_script_enter(&scope, 601, MS_SCRIPT_CLASSIC, "ledger_monotonic");
+		ms_diag_script_note_compile(scope.my_id, MS_COMPILE_FAILED, 50, 99);
+		/* generic wrapper leave with MS_SCR_RUN_FAIL must not overwrite compile failure */
+		ms_diag_script_leave(&scope, MS_SCR_RUN_FAIL);
+
+		(void)macsurf_diag_serialize_scripts(scripts, (long)sizeof(scripts));
+		if (strstr(scripts, "name=ledger_monotonic") == NULL ||
+				strstr(scripts, "compile=failed compile_us=50 execute=not_started run_us=0 state=compile_fail reason=compile_failed error=99") == NULL) {
+			fprintf(stderr, "FAIL: Test 102b monotonicity preserved\n"); return 1;
+		}
+
+		/* 5. Active execution safety under ring rollover */
+		ms_diag_script_enter(&outer_scope, 601, MS_SCRIPT_CLASSIC, "outer_active");
+		ms_diag_script_set_source(&outer_scope, MS_SCR_SRC_EXTERNAL, 1, 100, 0x11223344UL);
+		for (i = 0; i < 65; i++) {
+			struct ms_diag_scope inner_scope;
+			snprintf(name, sizeof(name), "inner-%d", i);
+			ms_diag_script_enter(&inner_scope, 601, MS_SCRIPT_CLASSIC, name);
+			ms_diag_script_leave(&inner_scope, MS_SCR_DONE);
+		}
+		ms_diag_script_note_compile(outer_scope.my_id, MS_COMPILE_OK, 40, 0);
+		ms_diag_script_note_execute(outer_scope.my_id, MS_EXEC_OK, 500, 0);
+		ms_diag_script_leave(&outer_scope, MS_SCR_DONE);
+
+		/* 6. Paged ledger reading */
+		(void)macsurf_diag_serialize_scripts_since(page, (long)sizeof(page),
+			outer_scope.my_id - 10, 5);
+		if (strstr(page, "MSDIAG 2 scripts\n") == NULL ||
+				strstr(page, "coverage=execution_attempts\n") == NULL ||
+				strstr(page, "returned=5\n") == NULL ||
+				strstr(page, "compile=ok") == NULL) {
+			fprintf(stderr, "FAIL: Test 102b paged ledger access\n"); return 1;
+		}
+
+		fprintf(stderr, "=== Test 102b PASS: per-script execution ledger is granular and monotonic ===\n");
+	}
+
+	/* --- Test 102c: script source discovery and lifecycle ledger ------- */
+	{
+		char sources[16384];
+		char scripts[16384];
+		char page[16384];
+		struct ms_diag_scope scope;
+		unsigned long sid1, sid2, sid3, sid4, sid5, sid6;
+		int i;
+
+		fprintf(stderr, "\n=== Test 102c: script source discovery and lifecycle ledger ===\n");
+
+		/* 1. Inline classic source executed successfully (Frame 1, Doc 101) */
+		sid1 = ms_diag_source_create(701, 1, 101);
+		ms_diag_source_set_classification(sid1,
+			MS_SRC_KIND_CLASSIC, MS_SRC_DECL_CLASSIC, MS_SRC_TREAT_DIRECT,
+			MS_SRC_SCHED_INLINE, 0, NULL);
+		ms_diag_source_set_inline_details(sid1, 64, 0x11112222UL);
+		ms_diag_script_enter(&scope, 701, MS_SCRIPT_CLASSIC, "inline_test_102c");
+		ms_diag_script_set_provenance(&scope, 1, 101);
+		ms_diag_script_set_source_id(&scope, sid1);
+		ms_diag_script_set_source(&scope, MS_SCR_SRC_INLINE, 1, 64, 0x11112222UL);
+		ms_diag_source_note_execution(sid1, scope.my_id);
+		ms_diag_script_leave(&scope, MS_SCR_DONE);
+
+		(void)macsurf_diag_serialize_sources(sources, (long)sizeof(sources));
+		(void)macsurf_diag_serialize_scripts(scripts, (long)sizeof(scripts));
+
+		if (strstr(sources, "coverage=discovered_sources\n") == NULL ||
+				strstr(sources, "nav=701 frame=1 doc=101 kind=classic declared_kind=classic treatment=direct schedule=inline blocking=0 state=executed reason=ok") == NULL ||
+				strstr(sources, "len=64 hash=11112222 url=-") == NULL) {
+			fprintf(stderr, "FAIL: Test 102c inline source execution entry\n"); return 1;
+		}
+		{
+			char expected_join[64];
+			snprintf(expected_join, sizeof(expected_join), "source=%lu", sid1);
+			if (strstr(scripts, expected_join) == NULL) {
+				fprintf(stderr, "FAIL: Test 102c script-to-source join\n"); return 1;
+			}
+			snprintf(expected_join, sizeof(expected_join), "script=%lu", scope.my_id);
+			if (strstr(sources, expected_join) == NULL) {
+				fprintf(stderr, "FAIL: Test 102c source-to-script join\n"); return 1;
+			}
+		}
+
+		/* 2. External module script with classic fallback on Frame 2, Doc 102 */
+		sid2 = ms_diag_source_create(701, 2, 102);
+		ms_diag_source_set_classification(sid2,
+			MS_SRC_KIND_CLASSIC, MS_SRC_DECL_MODULE, MS_SRC_TREAT_CLASSIC_FALLBACK,
+			MS_SRC_SCHED_ASYNC, 0, "https://example.com/app-module.js");
+		ms_diag_source_note_fetch_start(sid2, 0);
+		ms_diag_source_note_fetch_done(sid2, 1024, 0x33334444UL);
+		ms_diag_script_enter(&scope, 701, MS_SCRIPT_CLASSIC, "https://example.com/app-module.js");
+		ms_diag_script_set_provenance(&scope, 2, 102);
+		ms_diag_script_set_source_id(&scope, sid2);
+		ms_diag_script_set_source(&scope, MS_SCR_SRC_EXTERNAL, 2, 1024, 0x33334444UL);
+		ms_diag_source_note_execution(sid2, scope.my_id);
+		ms_diag_script_leave(&scope, MS_SCR_DONE);
+
+		(void)macsurf_diag_serialize_sources(sources, (long)sizeof(sources));
+		if (strstr(sources, "nav=701 frame=2 doc=102 kind=classic declared_kind=module treatment=classic_fallback schedule=async blocking=0 state=executed reason=ok") == NULL ||
+				strstr(sources, "len=1024 hash=33334444 url=https://example.com/app-module.js") == NULL) {
+			fprintf(stderr, "FAIL: Test 102c external module classic fallback on frame 2\n"); return 1;
+		}
+
+		/* 3. Discovered external source with network error callback before execution attempt */
+		sid3 = ms_diag_source_create(701, 1, 101);
+		ms_diag_source_set_classification(sid3,
+			MS_SRC_KIND_CLASSIC, MS_SRC_DECL_CLASSIC, MS_SRC_TREAT_DIRECT,
+			MS_SRC_SCHED_SYNC, 1, "https://example.com/404.js");
+		ms_diag_source_note_terminal(sid3, MS_SRC_STATE_FETCH_FAILED, MS_SRC_REASON_NETWORK_ERROR);
+
+		(void)macsurf_diag_serialize_sources(sources, (long)sizeof(sources));
+		if (strstr(sources, "schedule=sync blocking=1 state=fetch_failed reason=network_error script=0") == NULL ||
+				strstr(sources, "url=https://example.com/404.js") == NULL) {
+			fprintf(stderr, "FAIL: Test 102c fetch-failed (network_error) source entry (script=0)\n"); return 1;
+		}
+
+		/* 3b. Discovered external source with immediate fetch start failure (script=0) */
+		{
+			unsigned long sid3b = ms_diag_source_create(701, 1, 101);
+			ms_diag_source_set_classification(sid3b,
+				MS_SRC_KIND_CLASSIC, MS_SRC_DECL_CLASSIC, MS_SRC_TREAT_DIRECT,
+				MS_SRC_SCHED_SYNC, 1, "https://invalid-uri/");
+			ms_diag_source_note_terminal(sid3b, MS_SRC_STATE_FETCH_FAILED, MS_SRC_REASON_FETCH_START_FAILED);
+			(void)macsurf_diag_serialize_sources(sources, (long)sizeof(sources));
+			if (strstr(sources, "state=fetch_failed reason=fetch_start_failed script=0") == NULL ||
+					strstr(sources, "url=https://invalid-uri/") == NULL) {
+				fprintf(stderr, "FAIL: Test 102c fetch_start_failed source entry (script=0)\n"); return 1;
+			}
+		}
+
+		/* 4. Discovered source skipped due to unsupported MIME (e.g. application/json) */
+		sid4 = ms_diag_source_create(701, 1, 101);
+		ms_diag_source_set_classification(sid4,
+			MS_SRC_KIND_CLASSIC, MS_SRC_DECL_CLASSIC, MS_SRC_TREAT_DIRECT,
+			MS_SRC_SCHED_INLINE, 0, NULL);
+		ms_diag_source_set_inline_details(sid4, 42, 0x55556666UL);
+		ms_diag_source_note_terminal(sid4, MS_SRC_STATE_SKIPPED, MS_SRC_REASON_MIME_UNSUPPORTED);
+
+		(void)macsurf_diag_serialize_sources(sources, (long)sizeof(sources));
+		if (strstr(sources, "schedule=inline blocking=0 state=skipped reason=mime_unsupported script=0 request=0 len=42 hash=55556666") == NULL) {
+			fprintf(stderr, "FAIL: Test 102c mime-unsupported skipped source entry\n"); return 1;
+		}
+
+		/* 5. Discovered source skipped due to no JS context */
+		sid5 = ms_diag_source_create(701, 1, 101);
+		ms_diag_source_note_terminal(sid5, MS_SRC_STATE_SKIPPED, MS_SRC_REASON_NO_JS_CONTEXT);
+
+		(void)macsurf_diag_serialize_sources(sources, (long)sizeof(sources));
+		if (strstr(sources, "kind=classic declared_kind=unknown treatment=direct schedule=unknown blocking=0 state=skipped reason=no_js_context script=0") == NULL) {
+			fprintf(stderr, "FAIL: Test 102c no-js-context source entry\n"); return 1;
+		}
+
+		/* 6. Document destroyed while source pending (teardown cancellation) & monotonicity */
+		sid6 = ms_diag_source_create(701, 1, 101);
+		ms_diag_source_set_classification(sid6,
+			MS_SRC_KIND_CLASSIC, MS_SRC_DECL_CLASSIC, MS_SRC_TREAT_DIRECT,
+			MS_SRC_SCHED_DEFER, 0, "https://example.com/defer.js");
+		ms_diag_source_note_fetch_done(sid6, 500, 0x77778888UL);
+		ms_diag_source_note_terminal(sid6, MS_SRC_STATE_CANCELLED, MS_SRC_REASON_DOCUMENT_DESTROYED);
+
+		/* Verify monotonicity: subsequent terminal note must be ignored */
+		ms_diag_source_note_terminal(sid6, MS_SRC_STATE_EXECUTED, MS_SRC_REASON_OK);
+
+		(void)macsurf_diag_serialize_sources(sources, (long)sizeof(sources));
+		if (strstr(sources, "schedule=defer blocking=0 state=cancelled reason=document_destroyed script=0 request=0 len=500 hash=77778888") == NULL) {
+			fprintf(stderr, "FAIL: Test 102c document destroyed cancellation & monotonicity\n"); return 1;
+		}
+
+		/* 7. Rollover & paged cursor query */
+		for (i = 0; i < 140; i++) {
+			unsigned long s = ms_diag_source_create(701, 1, 101);
+			ms_diag_source_set_classification(s,
+				MS_SRC_KIND_CLASSIC, MS_SRC_DECL_CLASSIC, MS_SRC_TREAT_DIRECT,
+				MS_SRC_SCHED_INLINE, 0, NULL);
+			ms_diag_source_note_terminal(s, MS_SRC_STATE_SKIPPED, MS_SRC_REASON_EMPTY);
+		}
+
+		(void)macsurf_diag_serialize_sources_since(page, (long)sizeof(page), 0, 10);
+		if (strstr(page, "MSDIAG 2 sources\n") == NULL ||
+				strstr(page, "coverage=discovered_sources\n") == NULL ||
+				strstr(page, "lost_from=") == NULL ||
+				strstr(page, "returned=10\n") == NULL) {
+			fprintf(stderr, "FAIL: Test 102c paged source query with loss reporting\n"); return 1;
+		}
+
+		fprintf(stderr, "=== Test 102c PASS: script source outcomes are granular and monotonic ===\n");
+	}
+
+	/* --- Test 102d: error history and text dictionary loss semantics --- */
+	{
+		char errs[16384];
+		char errs_repeat[16384];
+		char long_msg1[160];
+		char long_msg2[160];
+		char name_buf[32];
+		char msg_buf[32];
+		unsigned long base_seq = 0;
+		unsigned long base_overwritten = 0;
+		unsigned long base_name_dist = 0;
+		unsigned long base_msg_dist = 0;
+		int base_name_ret = 0;
+		int base_msg_ret = 0;
+		unsigned long e_id;
+		int i;
+
+		fprintf(stderr, "\n=== Test 102d: error history and text dictionary loss semantics ===\n");
+
+		/* Baseline read */
+		(void)macsurf_diag_serialize_errors(errs, (long)sizeof(errs));
+		if (strstr(errs, "MSDIAG 1 errors\n") == NULL ||
+				strstr(errs, "history=errors records_total=") == NULL ||
+				strstr(errs, "dictionary=error_names distinct_total=") == NULL ||
+				strstr(errs, "dictionary=error_messages distinct_total=") == NULL) {
+			fprintf(stderr, "FAIL: Test 102d initial serializer header\n"); return 1;
+		}
+
+		/* Parse baseline counters */
+		{
+			const char *p = strstr(errs, "records_total=");
+			if (p) base_seq = strtoul(p + 14, NULL, 10);
+			p = strstr(errs, "overwritten=");
+			if (p) base_overwritten = strtoul(p + 12, NULL, 10);
+			p = strstr(errs, "dictionary=error_names distinct_total=");
+			if (p) base_name_dist = strtoul(p + 38, NULL, 10);
+			p = strstr(errs, "retained=");
+			if (p) base_name_ret = (int)strtoul(p + 9, NULL, 10);
+			p = strstr(errs, "dictionary=error_messages distinct_total=");
+			if (p) base_msg_dist = strtoul(p + 41, NULL, 10);
+			p = p ? strstr(p, "retained=") : NULL;
+			if (p) base_msg_ret = (int)strtoul(p + 9, NULL, 10);
+		}
+
+		/* 1. Basic error with name and message */
+		e_id = ms_diag_error_record(0, 0, MS_ERR_JS_EXCEPTION, 0, 0, "TypeError", "Cannot read properties");
+		(void)macsurf_diag_serialize_errors(errs, (long)sizeof(errs));
+		if (strstr(errs, "name_status=retained") == NULL ||
+				strstr(errs, "message_status=retained") == NULL ||
+				strstr(errs, "text=Cannot%20read%20properties") == NULL) {
+			fprintf(stderr, "FAIL: Test 102d retained text encoding and status\n"); return 1;
+		}
+
+		/* 2. Distinction between NULL/empty text vs dropped */
+		e_id = ms_diag_error_record(0, 0, MS_ERR_JS_EXCEPTION, 0, 0, NULL, "");
+		(void)macsurf_diag_serialize_errors(errs, (long)sizeof(errs));
+		if (strstr(errs, "name=0 name_status=empty message=0 message_status=empty") == NULL) {
+			fprintf(stderr, "FAIL: Test 102d empty text status\n"); return 1;
+		}
+
+		/* 3. Long text truncation with pre-truncation hash */
+		memset(long_msg1, 'A', 140);
+		long_msg1[140] = '\0';
+		long_msg1[135] = '1';
+		memset(long_msg2, 'A', 140);
+		long_msg2[140] = '\0';
+		long_msg2[135] = '2';
+
+		e_id = ms_diag_error_record(0, 0, MS_ERR_JS_EXCEPTION, 0, 0, "Long1", long_msg1);
+		e_id = ms_diag_error_record(0, 0, MS_ERR_JS_EXCEPTION, 0, 0, "Long2", long_msg2);
+		(void)macsurf_diag_serialize_errors(errs, (long)sizeof(errs));
+		if (strstr(errs, "input_len=140 truncated=1") == NULL) {
+			fprintf(stderr, "FAIL: Test 102d truncated text tracking\n"); return 1;
+		}
+		/* Two long messages with same 119-byte prefix must not falsely deduplicate */
+		if (strstr(errs, "name=") == NULL || strstr(errs, "Long1") == NULL || strstr(errs, "Long2") == NULL) {
+			fprintf(stderr, "FAIL: Test 102d long messages separation\n"); return 1;
+		}
+
+		/* 4. Fill name and message dictionaries to saturation (capacity 64) */
+		for (i = base_name_ret; i < 66; i++) {
+			snprintf(name_buf, sizeof(name_buf), "N_%d", i);
+			snprintf(msg_buf, sizeof(msg_buf), "M_%d", i);
+			(void)ms_diag_error_record(0, 0, MS_ERR_JS_EXCEPTION, 0, 0, name_buf, msg_buf);
+		}
+
+		(void)macsurf_diag_serialize_errors(errs, (long)sizeof(errs));
+		if (strstr(errs, "name_status=dropped") == NULL ||
+				strstr(errs, "message_status=dropped") == NULL ||
+				strstr(errs, "dropped=0") != NULL && strstr(errs, "retained=64") == NULL) {
+			fprintf(stderr, "FAIL: Test 102d dictionary saturation & dropped status\n"); return 1;
+		}
+
+		/* 5. Error ring overflow & overwrite accounting (capacity 128) */
+		for (i = 0; i < 135; i++) {
+			(void)ms_diag_error_record(0, 0, MS_ERR_JS_EXCEPTION, 0, 0, "Overflow", "OverflowMsg");
+		}
+		(void)macsurf_diag_serialize_errors(errs, (long)sizeof(errs));
+		(void)macsurf_diag_serialize_errors(errs_repeat, (long)sizeof(errs_repeat));
+
+		/* Verify stable repeat read */
+		if (strcmp(errs, errs_repeat) != 0) {
+			fprintf(stderr, "FAIL: Test 102d repeat read stability\n"); return 1;
+		}
+		if (strstr(errs, "overwritten=") == NULL ||
+				strstr(errs, "truncated=") == NULL) {
+			fprintf(stderr, "FAIL: Test 102d ring overwrite or truncation accounting\n"); return 1;
+		}
+
+		fprintf(stderr, "=== Test 102d PASS: error history and text dictionary loss semantics ===\n");
+	}
+
+	/* --- Test 102e: paged error transport and monotonic cursor loss semantics --- */
+	{
+		char page[16384];
+		char page_repeat[16384];
+		char tiny[220];
+		char med[750];
+		char needle[64];
+		unsigned long base_seq = 0;
+		unsigned long cur_seq = 0;
+		unsigned long first_avail = 0;
+		unsigned long page_after = 0;
+		int i;
+
+		fprintf(stderr, "\n=== Test 102e: paged error transport semantics ===\n");
+
+		/* Baseline read */
+		(void)macsurf_diag_serialize_errors_since(page, (long)sizeof(page), 0, 16);
+		{
+			const char *p = strstr(page, "records_total=");
+			if (p) base_seq = strtoul(p + 14, NULL, 10);
+		}
+
+		/* 1. Cursor at latest produces returned=0 complete=1 */
+		(void)macsurf_diag_serialize_errors_since(page, (long)sizeof(page), base_seq, 16);
+		if (strstr(page, "MSDIAG 2 errors\n") == NULL ||
+				strstr(page, "returned=0\n") == NULL ||
+				strstr(page, "complete=1\n") == NULL ||
+				strstr(page, "truncated=0\n") == NULL ||
+				strstr(page, "err=") != NULL) {
+			fprintf(stderr, "FAIL: Test 102e empty cursor\n"); return 1;
+		}
+
+		/* 2. Record 27 errors: test limit=16 paging (16 on p1, 11 on p2, 0 on p3) */
+		for (i = 1; i <= 27; i++) {
+			if (i == 26) {
+				/* Test dictionary saturation / dropped status on page 2 */
+				(void)ms_diag_error_record(0, 0, MS_ERR_JS_EXCEPTION, 0, 0, "UnretainedName", "UnretainedMsg");
+			} else {
+				/* Uses retained text interned in earlier tests */
+				(void)ms_diag_error_record(0, 0, MS_ERR_JS_EXCEPTION, 0, 0, "TypeError", "Cannot read properties");
+			}
+		}
+
+		/* Page 1: after=base_seq limit=16 */
+		(void)macsurf_diag_serialize_errors_since(page, (long)sizeof(page), base_seq, 16);
+		snprintf(needle, sizeof(needle), "returned=16\nnext_after=%lu\ncomplete=0\ntruncated=0\n", base_seq + 16);
+		if (strstr(page, needle) == NULL) {
+			fprintf(stderr, "FAIL: Test 102e page 1 count/cursor\n"); return 1;
+		}
+		snprintf(needle, sizeof(needle), "err=%lu ", base_seq + 1);
+		if (strstr(page, needle) == NULL) {
+			fprintf(stderr, "FAIL: Test 102e page 1 first row\n"); return 1;
+		}
+		snprintf(needle, sizeof(needle), "err=%lu ", base_seq + 16);
+		if (strstr(page, needle) == NULL) {
+			fprintf(stderr, "FAIL: Test 102e page 1 last row\n"); return 1;
+		}
+		snprintf(needle, sizeof(needle), "err=%lu ", base_seq + 17);
+		if (strstr(page, needle) != NULL) {
+			fprintf(stderr, "FAIL: Test 102e page 1 leak into page 2\n"); return 1;
+		}
+
+		/* Repeat read of page 1 is byte-stable */
+		(void)macsurf_diag_serialize_errors_since(page_repeat, (long)sizeof(page_repeat), base_seq, 16);
+		if (strcmp(page, page_repeat) != 0) {
+			fprintf(stderr, "FAIL: Test 102e repeat read stability\n"); return 1;
+		}
+
+		/* Page 2: after=base_seq + 16 limit=16 */
+		(void)macsurf_diag_serialize_errors_since(page, (long)sizeof(page), base_seq + 16, 16);
+		snprintf(needle, sizeof(needle), "returned=11\nnext_after=%lu\ncomplete=1\ntruncated=0\n", base_seq + 27);
+		if (strstr(page, needle) == NULL) {
+			fprintf(stderr, "FAIL: Test 102e page 2 count/cursor\n"); return 1;
+		}
+		snprintf(needle, sizeof(needle), "err=%lu ", base_seq + 17);
+		if (strstr(page, needle) == NULL) {
+			fprintf(stderr, "FAIL: Test 102e page 2 first row\n"); return 1;
+		}
+		snprintf(needle, sizeof(needle), "err=%lu ", base_seq + 27);
+		if (strstr(page, needle) == NULL) {
+			fprintf(stderr, "FAIL: Test 102e page 2 last row\n"); return 1;
+		}
+		/* Check self-contained text resolution on page 2: retained and dropped */
+		if (strstr(page, "name=TypeError") == NULL ||
+				strstr(page, "message=Cannot%20read%20properties") == NULL ||
+				strstr(page, "name_status=retained") == NULL ||
+				strstr(page, "message_status=retained") == NULL ||
+				strstr(page, "name_status=dropped") == NULL ||
+				strstr(page, "message_status=dropped") == NULL) {
+			fprintf(stderr, "FAIL: Test 102e page 2 self-contained text resolution\n"); return 1;
+		}
+
+		/* Page 3: after=base_seq + 27 limit=16 -> zero records, complete=1 */
+		(void)macsurf_diag_serialize_errors_since(page, (long)sizeof(page), base_seq + 27, 16);
+		snprintf(needle, sizeof(needle), "returned=0\nnext_after=%lu\ncomplete=1\ntruncated=0\n", base_seq + 27);
+		if (strstr(page, needle) == NULL || strstr(page, "err=") != NULL) {
+			fprintf(stderr, "FAIL: Test 102e page 3 exhausted cursor\n"); return 1;
+		}
+
+		/* 3. Tiny reply buffer: truncation and no cursor advance */
+		(void)macsurf_diag_serialize_errors_since(tiny, (long)sizeof(tiny), base_seq, 16);
+		snprintf(needle, sizeof(needle), "returned=0\nnext_after=%lu\ncomplete=0\ntruncated=1\n", base_seq);
+		if (strstr(tiny, needle) == NULL) {
+			fprintf(stderr, "FAIL: Test 102e tiny buffer truncation\n"); return 1;
+		}
+
+		/* 4. Medium reply buffer: fits exactly 1 row (cap=750, row ~260 bytes) */
+		(void)macsurf_diag_serialize_errors_since(med, (long)sizeof(med), base_seq, 16);
+		snprintf(needle, sizeof(needle), "returned=1\nnext_after=%lu\ncomplete=0\ntruncated=1\n", base_seq + 1);
+		if (strstr(med, needle) == NULL || strstr(med, "err=") == NULL) {
+			fprintf(stderr, "FAIL: Test 102e partial page truncation cursor advance\n"); return 1;
+		}
+
+		/* 5. Forced ring rollover: add 135 errors to overflow the 128-entry ring */
+		cur_seq = base_seq + 27;
+		for (i = 1; i <= 135; i++) {
+			(void)ms_diag_error_record(0, 0, MS_ERR_JS_EXCEPTION, 0, 0, "Rollover", "RollMsg");
+		}
+		cur_seq += 135;
+		first_avail = cur_seq - 128 + 1;
+
+		/* Query with after=base_seq -> reports lost_from and lost_to */
+		(void)macsurf_diag_serialize_errors_since(page, (long)sizeof(page), base_seq, 16);
+		snprintf(needle, sizeof(needle), "lost_from=%lu\nlost_to=%lu\n", base_seq + 1, first_avail - 1);
+		if (strstr(page, "lost=1\n") == NULL || strstr(page, needle) == NULL) {
+			fprintf(stderr, "FAIL: Test 102e lost_from/lost_to accounting\n"); return 1;
+		}
+		snprintf(needle, sizeof(needle), "err=%lu ", first_avail);
+		if (strstr(page, needle) == NULL) {
+			fprintf(stderr, "FAIL: Test 102e first row after lost range\n"); return 1;
+		}
+
+		/* 6. Ring rotates between pages */
+		/* Read first page: after=first_avail - 1, limit=5 */
+		(void)macsurf_diag_serialize_errors_since(page, (long)sizeof(page), first_avail - 1, 5);
+		page_after = first_avail - 1 + 5;
+		snprintf(needle, sizeof(needle), "next_after=%lu\n", page_after);
+		if (strstr(page, needle) == NULL) {
+			fprintf(stderr, "FAIL: Test 102e pre-rotation page\n"); return 1;
+		}
+		/* Now rotate ring again by adding 130 errors */
+		for (i = 1; i <= 130; i++) {
+			(void)ms_diag_error_record(0, 0, MS_ERR_JS_EXCEPTION, 0, 0, "Rotate2", "RotateMsg2");
+		}
+		cur_seq += 130;
+		first_avail = cur_seq - 128 + 1;
+
+		/* Second page query with after=page_after -> reports newly lost interval */
+		(void)macsurf_diag_serialize_errors_since(page, (long)sizeof(page), page_after, 16);
+		snprintf(needle, sizeof(needle), "lost_from=%lu\nlost_to=%lu\n", page_after + 1, first_avail - 1);
+		if (strstr(page, "lost=1\n") == NULL || strstr(page, needle) == NULL) {
+			fprintf(stderr, "FAIL: Test 102e ring rotation between pages lost range\n"); return 1;
+		}
+
+		fprintf(stderr, "=== Test 102e PASS: paged error transport semantics ===\n");
+	}
+
+	/* --- Test 112: Phase 4 normalized Web API gap aggregation ----------- */
+	{
+		char gaps[32768], again[32768], name[32];
+		int i;
+		fprintf(stderr, "\n=== Test 112: JS normalized gap aggregation ===\n");
+		ms_diag_capability_hit_ex(MS_CAP_GLOBAL, MS_CAP_GET, "ResizeObserver", NULL,
+			MS_CAP_UNSUPPORTED, MS_ANSWER_UNSUPPORTED);
+		ms_diag_capability_hit_ex(MS_CAP_GLOBAL, MS_CAP_GET, "ResizeObserver", NULL,
+			MS_CAP_UNSUPPORTED, MS_ANSWER_UNSUPPORTED);
+		ms_diag_capability_hit_ex(MS_CAP_ELEMENT, MS_CAP_CALL, "Element", "animate",
+			MS_CAP_APPROXIMATE, MS_ANSWER_APPROX);
+		ms_diag_capability_hit_ex(MS_CAP_NETWORK, MS_CAP_CALL, "CSS", "supports",
+			MS_CAP_FALLBACK, MS_ANSWER_APPROX);
+		ms_diag_capability_hit_ex(MS_CAP_OBSERVER, MS_CAP_CONSTRUCT, "IntersectionObserver", NULL,
+			MS_CAP_STUB, MS_ANSWER_APPROX);
+		(void)macsurf_diag_serialize_js_api_gaps(gaps, (long)sizeof(gaps));
+		(void)macsurf_diag_serialize_js_api_gaps(again, (long)sizeof(again));
+		if (strcmp(gaps, again) != 0 ||
+			strstr(gaps, "key=js.api.ResizeObserver.missing category=api_missing") == NULL ||
+			strstr(gaps, "key=js.api.ResizeObserver.missing category=api_missing interface=ResizeObserver member= count=2") == NULL ||
+			strstr(gaps, "key=js.api.Element.animate.partial") == NULL ||
+			strstr(gaps, "key=js.api.CSS.supports.fallback_used") == NULL ||
+			strstr(gaps, "key=js.api.IntersectionObserver.stub_used") == NULL) {
+			fprintf(stderr, "FAIL: Test 112 normalized API keys/dedup\n"); return 1;
+		}
+		for (i = 0; i < 70; i++) {
+			snprintf(name, sizeof(name), "Overflow%d", i);
+			ms_diag_js_api_gap_hit(MS_JS_API_GAP_MISSING, name, NULL, NULL);
+		}
+		(void)macsurf_diag_serialize_js_api_gaps(gaps, (long)sizeof(gaps));
+		if (strstr(gaps, "dropped=0") != NULL || strstr(gaps, "loss_explicit=1") == NULL) {
+			fprintf(stderr, "FAIL: Test 112 bounded API loss\n"); return 1;
+		}
+		ms_diag_js_api_gap_test_reset();
+		fprintf(stderr, "=== Test 112 PASS: API gaps are normalized, bounded, and stable ===\n");
+	}
+
+	/* --- Test 113: JS execution outcomes retain scalar context ---------- */
+	{
+		char javascript[8192], promises[4096], handlers[4096];
+		struct ms_diag_scope scope;
+		fprintf(stderr, "\n=== Test 113: JS execution and promise observability ===\n");
+		(void)ms_diag_task_enter(&scope, MS_TASK_TIMER, 812, 813, 0, NULL);
+		ms_diag_js_event_hit(MS_JS_EVENT_RUNTIME_FAILED);
+		ms_diag_js_event_hit(MS_JS_EVENT_HANDLER_FAILED);
+		ms_diag_promise_rejection_hit(1);
+		ms_diag_event_handler_hit("timer", 1);
+		ms_diag_task_leave(&scope);
+		(void)macsurf_diag_serialize_javascript(javascript, (long)sizeof(javascript));
+		(void)macsurf_diag_serialize_promise_rejections(promises, (long)sizeof(promises));
+		(void)macsurf_diag_serialize_event_handlers(handlers, (long)sizeof(handlers));
+		if (strstr(javascript, "kind=script_runtime_exception") == NULL ||
+			strstr(javascript, "kind=event_handler_exception") == NULL ||
+			strstr(promises, "key=js.promise.unhandled count=") == NULL ||
+			strstr(promises, "first_doc=") == NULL ||
+			strstr(handlers, "handler=timer count=") == NULL ||
+			strstr(handlers, "first_frame=") == NULL) {
+			fprintf(stderr, "FAIL: Test 113 JS scalar provenance\n"); return 1;
+		}
+		fprintf(stderr, "=== Test 113 PASS: runtime, handler, and promise outcomes remain scalar-only ===\n");
+	}
+
+	/* --- Test 103: Phase 3 capability/CSS gap aggregates --------------- */
+	{
+		char caps[16384], cssg[16384], caps_again[16384];
+		char name[32];
+		int i;
+		fprintf(stderr, "\n=== Test 103: Phase 3 capability/CSS gap aggregates ===\n");
+		ms_diag_capability_hit(MS_CAP_GEOMETRY, MS_CAP_GET,
+			"offsetWidth", MS_CAP_UNSUPPORTED, MS_ANSWER_UNSUPPORTED);
+		ms_diag_capability_hit(MS_CAP_GEOMETRY, MS_CAP_GET,
+			"offsetWidth", MS_CAP_UNSUPPORTED, MS_ANSWER_UNSUPPORTED);
+		ms_diag_capability_hit(MS_CAP_GEOMETRY, MS_CAP_GET,
+			"clientWidth", MS_CAP_UNSUPPORTED, MS_ANSWER_UNSUPPORTED);
+		ms_diag_capability_hit(MS_CAP_OBSERVER, MS_CAP_CONSTRUCT,
+			"ResizeObserver", MS_CAP_APPROXIMATE, MS_ANSWER_APPROX);
+		(void)macsurf_diag_serialize_capabilities(caps, (long)sizeof(caps));
+		(void)macsurf_diag_serialize_capabilities(caps_again, (long)sizeof(caps_again));
+		if (strcmp(caps, caps_again) != 0 || strstr(caps, "name=offsetWidth") == NULL ||
+			strstr(caps, "name=offsetWidth result=unsupported quality=3 count=2") == NULL ||
+			strstr(caps, "name=ResizeObserver result=approximate quality=1 count=1") == NULL) {
+			fprintf(stderr, "FAIL: Test 103 capability semantics/dedup/reread\n"); return 1;
+		}
+		/* Fill beyond the fixed table (128 entries). The output must say what was dropped. */
+		for (i = 0; i < 140; i++) {
+			snprintf(name, sizeof(name), "feature-%d", i);
+			ms_diag_capability_hit(MS_CAP_GLOBAL, MS_CAP_GET, name,
+				MS_CAP_UNSUPPORTED, MS_ANSWER_UNSUPPORTED);
+		}
+		(void)macsurf_diag_serialize_capabilities(caps, (long)sizeof(caps));
+		if (strstr(caps, "dropped=") == NULL) {
+			fprintf(stderr, "FAIL: Test 103 capability overflow\n"); return 1;
+		}
+		ms_diag_css_gap_hit(MS_CSS_GAP_VALUE, "display", "", "grid", MS_CAP_UNSUPPORTED);
+		ms_diag_css_gap_hit(MS_CSS_GAP_VALUE, "display", "", "grid", MS_CAP_UNSUPPORTED);
+		ms_diag_css_gap_hit(MS_CSS_GAP_PROPERTY, "aspect-ratio", "", "", MS_CAP_UNSUPPORTED);
+		(void)macsurf_diag_serialize_css_gaps(cssg, (long)sizeof(cssg));
+		if (strstr(cssg, "kind=value property=display name= value=grid result=unsupported count=2") == NULL ||
+			strstr(cssg, "kind=property property=aspect-ratio") == NULL ||
+			strstr(cssg, "dropped=") == NULL) {
+			fprintf(stderr, "FAIL: Test 103 CSS key/output\n"); return 1;
+		}
+		fprintf(stderr, "=== Test 103 PASS: semantic outcomes are bounded, deduplicated, and stable ===\n");
+	}
+
+	/* --- Test 104: Phase 4 & 5.1 gapreport census and coverage matrix -- */
+	{
+		char report[32768], report_again[32768];
+		fprintf(stderr, "\n=== Test 104: Phase 4 & 5.1 gapreport census and coverage matrix ===\n");
+		(void)macsurf_diag_serialize_gapreport(report, (long)sizeof(report));
+		(void)macsurf_diag_serialize_gapreport(report_again, (long)sizeof(report_again));
+		if (strcmp(report, report_again) != 0 ||
+			strstr(report, "MSDIAG 1 gapreport") == NULL ||
+			strstr(report, "census_lossless=0") == NULL ||
+			strstr(report, "coverage_complete=0") == NULL ||
+			strstr(report, "[coverage]") == NULL ||
+			strstr(report, "js_host_api=partial reason=common_binding_outcomes_only") == NULL ||
+			strstr(report, "global_feature_get=unobservable reason=quickjs_global_lookup_no_safe_host_hook") == NULL ||
+			strstr(report, "[gaps]") == NULL ||
+			strstr(report, "key=js.geometry.offsetWidth.get result=unsupported quality=3 count=2") == NULL ||
+			strstr(report, "key=css.value.display.grid result=unsupported quality=0 count=2") == NULL ||
+			strstr(report, "key=css.property.aspect-ratio result=unsupported quality=0 count=1") == NULL) {
+			fprintf(stderr, "FAIL: Test 104 gapreport format/coverage/normalized keys\n"); return 1;
+		}
+		fprintf(stderr, "=== Test 104 PASS: gapreport produces stable normalized keys with explicit coverage ===\n");
+	}
+
+	/* --- Test 104a: JS failures and API keys retain causal evidence ------ */
+	{
+		char javascript[8192], javascript_again[8192], report[32768];
+		struct ms_diag_scope handler_scope;
+		fprintf(stderr, "\n=== Test 104a: JS failure and normalized API observability ===\n");
+		ms_diag_js_event_hit(MS_JS_EVENT_PARSE_FAILED);
+		ms_diag_js_event_hit(MS_JS_EVENT_RUNTIME_FAILED);
+		ms_diag_js_event_hit(MS_JS_EVENT_RUNTIME_FAILED);
+		ms_diag_js_event_hit(MS_JS_EVENT_PROMISE_REJECTION);
+		(void)ms_diag_task_enter(&handler_scope, MS_TASK_TIMER, 701, 702,
+			0, NULL);
+		ms_diag_js_event_hit(MS_JS_EVENT_HANDLER_FAILED);
+		ms_diag_task_leave(&handler_scope);
+		(void)macsurf_diag_serialize_javascript(javascript,
+			(long)sizeof(javascript));
+		(void)macsurf_diag_serialize_javascript(javascript_again,
+			(long)sizeof(javascript_again));
+		(void)macsurf_diag_serialize_gapreport(report, (long)sizeof(report));
+		if (strcmp(javascript, javascript_again) != 0 ||
+				strstr(javascript, "MSDIAG 1 javascript\n") == NULL ||
+				strstr(javascript, "loss_explicit=1") == NULL ||
+			strstr(javascript, "kind=script_parse_failed") == NULL ||
+			strstr(javascript, "kind=script_runtime_exception") == NULL ||
+			strstr(javascript, "kind=promise_rejection_unhandled") == NULL ||
+			strstr(javascript, "kind=event_handler_exception") == NULL ||
+			strstr(report, "key=js.script_runtime_exception") == NULL ||
+			strstr(report, "normalized_key=js.api.") == NULL) {
+			fprintf(stderr, "FAIL: Test 104a JS failure/API aggregate contract\n"); return 1;
+		}
+		fprintf(stderr, "=== Test 104a PASS: JS failures and normalized API gaps are bounded and causal ===\n");
+	}
+
+	/* --- Test 105: Group 2 / Round 2A CSS Transitions parser & cascade -- */
+	{
+		fprintf(stderr, "\n=== Test 105: Group 2 / Round 2A CSS Transitions ===\n");
+		if (!cssprobe_test_css_transitions()) {
+			fprintf(stderr, "FAIL: Test 105 CSS Transitions Round 2A\n");
+			return 1;
+		}
+		fprintf(stderr, "=== Test 105 PASS: CSS Transitions independent cascade & descriptor contract ===\n");
+	}
+
+	/* --- Test 106: Group 2 / Round 2B-1 Generic Transition Engine (synthetic) -- */
+	{
+		extern bool test_macos9_transition_2b1(void);
+		fprintf(stderr, "\n=== Test 106: Group 2 / Round 2B-1 Generic Transition Engine ===\n");
+		if (!test_macos9_transition_2b1()) {
+			fprintf(stderr, "FAIL: Test 106 Transition Engine 2B-1\n");
+			return 1;
+		}
+		fprintf(stderr, "=== Test 106 PASS: Generic engine synthetic (bounded, delay, wrap) ===\n");
+	}
+
+	/* --- Test 107: Group 2 / Round 2B-2 Opacity (synthetic + presentation) -- */
+	{
+		extern bool test_macos9_transition_opacity(void);
+		fprintf(stderr, "\n=== Test 107: Group 2 / Round 2B-2 Opacity ===\n");
+		if (!test_macos9_transition_opacity()) {
+			fprintf(stderr, "FAIL: Test 107 Opacity 2B-2\n");
+			return 1;
+		}
+		fprintf(stderr, "=== Test 107 PASS: Opacity presentation (interpolation, delay, interruption) ===\n");
+	}
+
+	/* --- Test 108: realm inventory is stable while live and retained after
+	 * teardown without retaining a dead pointer. This invokes the real QJS
+	 * heap lifecycle rather than constructing diagnostic records directly. */
+	{
+		char realms0[4096], realms1[4096], needle[64];
+		char *first_realm;
+		struct jsheap *realm_heap = NULL;
+		unsigned long realm_id = 0;
+
+		fprintf(stderr, "\n=== Test 108: QuickJS realm inventory lifecycle ===\n");
+		if (js_newheap(20000, &realm_heap) != NSERROR_OK || realm_heap == NULL) {
+			fprintf(stderr, "FAIL: Test 108 -- js_newheap\n");
+			return 1;
+		}
+		(void)macsurf_diag_serialize_realms(realms0, (long)sizeof(realms0));
+		first_realm = strstr(realms0, "realm=");
+		if (first_realm == NULL ||
+			sscanf(first_realm, "realm=%lu", &realm_id) != 1 ||
+			realm_id == 0) {
+			fprintf(stderr, "FAIL: Test 108 -- no live stable realm id\n");
+			return 1;
+		}
+		snprintf(needle, sizeof(needle), "realm=%lu state=live", realm_id);
+		if (strstr(realms0, needle) == NULL ||
+			strstr(realms0, "retired_capacity=32") == NULL ||
+			strstr(realms0, "microtasks=unavailable") == NULL) {
+			fprintf(stderr, "FAIL: Test 108 -- live inventory schema\n");
+			return 1;
+		}
+		js_destroyheap(realm_heap);
+		(void)macsurf_diag_serialize_realms(realms1, (long)sizeof(realms1));
+		snprintf(needle, sizeof(needle), "realm=%lu state=retired", realm_id);
+		if (strstr(realms1, needle) == NULL ||
+			strstr(realms1, "ctx=(nil) rt=(nil)") == NULL) {
+			fprintf(stderr, "FAIL: Test 108 -- pointer-free retirement record\n");
+			return 1;
+		}
+		fprintf(stderr, "=== Test 108 PASS: live realm becomes pointer-free retained retirement evidence ===\n");
+	}
+
+	/* --- Test 109: realm lifetime identity checks and bounded warning ring.
+	 * The valid check and the deliberately corrupted document generation use
+	 * the real registered QJS owner, not a fabricated diagnostic row. */
+	{
+		struct jsheap *realm_heap = NULL;
+		struct qjs_realm_diag realm;
+		struct qjs_realm_identity queued, live;
+		char warnings[8192];
+		int i, found = 0;
+
+		fprintf(stderr, "\n=== Test 109: realm lifetime invariants ===\n");
+		if (js_newheap(20000, &realm_heap) != NSERROR_OK || realm_heap == NULL) {
+			fprintf(stderr, "FAIL: Test 109 -- js_newheap\n");
+			return 1;
+		}
+		for (i = 0; i < macsurf_qjs_realm_count(); i++) {
+			if (macsurf_qjs_realm_get(i, &realm) &&
+				realm.state == QJS_REALM_LIVE && realm.ctx != NULL) {
+				found = 1;
+				break;
+			}
+		}
+		if (!found || !macsurf_qjs_realm_identity(realm.ctx, &queued) ||
+			macsurf_qjs_realm_identity_check(realm.ctx, &queued, &live) !=
+			QJS_REALM_IDENTITY_OK) {
+			fprintf(stderr, "FAIL: Test 109 -- valid live identity\n");
+			return 1;
+		}
+		queued.document_id++;
+		if (macsurf_qjs_realm_identity_check(realm.ctx, &queued, &live) !=
+			QJS_REALM_IDENTITY_DOCUMENT_MISMATCH) {
+			fprintf(stderr, "FAIL: Test 109 -- document generation mismatch hidden\n");
+			return 1;
+		}
+		queued.document_id--;
+		macsurf_qjs_realm_navigation_requested(realm.ctx);
+		if (macsurf_qjs_realm_identity_check(realm.ctx, &queued, &live) !=
+			QJS_REALM_IDENTITY_NAVIGATION_REQUESTED) {
+			fprintf(stderr, "FAIL: Test 109 -- navigation requested identity check\n");
+			return 1;
+		}
+		ms_diag_realm_invariant_record(MS_RI_DEFERRED_CALLBACK,
+			MS_RIS_CALLBACK_REQUESTED_NAVIGATION, live.realm_id,
+			live.frame_id, queued.document_id, live.document_id,
+			queued.nav_id, live.nav_id, live.heap_id, live.ctx_gen,
+			999UL);
+		for (i = 0; i < 65; i++)
+			ms_diag_realm_invariant_record(MS_RI_CALLBACK_DOC_GENERATION_MISMATCH,
+				MS_RIS_CANCELLED_NAVIGATION_REPLACED, live.realm_id,
+				live.frame_id, queued.document_id, live.document_id,
+				queued.nav_id, live.nav_id, live.heap_id, live.ctx_gen,
+				(unsigned long)i + 1);
+		(void)macsurf_diag_serialize_warnings(warnings, (long)sizeof(warnings));
+		if (strstr(warnings, "capacity=64") == NULL ||
+			strstr(warnings, "CALLBACK_DOC_GENERATION_MISMATCH") == NULL ||
+			strstr(warnings, "dropped=0") != NULL) {
+			fprintf(stderr, "FAIL: Test 109 -- bounded warning evidence\n");
+			return 1;
+		}
+		js_destroyheap(realm_heap);
+		fprintf(stderr, "=== Test 109 PASS: immutable identity catches stale document and ring loss is explicit ===\n");
+	}
+
+	{
+		/* Test 110: DOM and Box forensic entity graph */
+		char t110_html[] =
+			"<!DOCTYPE html><html><head><title>Test 110</title></head>"
+			"<body><div id=\"main\" class=\"hero container\"><p id=\"p1\">First</p><p id=\"p2\">Second</p></div></body></html>";
+		struct html_content t110c;
+		dom_hubbub_parser *t110p = NULL;
+		dom_document *t110doc = NULL;
+		dom_node *t110root = NULL;
+		css_select_ctx *t110ctx = NULL;
+		css_stylesheet *t110ua = NULL;
+		dom_hubbub_parser_params t110params;
+		css_stylesheet_params t110sp;
+		void *t110_box_ctx = NULL;
+		nserror t110err;
+		dom_exception t110derr;
+		char buf[16384];
+		long n;
+		dom_node *p1 = NULL;
+		dom_node *p1_clone = NULL;
+		dom_node *p1_imported = NULL;
+		dom_string *s_p1 = NULL;
+		dom_nodelist *nl = NULL;
+		uint32_t len = 0;
+		unsigned long initial_box_gen = 0;
+		unsigned long target_doc_id = 0;
+
+		fprintf(stderr, "\n=== Test 110: DOM and Box forensic entity graph ===\n");
+
+		memset(&t110params, 0, sizeof(t110params));
+		t110params.fix_enc = true;
+		t110derr = dom_hubbub_parser_create(&t110params, &t110p, &t110doc);
+		if (t110derr != DOM_HUBBUB_OK || t110p == NULL) {
+			fprintf(stderr, "FAIL: Test 110 parser create %d\n", (int)t110derr);
+			return 1;
+		}
+		if (dom_hubbub_parser_parse_chunk(t110p, (const uint8_t *)t110_html,
+				strlen(t110_html)) != DOM_HUBBUB_OK ||
+				dom_hubbub_parser_completed(t110p) != DOM_HUBBUB_OK) {
+			fprintf(stderr, "FAIL: Test 110 parse\n");
+			return 1;
+		}
+		dom_hubbub_parser_destroy(t110p);
+
+		memset(&t110c, 0, sizeof(t110c));
+		t110c.base_url = g_base_url;
+		t110c.document = t110doc;
+		t110c.quirks = DOM_DOCUMENT_QUIRKS_MODE_NONE;
+		t110c.enable_scripting = false;
+		t110c.ms_diag_doc_id = 11001; /* known doc_id for snapshot targeting */
+		t110c.ms_diag_frame_id = 1;
+		t110c.live_box_generation = 1;
+
+		if (css_select_ctx_create(&t110ctx) != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 110 select_ctx\n");
+			return 1;
+		}
+		t110c.select_ctx = t110ctx;
+
+		memset(&t110sp, 0, sizeof(t110sp));
+		t110sp.params_version = CSS_STYLESHEET_PARAMS_VERSION_1;
+		t110sp.level = CSS_LEVEL_3;
+		t110sp.charset = "UTF-8";
+		t110sp.url = "resource:default.css";
+		t110sp.title = "default";
+		t110sp.resolve = harness_css_resolve_url;
+		if (css_stylesheet_create(&t110sp, &t110ua) != CSS_OK) {
+			fprintf(stderr, "FAIL: Test 110 stylesheet create\n");
+			return 1;
+		}
+		{
+			const char *ua_css = "html,body,div,p{display:block}";
+			(void)css_stylesheet_append_data(t110ua, (const uint8_t *)ua_css, strlen(ua_css));
+			(void)css_stylesheet_data_done(t110ua);
+		}
+		(void)css_select_ctx_append_sheet(t110ctx, t110ua, CSS_ORIGIN_UA, "screen");
+
+		t110c.media.type = CSS_MEDIA_SCREEN;
+		t110c.media.width = INTTOFIX(800);
+		t110c.media.height = INTTOFIX(600);
+		t110c.media.orientation = CSS_MEDIA_ORIENTATION_LANDSCAPE;
+		t110c.unit_len_ctx.viewport_width = INTTOFIX(800);
+		t110c.unit_len_ctx.viewport_height = INTTOFIX(600);
+		t110c.unit_len_ctx.device_dpi = INTTOFIX(96);
+		t110c.unit_len_ctx.font_size_default = INTTOFIX(16);
+		t110c.unit_len_ctx.font_size_minimum = INTTOFIX(8);
+		if (lwc_intern_string("*", 1, &t110c.universal) != lwc_error_ok) {
+			fprintf(stderr, "FAIL: Test 110 universal\n");
+			return 1;
+		}
+
+		t110c.base.status = CONTENT_STATUS_LOADING;
+		t110c.base.active = 0;
+		t110c.base.handler = &g_dummy_handler;
+		macos9_content_register((struct content *)&t110c);
+
+		if (dom_document_get_document_element(t110doc, (void *)&t110root) != DOM_NO_ERR ||
+				t110root == NULL) {
+			fprintf(stderr, "FAIL: Test 110 doc element\n");
+			return 1;
+		}
+
+		g_initial_build_done = 0;
+		g_initial_build_ok = false;
+		t110err = dom_to_box(t110root, &t110c, initial_build_cb, &t110_box_ctx);
+		dom_node_unref(t110root);
+		if (t110err != NSERROR_OK) {
+			fprintf(stderr, "FAIL: Test 110 dom_to_box=%d\n", (int)t110err);
+			return 1;
+		}
+		harness_pump_all(100000);
+		if (!g_initial_build_done || !g_initial_build_ok) {
+			fprintf(stderr, "FAIL: Test 110 build done=%d ok=%d\n",
+					g_initial_build_done, (int)g_initial_build_ok);
+			return 1;
+		}
+
+		initial_box_gen = t110c.live_box_generation;
+		target_doc_id = t110c.ms_diag_doc_id;
+
+		/* 1. Lookup p1 element */
+		(void) dom_string_create((const uint8_t *)"p", 1, &s_p1);
+		t110derr = dom_document_get_elements_by_tag_name(t110doc, s_p1, &nl);
+		if (t110derr != DOM_NO_ERR || nl == NULL) {
+			fprintf(stderr, "FAIL: Test 110 -- get elements by tag name\n");
+			return 1;
+		}
+		dom_string_unref(s_p1);
+
+		t110derr = dom_nodelist_get_length(nl, &len);
+		if (t110derr != DOM_NO_ERR || len < 1) {
+			fprintf(stderr, "FAIL: Test 110 -- nodelist length\n");
+			return 1;
+		}
+		t110derr = dom_nodelist_item(nl, 0, &p1);
+		dom_nodelist_unref(nl);
+		if (t110derr != DOM_NO_ERR || p1 == NULL) {
+			fprintf(stderr, "FAIL: Test 110 -- nodelist item\n");
+			return 1;
+		}
+
+		/* 2. Capture snapshot 1 via domstart */
+		n = macsurf_diag_dom_start(target_doc_id, buf, (long)sizeof(buf));
+		if (n <= 0 || strstr(buf, "complete=1") == NULL || strstr(buf, "coverage=connected_tree") == NULL) {
+			fprintf(stderr, "FAIL: Test 110 -- domstart capture failed: %s\n", buf);
+			return 1;
+		}
+
+		/* A content address can be reused after its old lifetime ends.  The
+		 * retained snapshot must validate its captured registry token before
+		 * reading through the address, even when doc_id and box generation
+		 * happen to match the newly registered occupant. */
+		macos9_content_unregister((struct content *)&t110c);
+		macos9_content_register((struct content *)&t110c);
+		n = macsurf_diag_serialize_dom(buf, (long)sizeof(buf), 0, 1);
+		if (n <= 0 || strstr(buf, "snapshot_stale=1") == NULL ||
+				strstr(buf, "live_changed=1") == NULL) {
+			fprintf(stderr, "FAIL: Test 110 -- content-token ABA drift: %s\n", buf);
+			return 1;
+		}
+
+		/* A new capture is independent of the old retained snapshot. */
+		n = macsurf_diag_dom_start(target_doc_id, buf, (long)sizeof(buf));
+		if (n <= 0 || strstr(buf, "complete=1") == NULL ||
+				strstr(buf, "coverage=connected_tree") == NULL) {
+			fprintf(stderr, "FAIL: Test 110 -- domstart recapture failed: %s\n", buf);
+			return 1;
+		}
+
+		/* 3. Verify cloneNode leaves clone with distinct/unassigned identity */
+		t110derr = dom_node_clone_node(p1, false, &p1_clone);
+		if (t110derr != DOM_NO_ERR || p1_clone == NULL) {
+			fprintf(stderr, "FAIL: Test 110 -- clone_node failed\n");
+			return 1;
+		}
+		/* Also test importNode */
+		t110derr = dom_document_import_node(t110doc, p1, false, &p1_imported);
+		if (t110derr != DOM_NO_ERR || p1_imported == NULL) {
+			fprintf(stderr, "FAIL: Test 110 -- import_node failed\n");
+			return 1;
+		}
+
+		/* Userdata on clone and imported must not be pre-populated with p1's ID */
+		{
+			void *ud_clone = NULL;
+			void *ud_imp = NULL;
+			(void) dom_node_get_user_data(p1_clone, corestring_dom___ns_key_diag_node_id, &ud_clone);
+			(void) dom_node_get_user_data(p1_imported, corestring_dom___ns_key_diag_node_id, &ud_imp);
+			if (ud_clone != NULL || ud_imp != NULL) {
+				fprintf(stderr, "FAIL: Test 110 -- clone or imported inherited source userdata pointer\n");
+				return 1;
+			}
+		}
+
+		/* 4. Page through DOM and Box entities from snapshot 1 */
+		n = macsurf_diag_serialize_dom(buf, (long)sizeof(buf), 0, 2);
+		if (strstr(buf, "returned=2") == NULL || strstr(buf, "next_after=2") == NULL || strstr(buf, "complete=0") == NULL) {
+			fprintf(stderr, "FAIL: Test 110 -- dom paging page 1: %s\n", buf);
+			return 1;
+		}
+
+		/* 5. Simulate a mutation / reconvert publication: live_box_generation advances */
+		t110c.live_box_generation++;
+
+		/* 6. Verify page 2 of snapshot 1 remains readable and coherent, reporting snapshot_stale=1 */
+		n = macsurf_diag_serialize_dom(buf, (long)sizeof(buf), 2, 10);
+		if (strstr(buf, "snapshot_stale=1") == NULL || strstr(buf, "live_changed=1") == NULL || strstr(buf, "complete=1") == NULL) {
+			fprintf(stderr, "FAIL: Test 110 -- dom paging page 2 after mutation: %s\n", buf);
+			return 1;
+		}
+
+		/* 7. Boxes serialization */
+		n = macsurf_diag_serialize_boxes(buf, (long)sizeof(buf), 0, 10);
+		if (strstr(buf, "MSDIAG 1 boxes") == NULL || strstr(buf, "snapshot_stale=1") == NULL) {
+			fprintf(stderr, "FAIL: Test 110 -- boxes paging: %s\n", buf);
+			return 1;
+		}
+
+		/* Clean up local test nodes */
+		dom_node_unref(p1);
+		dom_node_unref(p1_clone);
+		dom_node_unref(p1_imported);
+		dom_node_unref((dom_node *)t110doc);
+		macos9_content_unregister((struct content *)&t110c);
+
+		fprintf(stderr, "=== Test 110 PASS: DOM and Box entities verified across reconvert drift ===\n");
+	}
+
+	/* Test 111: Context histories are bounded, but their wire format must make
+	 * the missing prefix explicit.  Generate one more than each actual ring
+	 * capacity, then require both the displaced id and its loss accounting. */
+	{
+		char history[32768];
+		char needle[64];
+		char *pass_header;
+		char *stage_header;
+		struct ms_diag_provenance prov;
+		unsigned long first_doc, first_batch, first_pass;
+		int i;
+
+		fprintf(stderr, "\n=== Test 111: context history loss accounting ===\n");
+		memset(&prov, 0, sizeof(prov));
+		prov.nav = 111;
+		prov.frame = 1;
+		prov.doc = 11101;
+
+		first_doc = ms_diag_document_open(prov.nav, prov.frame);
+		for (i = 0; i < 32; i++)
+			(void)ms_diag_document_open(prov.nav, prov.frame);
+		(void)macsurf_diag_serialize_documents(history, (long)sizeof(history));
+		snprintf(needle, sizeof(needle), "doc=%lu ", first_doc);
+		if (strstr(history, "history=documents") == NULL ||
+			strstr(history, "first_available=") == NULL ||
+			strstr(history, "overwritten=0") != NULL ||
+			strstr(history, needle) != NULL) {
+			fprintf(stderr, "FAIL: Test 111 -- document history loss: %s\n", history);
+			return 1;
+		}
+
+		first_batch = ms_diag_batch_open(&prov);
+		for (i = 0; i < 64; i++)
+			(void)ms_diag_batch_open(&prov);
+		(void)macsurf_diag_serialize_mutations(history, (long)sizeof(history));
+		snprintf(needle, sizeof(needle), "batch=%lu ", first_batch);
+		if (strstr(history, "history=mutations") == NULL ||
+			strstr(history, "overwritten=0") != NULL ||
+			strstr(history, needle) != NULL) {
+			fprintf(stderr, "FAIL: Test 111 -- mutation history loss: %s\n", history);
+			return 1;
+		}
+
+		first_pass = ms_diag_render_open(&prov, MS_RENDER_RECONVERT);
+		for (i = 0; i < 64; i++)
+			(void)ms_diag_render_open(&prov, MS_RENDER_RECONVERT);
+		for (i = 0; i < 97; i++) {
+			ms_diag_render_stage(MS_STAGE_STYLEFAST, MS_SRES_DECLINE,
+				MS_SREASON_NONE, i, 0, 0, "history", 0);
+		}
+		(void)macsurf_diag_serialize_layout(history, (long)sizeof(history));
+		snprintf(needle, sizeof(needle), "pass=%lu ", first_pass);
+		pass_header = strstr(history, "history=passes");
+		stage_header = strstr(history, "history=stages");
+		if (pass_header == NULL || stage_header == NULL ||
+			strstr(pass_header, "overwritten=0\n") != NULL ||
+			strstr(stage_header, "overwritten=0\n") != NULL ||
+			strstr(history, needle) != NULL) {
+			fprintf(stderr, "FAIL: Test 111 -- layout history loss: %s\n", history);
+			return 1;
+		}
+		fprintf(stderr, "=== Test 111 PASS: overwritten context history is explicit ===\n");
+	}
+
+	/* Test 112: content_user was extended with dr_queued for the OS 9
+	 * deferred-free path, but the ordinary allocation remains malloc().
+	 * The lifecycle flag must begin false on every registration; otherwise a
+	 * recycled nonzero byte makes removal skip retirement and leak the record. */
+	{
+		struct content c;
+		struct content_handler handler;
+		struct content_user *sentinel;
+
+		fprintf(stderr, "\n=== Test 112: content-user death-row flag initialization ===\n");
+		memset(&c, 0, sizeof(c));
+		memset(&handler, 0, sizeof(handler));
+		sentinel = calloc(1, sizeof(*sentinel));
+		if (sentinel == NULL) {
+			fprintf(stderr, "FAIL: Test 112 -- sentinel allocation\n");
+			return 1;
+		}
+		c.handler = &handler;
+		c.user_list = sentinel;
+		if (!content_add_user(&c, content_user_regression_cb, &c) ||
+			c.user_list->next == NULL || c.user_list->next->dr_queued != 0) {
+			fprintf(stderr, "FAIL: Test 112 -- new user retained stale death-row flag\n");
+			return 1;
+		}
+		content_remove_user(&c, content_user_regression_cb, &c);
+		if (c.user_list->next != NULL) {
+			fprintf(stderr, "FAIL: Test 112 -- user was not unlinked\n");
+			return 1;
+		}
+		free(sentinel);
+		fprintf(stderr, "=== Test 112 PASS: fresh user retires deterministically ===\n");
+	}
 
 	return 0;
 }

@@ -256,6 +256,12 @@ nserror llcache_handle_invalidate_cache_data(llcache_handle *handle);
 nsurl *llcache_handle_get_url(const llcache_handle *handle);
 
 /**
+ * MacSurf Trace 1a: navigation id that caused this object's wire fetch
+ * (0 == unattributed). NULL-safe.
+ */
+unsigned long llcache_handle_get_nav_id(const llcache_handle *handle);
+
+/**
  * Retrieve source data of a low-level cache object
  *
  * \param handle  Handle to retrieve source data from

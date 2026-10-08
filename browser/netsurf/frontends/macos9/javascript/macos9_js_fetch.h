@@ -23,6 +23,9 @@ void macos9_js_fetch_install(JSContext *ctx, JSValueConst global);
  * mirrors that function exactly (see its comment in macsurf_qjs.c). */
 void macos9_js_fetch_flush(JSContext *old_ctx);
 
+/* Exact count of native XHR slots presently owned by one live realm. */
+unsigned long macos9_js_fetch_realm_count(JSContext *ctx);
+
 #endif /* WITH_QUICKJS */
 
 #endif /* MACOS9_JS_FETCH_H */
