@@ -1,0 +1,1105 @@
+Error   : Internal Mach-O Importer Error File 'ImportMachO.c' Line 2028 unsupported unknown reloc type 13 (hunk_type = 65535)
+
+Warning : identifier 'va_list' redeclared
+(included from:
+ CoreFoundation.h:23
+ CarbonCore.h:20
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+stdio.h line 71   typedef __darwin_va_list va_list;
+
+Error   : the file 'MacTypes.h' cannot be opened
+(included from:
+ CoreFoundation.h:38
+ CarbonCore.h:20
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+CFBase.h line 34   #include <MacTypes.h>
+
+Error   : illegal function definition
+(included from:
+ CFString.h:13
+ CFPropertyList.h:10
+ CoreFoundation.h:46
+ CarbonCore.h:20
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+CFLocale.h line 75   reateCanonicalLocaleIdentifierFromScriptManagerCodes(CFAllocatorRef allocator, LangCode lcode, RegionCode rcode) AVAILABLE_MAC
+
+Warning : identifier 'UInt8' redeclared
+(included from:
+ CarbonCore.h:29
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+MacTypes.h line 94   typedef unsigned char                   UInt8;
+
+Warning : identifier 'SInt8' redeclared
+(included from:
+ CarbonCore.h:29
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+MacTypes.h line 95   typedef signed char                     SInt8;
+
+Warning : identifier 'UInt16' redeclared
+(included from:
+ CarbonCore.h:29
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+MacTypes.h line 96   typedef unsigned short                  UInt16;
+
+Warning : identifier 'SInt16' redeclared
+(included from:
+ CarbonCore.h:29
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+MacTypes.h line 97   typedef signed short                    SInt16;
+
+Warning : identifier 'UInt32' redeclared
+(included from:
+ CarbonCore.h:29
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+MacTypes.h line 103   typedef unsigned long                   UInt32;
+
+Warning : identifier 'SInt32' redeclared
+(included from:
+ CarbonCore.h:29
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+MacTypes.h line 104   typedef signed long                     SInt32;
+
+Warning : identifier 'SInt64' redeclared
+(included from:
+ CarbonCore.h:29
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+MacTypes.h line 152   typedef   signed long long              SInt64;
+
+Warning : identifier 'UInt64' redeclared
+(included from:
+ CarbonCore.h:29
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+MacTypes.h line 153   typedef unsigned long long              UInt64;
+
+Warning : identifier 'Float32' redeclared
+(included from:
+ CarbonCore.h:29
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+MacTypes.h line 199   typedef float               Float32;
+
+Warning : identifier 'Float64' redeclared
+(included from:
+ CarbonCore.h:29
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+MacTypes.h line 200   typedef double              Float64;
+
+Warning : identifier 'OSErr' redeclared
+(included from:
+ CarbonCore.h:29
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+MacTypes.h line 257   typedef SInt16                          OSErr;
+
+Warning : identifier 'OSStatus' redeclared
+(included from:
+ CarbonCore.h:29
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+MacTypes.h line 258   typedef SInt32                          OSStatus;
+
+Error   : illegal name overloading
+(included from:
+ CarbonCore.h:29
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+MacTypes.h line 272   typedef SInt16                          RegionCode;
+
+Warning : identifier 'Boolean' redeclared
+(included from:
+ CarbonCore.h:29
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+MacTypes.h line 288   typedef unsigned char                   Boolean;
+
+Warning : identifier 'UTF32Char' redeclared
+(included from:
+ CarbonCore.h:29
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+MacTypes.h line 405   typedef UInt32                          UTF32Char;
+
+Warning : identifier 'UniChar' redeclared
+(included from:
+ CarbonCore.h:29
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+MacTypes.h line 406   typedef UInt16                          UniChar;
+
+Warning : identifier 'UTF16Char' redeclared
+(included from:
+ CarbonCore.h:29
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+MacTypes.h line 407   typedef UInt16                          UTF16Char;
+
+Warning : identifier 'UTF8Char' redeclared
+(included from:
+ CarbonCore.h:29
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+MacTypes.h line 408   typedef UInt8                           UTF8Char;
+
+Warning : identifier 'Str255' redeclared
+(included from:
+ CarbonCore.h:29
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+MacTypes.h line 412   typedef unsigned char                   Str255[256];
+
+Warning : identifier 'StringPtr' redeclared
+(included from:
+ CarbonCore.h:29
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+MacTypes.h line 437   typedef unsigned char *                 StringPtr;
+
+Warning : identifier 'ConstStringPtr' redeclared
+(included from:
+ CarbonCore.h:29
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+MacTypes.h line 439   typedef const unsigned char *           ConstStringPtr;
+
+Warning : identifier 'ConstStr255Param' redeclared
+(included from:
+ CarbonCore.h:29
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+MacTypes.h line 440   typedef const unsigned char *           ConstStr255Param;
+
+Error   : illegal function definition
+(included from:
+ CarbonCore.h:49
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+TextCommon.h line 843   RegionCode                 iPreferredRegion,
+
+Error   : illegal name overloading
+(included from:
+ CarbonCore.h:49
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+TextCommon.h line 844   TextEncoding               iPreferredEncoding,
+
+Error   : illegal name overloading
+(included from:
+ CarbonCore.h:49
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+TextCommon.h line 846   ByteCount *                oNameLength,
+
+Error   : declaration syntax error
+(included from:
+ CarbonCore.h:49
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+TextCommon.h line 847   RegionCode *               oActualRegion,            /* can be NULL */
+
+Error   : declaration syntax error
+(included from:
+ CarbonCore.h:49
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+TextCommon.h line 848   TextEncoding *             oActualEncoding,          /* can be NULL */
+
+Error   : declaration syntax error
+(included from:
+ CarbonCore.h:49
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+TextCommon.h line 849   TextPtr                    oEncodingName)                   AVAILABLE_MAC_OS_X_VERSION_10_0_AND_LATER;
+
+Error   : illegal function definition
+(included from:
+ CarbonCore.h:49
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+TextCommon.h line 877   RegionCode         iRegionID,
+
+Error   : illegal name overloading
+(included from:
+ CarbonCore.h:49
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+TextCommon.h line 878   ConstStr255Param   iTextFontname,
+
+Error   : ';' expected
+(included from:
+ CarbonCore.h:49
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+TextCommon.h line 879   TextEncoding *     oEncoding)                               AVAILABLE_MAC_OS_X_VERSION_10_0_AND_LATER;
+
+Error   : illegal function definition
+(included from:
+ CarbonCore.h:49
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+TextCommon.h line 947   RegionCode      iTextRegionID,
+
+Error   : illegal name overloading
+(included from:
+ CarbonCore.h:49
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+TextCommon.h line 948   TextEncoding *  oEncoding)                                  AVAILABLE_MAC_OS_X_VERSION_10_2_AND_LATER;
+
+Error   : illegal function definition
+(included from:
+ CarbonCore.h:105
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+MacLocales.h line 97   RegionCode   region,
+
+Error   : illegal name overloading
+(included from:
+ CarbonCore.h:105
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+MacLocales.h line 98   LocaleRef *  locale)                                        AVAILABLE_MAC_OS_X_VERSION_10_0_AND_LATER;
+
+Error   : illegal function definition
+(included from:
+ CarbonCore.h:105
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+MacLocales.h line 144   RegionCode *  region)                                       AVAILABLE_MAC_OS_X_VERSION_10_0_AND_LATER;
+
+Error   : ')' expected
+(included from:
+ CarbonCore.h:105
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+MacLocales.h line 248   RegionCode   region,
+
+Error   : illegal function definition
+(included from:
+ CarbonCore.h:105
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+MacLocales.h line 249   Str255       languageName)                                  AVAILABLE_MAC_OS_X_VERSION_10_0_AND_LATER;
+
+Error   : illegal function definition
+(included from:
+ CarbonCore.h:105
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+MacLocales.h line 264   LocaleOperationGetName(
+
+Error   : illegal function definition
+(included from:
+ CarbonCore.h:105
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+MacLocales.h line 269   displayName[])                       AVAILABLE_MAC_OS_X_VERSION_10_0_AND_LATER;
+
+Error   : illegal function definition
+(included from:
+ CarbonCore.h:105
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+MacLocales.h line 281   LocaleOperationCountNames(
+
+Error   : illegal function definition
+(included from:
+ CarbonCore.h:105
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+MacLocales.h line 283   nameCount)                           AVAILABLE_MAC_OS_X_VERSION_10_0_AND_LATER;
+
+Error   : illegal function definition
+(included from:
+ CarbonCore.h:105
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+MacLocales.h line 295   LocaleOperationGetIndName(
+
+Error   : illegal function definition
+(included from:
+ CarbonCore.h:105
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+MacLocales.h line 301   displayLocale)                       AVAILABLE_MAC_OS_X_VERSION_10_0_AND_LATER;
+
+Error   : identifier expected
+(included from:
+ CarbonCore.h:109
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+Debugging.h line 303   };
+
+Error   : illegal function definition
+(included from:
+ CarbonCore.h:109
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+Debugging.h line 354   DebugAssert(
+
+Error   : illegal function definition
+(included from:
+ CarbonCore.h:109
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+Debugging.h line 362   AVAILABLE_MAC_OS_X_VERSION_10_0_AND_LATER;
+
+Error   : identifier expected
+(included from:
+ CarbonCore.h:109
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+Debugging.h line 374   };
+
+Error   : illegal function definition
+(included from:
+ CarbonCore.h:109
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+Debugging.h line 398   TaskLevel(void)                                               AVAILABLE_MAC_OS_X_VERSION_10_0_AND_LATER;
+
+Error   : identifier expected
+(included from:
+ CarbonCore.h:109
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+Debugging.h line 406   };
+
+Error   : identifier expected
+(included from:
+ CarbonCore.h:109
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+Debugging.h line 411   };
+
+Error   : illegal function definition
+(included from:
+ CarbonCore.h:109
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+Debugging.h line 438   pascal void (*DebugComponentCallbackProcPtr)
+
+Error   : illegal function definition
+(included from:
+ CarbonCore.h:109
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+Debugging.h line 439   DebugComponentCallbackProcPtr
+
+Error   : illegal function definition
+(included from:
+ CarbonCore.h:109
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+Debugging.h line 471   NewDebugComponent(
+
+Error   : illegal function definition
+(included from:
+ CarbonCore.h:109
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+Debugging.h line 474   DebugComponentCallbackUPP   componentCallback)              AVAILABLE_MAC_OS_X_VERSION_10_0_AND_LATER;
+
+Error   : illegal function definition
+(included from:
+ CarbonCore.h:109
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+Debugging.h line 509   NewDebugOption(
+
+Error   : illegal function definition
+(included from:
+ CarbonCore.h:109
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+Debugging.h line 512   ionName)                              AVAILABLE_MAC_OS_X_VERSION_10_0_AND_LATER;
+
+Error   : illegal function definition
+(included from:
+ CarbonCore.h:109
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+Debugging.h line 540   DisposeDebugComponent(OSType componentSignature)              AVAILABLE_MAC_OS_X_VERSION_10_0_AND_LATER;
+
+Error   : illegal function definition
+(included from:
+ CarbonCore.h:109
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+Debugging.h line 575   GetDebugComponentInfo(
+
+Error   : illegal function definition
+(included from:
+ CarbonCore.h:109
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+Debugging.h line 578   e)                                    AVAILABLE_MAC_OS_X_VERSION_10_0_AND_LATER;
+
+Error   : illegal function definition
+(included from:
+ CarbonCore.h:109
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+Debugging.h line 622   GetDebugOptionInfo(
+
+Error   : illegal function definition
+(included from:
+ CarbonCore.h:109
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+Debugging.h line 627   ng)                                   AVAILABLE_MAC_OS_X_VERSION_10_0_AND_LATER;
+
+Error   : illegal function definition
+(included from:
+ CarbonCore.h:109
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+Debugging.h line 660   SetDebugOptionValue(
+
+Error   : illegal function definition
+(included from:
+ CarbonCore.h:109
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+Debugging.h line 663   ting)                                 AVAILABLE_MAC_OS_X_VERSION_10_0_AND_LATER;
+
+Error   : illegal function definition
+(included from:
+ CarbonCore.h:109
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+Debugging.h line 708   pascal void (*DebugAssertOutputHandlerProcPtr)
+
+Error   : illegal function definition
+(included from:
+ CarbonCore.h:109
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+Debugging.h line 709   DebugAssertOutputHandlerProcPtr
+
+Error   : illegal function definition
+(included from:
+ CarbonCore.h:109
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+Debugging.h line 730   InstallDebugAssertOutputHandler(DebugAssertOutputHandlerUPP handler) AVAILABLE_MAC_OS_X_VERSION_10_0_AND_LATER;
+
+Error   : illegal function definition
+(included from:
+ CarbonCore.h:109
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+Debugging.h line 813   extern const char * 
+
+Error   : illegal function definition
+(included from:
+ CarbonCore.h:109
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+Debugging.h line 814   g(OSStatus err)                       AVAILABLE_MAC_OS_X_VERSION_10_4_AND_LATER;
+
+Error   : illegal function definition
+(included from:
+ CarbonCore.h:109
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+Debugging.h line 854   extern const char * 
+
+Error   : illegal function definition
+(included from:
+ CarbonCore.h:109
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+Debugging.h line 855   ing(OSStatus err)                     AVAILABLE_MAC_OS_X_VERSION_10_4_AND_LATER;
+
+Error   : illegal function definition
+(included from:
+ CarbonCore.h:109
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+Debugging.h line 871   extern DebugComponentCallbackUPP
+
+Error   : illegal function definition
+(included from:
+ CarbonCore.h:109
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+Debugging.h line 872   NewDebugComponentCallbackUPP(DebugComponentCallbackProcPtr userRoutine) AVAILABLE_MAC_OS_X_VERSION_10_0_AND_LATER;
+
+Error   : illegal function definition
+(included from:
+ CarbonCore.h:109
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+Debugging.h line 882   extern DebugAssertOutputHandlerUPP
+
+Error   : illegal function definition
+(included from:
+ CarbonCore.h:109
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+Debugging.h line 883   NewDebugAssertOutputHandlerUPP(DebugAssertOutputHandlerProcPtr userRoutine) AVAILABLE_MAC_OS_X_VERSION_10_0_AND_LATER;
+
+Error   : illegal function definition
+(included from:
+ CarbonCore.h:109
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+Debugging.h line 894   DisposeDebugComponentCallbackUPP(DebugComponentCallbackUPP userUPP) AVAILABLE_MAC_OS_X_VERSION_10_0_AND_LATER;
+
+Error   : illegal function definition
+(included from:
+ CarbonCore.h:109
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+Debugging.h line 905   DisposeDebugAssertOutputHandlerUPP(DebugAssertOutputHandlerUPP userUPP) AVAILABLE_MAC_OS_X_VERSION_10_0_AND_LATER;
+
+Error   : illegal function definition
+(included from:
+ CarbonCore.h:109
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+Debugging.h line 916   InvokeDebugComponentCallbackUPP(
+
+Error   : illegal function definition
+(included from:
+ CarbonCore.h:109
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+Debugging.h line 920   DebugComponentCallbackUPP  userUPP)                         AVAILABLE_MAC_OS_X_VERSION_10_0_AND_LATER;
+
+Error   : illegal function definition
+(included from:
+ CarbonCore.h:109
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+Debugging.h line 931   InvokeDebugAssertOutputHandlerUPP(
+
+Error   : illegal function definition
+(included from:
+ CarbonCore.h:109
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+Debugging.h line 941   DebugAssertOutputHandlerUPP  userUPP)                       AVAILABLE_MAC_OS_X_VERSION_10_0_AND_LATER;
+
+Error   : illegal function definition
+(included from:
+ CarbonCore.h:113
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+PLStringFuncs.h line 76   PLstrcmp(
+
+Error   : illegal function definition
+(included from:
+ CarbonCore.h:113
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+PLStringFuncs.h line 78   AILABLE_MAC_OS_X_VERSION_10_0_AND_LATER_BUT_DEPRECATED_IN_MAC_OS_X_VERSION_10_4;
+
+Error   : illegal function definition
+(included from:
+ CarbonCore.h:113
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+PLStringFuncs.h line 128   PLstrncmp(
+
+Error   : illegal function definition
+(included from:
+ CarbonCore.h:113
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+PLStringFuncs.h line 131   AILABLE_MAC_OS_X_VERSION_10_0_AND_LATER_BUT_DEPRECATED_IN_MAC_OS_X_VERSION_10_4;
+
+Error   : illegal function definition
+(included from:
+ CarbonCore.h:113
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+PLStringFuncs.h line 171   PLstrcpy(
+
+Error   : illegal function definition
+(included from:
+ CarbonCore.h:113
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+PLStringFuncs.h line 173   AILABLE_MAC_OS_X_VERSION_10_0_AND_LATER_BUT_DEPRECATED_IN_MAC_OS_X_VERSION_10_4;
+
+Error   : illegal function definition
+(included from:
+ CarbonCore.h:113
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+PLStringFuncs.h line 219   PLstrncpy(
+
+Error   : illegal function definition
+(included from:
+ CarbonCore.h:113
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+PLStringFuncs.h line 222   AILABLE_MAC_OS_X_VERSION_10_0_AND_LATER_BUT_DEPRECATED_IN_MAC_OS_X_VERSION_10_4;
+
+Error   : illegal function definition
+(included from:
+ CarbonCore.h:113
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+PLStringFuncs.h line 266   PLstrcat(
+
+Error   : illegal function definition
+(included from:
+ CarbonCore.h:113
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+PLStringFuncs.h line 268   AILABLE_MAC_OS_X_VERSION_10_0_AND_LATER_BUT_DEPRECATED_IN_MAC_OS_X_VERSION_10_4;
+
+Error   : illegal function definition
+(included from:
+ CarbonCore.h:113
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+PLStringFuncs.h line 316   PLstrncat(
+
+Error   : illegal function definition
+(included from:
+ CarbonCore.h:113
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+PLStringFuncs.h line 319   AILABLE_MAC_OS_X_VERSION_10_0_AND_LATER_BUT_DEPRECATED_IN_MAC_OS_X_VERSION_10_4;
+
+Error   : illegal function definition
+(included from:
+ CarbonCore.h:113
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+PLStringFuncs.h line 359   PLstrchr(
+
+Error   : illegal function definition
+(included from:
+ CarbonCore.h:113
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+PLStringFuncs.h line 361   AILABLE_MAC_OS_X_VERSION_10_0_AND_LATER_BUT_DEPRECATED_IN_MAC_OS_X_VERSION_10_4;
+
+Error   : illegal function definition
+(included from:
+ CarbonCore.h:113
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+PLStringFuncs.h line 401   PLstrrchr(
+
+Error   : illegal function definition
+(included from:
+ CarbonCore.h:113
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+PLStringFuncs.h line 403   AILABLE_MAC_OS_X_VERSION_10_0_AND_LATER_BUT_DEPRECATED_IN_MAC_OS_X_VERSION_10_4;
+
+Error   : illegal function definition
+(included from:
+ CarbonCore.h:113
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+PLStringFuncs.h line 445   PLstrpbrk(
+
+Error   : illegal function definition
+(included from:
+ CarbonCore.h:113
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+PLStringFuncs.h line 447   AILABLE_MAC_OS_X_VERSION_10_0_AND_LATER_BUT_DEPRECATED_IN_MAC_OS_X_VERSION_10_4;
+
+Error   : illegal function definition
+(included from:
+ CarbonCore.h:113
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+PLStringFuncs.h line 491   PLstrspn(
+
+Error   : illegal function definition
+(included from:
+ CarbonCore.h:113
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+PLStringFuncs.h line 493   AILABLE_MAC_OS_X_VERSION_10_0_AND_LATER_BUT_DEPRECATED_IN_MAC_OS_X_VERSION_10_4;
+
+Error   : illegal function definition
+(included from:
+ CarbonCore.h:113
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+PLStringFuncs.h line 535   PLstrstr(
+
+Error   : illegal function definition
+(included from:
+ CarbonCore.h:113
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+PLStringFuncs.h line 537   AILABLE_MAC_OS_X_VERSION_10_0_AND_LATER_BUT_DEPRECATED_IN_MAC_OS_X_VERSION_10_4;
+
+Error   : illegal function definition
+(included from:
+ CarbonCore.h:113
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+PLStringFuncs.h line 572   PLstrlen(ConstStr255Param str)                                AVAILABLE_MAC_OS_X_VERSION_10_0_AND_LATER_BUT_DEPRECATED_IN_MAC_
+
+Error   : illegal function definition
+(included from:
+ CarbonCore.h:113
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+PLStringFuncs.h line 615   PLpos(
+
+Error   : illegal function definition
+(included from:
+ CarbonCore.h:113
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+PLStringFuncs.h line 617   AILABLE_MAC_OS_X_VERSION_10_0_AND_LATER_BUT_DEPRECATED_IN_MAC_OS_X_VERSION_10_4;
+
+Error   : illegal function definition
+(included from:
+ CarbonCore.h:117
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+DriverSynchronization.h line 78   CompareAndSwap(
+
+Error   : illegal function definition
+(included from:
+ CarbonCore.h:117
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+DriverSynchronization.h line 81   AVAILABLE_MAC_OS_X_VERSION_10_0_AND_LATER;
+
+Error   : illegal function definition
+(included from:
+ CarbonCore.h:117
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+DriverSynchronization.h line 118   TestAndClear(
+
+Error   : illegal function definition
+(included from:
+ CarbonCore.h:117
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+DriverSynchronization.h line 120   AVAILABLE_MAC_OS_X_VERSION_10_0_AND_LATER;
+
+Error   : illegal function definition
+(included from:
+ CarbonCore.h:117
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+DriverSynchronization.h line 157   TestAndSet(
+
+Error   : illegal function definition
+(included from:
+ CarbonCore.h:117
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+DriverSynchronization.h line 159   AVAILABLE_MAC_OS_X_VERSION_10_0_AND_LATER;
+
+Error   : illegal function definition
+(included from:
+ CarbonCore.h:117
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+DriverSynchronization.h line 192   IncrementAtomic8(SInt8 * address)                             AVAILABLE_MAC_OS_X_VERSION_10_0_AND_LATER;
+
+Error   : illegal function definition
+(included from:
+ CarbonCore.h:117
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+DriverSynchronization.h line 225   DecrementAtomic8(SInt8 * address)                             AVAILABLE_MAC_OS_X_VERSION_10_0_AND_LATER;
+
+Error   : illegal function definition
+(included from:
+ CarbonCore.h:117
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+DriverSynchronization.h line 261   AddAtomic8(
+
+Error   : illegal function definition
+(included from:
+ CarbonCore.h:117
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+DriverSynchronization.h line 263   AVAILABLE_MAC_OS_X_VERSION_10_0_AND_LATER;
+
+Error   : illegal function definition
+(included from:
+ CarbonCore.h:117
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+DriverSynchronization.h line 300   BitAndAtomic8(
+
+Error   : illegal function definition
+(included from:
+ CarbonCore.h:117
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+DriverSynchronization.h line 302   AVAILABLE_MAC_OS_X_VERSION_10_0_AND_LATER;
+
+Error   : illegal function definition
+(included from:
+ CarbonCore.h:117
+ CoreServices.h:21
+ Carbon.h:20
+ probe_prefix.h:6
+ SimpleHello.c:1)
+DriverSynchronization.h line 339   BitOrAtomic8(
+

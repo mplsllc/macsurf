@@ -668,6 +668,11 @@ macsurf_debug_log_buffer_flush(void)
 static int
 macsurf_log_is_crash_report(const char *m)
 {
+	/* M7 bring-up: these deliberately sparse boundary markers are flushed
+	 * around the PPC startup and QuickJS construction path so a Type 2 still
+	 * leaves the last completed operation in the crash-only log. */
+	if (strstr(m, "M7_BOOT") != NULL) return 1;
+	if (strstr(m, "QJS_BOOT") != NULL) return 1;
 	/* fixes697  -  the startup banner ("=== MacSurf session Y-M-D H:M:S ==="
 	 * and the two "====" rules around it) is the marker that tells a
 	 * reporter one log spans multiple launches. It was being dropped by

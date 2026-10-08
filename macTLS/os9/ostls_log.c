@@ -18,16 +18,17 @@
  */
 
 #include "ostls_log.h"
+#include "macsurf_runtime_profile.h"
 
 #include <stdarg.h>
 #include <string.h>
 
-#ifdef __MWERKS__
+#if MACSURF_CLASSIC_RUNTIME
 #include <Files.h>
 #include <Folders.h>
 #include <Script.h>             /* smRoman */
 #else
-/* Non-CW8 stubs. The CW8 File Manager exposes file refnums as plain
+/* Retro68 preflight and host stubs. The CW8 File Manager exposes refnums as plain
  * 'short' (FSIORefNum is a newer Carbon typedef and isn't available
  * on CW8's Universal Interfaces), so we keep the type small here too.
  */

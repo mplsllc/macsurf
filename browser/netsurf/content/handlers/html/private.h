@@ -266,6 +266,16 @@ typedef struct html_content {
 						 * this document (paint join) */
 	unsigned long live_box_generation;	/* published box-tree generation */
 
+	/* Raw interaction owners (focus, selection, drag, and the open select
+	 * menu) refer to the current box tree or its form controls. Associate each
+	 * owner with the layout generation in which it was installed so dispatch
+	 * can reject an owner after reconvert without inspecting freed storage. */
+	unsigned long layout_generation;
+	unsigned long focus_owner_generation;
+	unsigned long selection_owner_generation;
+	unsigned long drag_owner_generation;
+	unsigned long visible_select_menu_generation;
+
 } html_content;
 
 /**

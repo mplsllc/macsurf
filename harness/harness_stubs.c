@@ -5,6 +5,7 @@
 #include "utils/ns_errors.h"
 void macsurf_debug_log_init(void){}
 void macsurf_debug_log_close(void){}
+void macsurf_debug_log_flush(void){}
 void macsurf_debug_log_write(const char *s){ if(s){fputs(s,stderr);fputc('\n',stderr);} }
 void macsurf_debug_log_writef(const char *fmt, ...){ va_list a; va_start(a,fmt); vfprintf(stderr,fmt,a); va_end(a); fputc('\n',stderr); }
 void macsurf_debug_set_title(const char *m){(void)m;}

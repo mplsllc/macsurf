@@ -1,0 +1,72 @@
+SimpleHello Debug.app/Contents/MacOS/SimpleHello Debug: Mach-O executable ppc
+SimpleHello Debug.app/Contents/MacOS/SimpleHello Debug:
+Mach header
+      magic cputype cpusubtype   filetype ncmds sizeofcmds      flags
+   MH_MAGIC     PPC        ALL    EXECUTE    80      10068   NOUNDEFS DYLDLINK PREBOUND TWOLEVEL
+SimpleHello Debug.app/Contents/MacOS/SimpleHello Debug:
+	/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 88.1.12)
+	/usr/lib/libz.1.dylib (compatibility version 1.0.0, current version 1.2.3)
+	/System/Library/Frameworks/Carbon.framework/Versions/A/Carbon (compatibility version 2.0.0, current version 128.0.0)
+00004000 D _NXArgc
+00004004 D _NXArgv
+         U ___keymgr_dwarf2_register_sections
+0000400c D ___progname
+00003d94 t __call_mod_init_funcs
+00004070 s __carbon_init
+         U __cthread_init_routine
+00003e34 t __dyld_func_lookup
+00003de0 t __dyld_init_check
+00001000 A __mh_execute_header
+00004074 s __objcInit
+00003bc4 t __start
+         U _atexit
+00004078 S _catch_exception_raise
+0000407c S _catch_exception_raise_state
+00004080 S _catch_exception_raise_state_identity
+00004084 S _clock_alarm_reply
+00004088 S _do_mach_notify_dead_name
+0000408c S _do_mach_notify_no_senders
+00004090 S _do_mach_notify_port_deleted
+00004094 S _do_mach_notify_send_once
+00004098 S _do_seqnos_mach_notify_dead_name
+0000409c S _do_seqnos_mach_notify_no_senders
+000040a0 S _do_seqnos_mach_notify_port_deleted
+000040a4 S _do_seqnos_mach_notify_send_once
+00004008 D _environ
+         U _errno
+         U _exit
+         U _mach_init_routine
+00003e44 T _main
+00004014 d _pointer_to_carbon_init
+00004010 d _pointer_to_objcInit
+00004050 b _probe_gid
+0000405c b _probe_mode
+00004058 b _probe_pid
+00004060 b _probe_string
+00004068 b _probe_time
+00004054 b _probe_uid
+000040a8 S _receive_samples
+00004034 s dyld_func_lookup_pointer
+00004030 s dyld_lazy_symbol_binding_entry_point
+00003e1c t dyld_stub_binding_helper
+00003f38 s error_message
+00003b90 T start
+---
+___keymgr_dwarf2_register_sections
+__cthread_init_routine
+_atexit
+_errno
+_exit
+_mach_init_routine
+---
+libSystem.B.dylib: Mach-O dynamically linked shared library ppc
+libSystem.B.dylib:
+/usr/lib/libSystem.B.dylib
+libSystem.B.dylib:
+	/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 88.1.12)
+	/usr/lib/system/libmathCommon.A.dylib (compatibility version 1.0.0, current version 210.0.0)
+libSystem.B.dylib:
+Mach header
+      magic cputype cpusubtype   filetype ncmds sizeofcmds      flags
+   MH_MAGIC     PPC        ALL      DYLIB    10       2008   NOUNDEFS DYLDLINK PREBOUND SPLIT_SEGS TWOLEVEL
+7cf8c04b026bf108a52c6297eb325abe

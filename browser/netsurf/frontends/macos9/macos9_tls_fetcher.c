@@ -43,6 +43,7 @@
 
 #include "ostls_async.h"
 #include "ostls_http.h"
+#include "ostls_time.h"
 #include "macos9_disk_cache.h"
 
 #define MAX_HTTPS_F        128  /* macTLS#196: bumped to 128 for GitHub (65+ in-flight)
@@ -292,6 +293,9 @@ struct macos9_https_ctx {
 #define HTTPS_MAX_RETRIES 2
 
 static struct macos9_https_ctx https_slots[MAX_HTTPS_F];
+/* Keep the r3 clock/Open Transport bring-up trace to the first cold TLS
+ * connection, even on pages with many HTTPS subresources. */
+static int g_hctx_tls_boundary_logged = 0;
 
 /* fixes1253 (#167) - cumulative, session-lifetime count of ops.setup()
  * calls that found all MAX_HTTPS_F slots occupied and returned NULL
@@ -3114,6 +3118,11 @@ static void hctx_poll(struct macos9_https_ctx *c)
 	if (c->state == HS_QUEUED) {
 		OSTLSConfig cfg;
 		OSTLSConnection *pooled;
+		OSTLSTimeDetails time_details;
+		OSErr time_result;
+		int emit_tls_boundary;
+
+		emit_tls_boundary = 0;
 
 		/* fixes232a - wait for NetSurf core to dispatch us via ops.start
 		 * before we open any TLS connection. setup() fires for every
@@ -3224,7 +3233,29 @@ static void hctx_poll(struct macos9_https_ctx *c)
 			hctx_fail(c, "https: OSTLS_New failed");
 			return;
 		}
+		if (!g_hctx_tls_boundary_logged) {
+			g_hctx_tls_boundary_logged = 1;
+			emit_tls_boundary = 1;
+		}
+		if (emit_tls_boundary) {
+			time_result = OSTLS_GetBearSSLTimeDetails(&time_details);
+			macsurf_debug_log_writef(
+				"https: clock local_mac=%lu gmt_delta=%ld utc_mac=%lu unix=%lu bear_days=%lu bear_seconds=%lu helper=%d",
+				(unsigned long)time_details.local_mac_seconds,
+				time_details.gmt_delta_seconds,
+				(unsigned long)time_details.utc_mac_seconds,
+				(unsigned long)time_details.unix_seconds,
+				(unsigned long)time_details.bearssl_days,
+				(unsigned long)time_details.bearssl_seconds,
+				(int)time_result);
+		}
 		e = OSTLS_Start(c->conn);
+		if (emit_tls_boundary) {
+			macsurf_debug_log_writef(
+				"https: OSTLS_Start result=%d state=%d",
+				(int)e, (int)OSTLS_GetState(c->conn));
+			macsurf_debug_log_flush();
+		}
 		if (e != kOSTLSAsync_OK) {
 			hctx_fail(c, "https: OSTLS_Start failed");
 			return;

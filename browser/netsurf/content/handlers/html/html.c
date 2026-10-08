@@ -1813,13 +1813,19 @@ html_create_html_data(html_content *c, const http_parameter *params)
 	c->frameset = NULL;
 	c->iframe = NULL;
 	c->page = NULL;
+	c->visible_select_menu = NULL;
 	c->font_func = guit->layout;
+	c->layout_generation = 1;
+	c->visible_select_menu_generation = c->layout_generation;
 	c->drag_type = HTML_DRAG_NONE;
 	c->drag_owner.no_owner = true;
+	c->drag_owner_generation = c->layout_generation;
 	c->selection_type = HTML_SELECTION_NONE;
 	c->selection_owner.none = true;
+	c->selection_owner_generation = c->layout_generation;
 	c->focus_type = HTML_FOCUS_SELF;
 	c->focus_owner.self = true;
+	c->focus_owner_generation = c->layout_generation;
 	c->scripts_count = 0;
 	c->scripts = NULL;
 	c->js_thread = NULL;
@@ -4499,6 +4505,11 @@ static void html_reconvert_done(html_content *c, bool success)
 	 * survive via their refcount held by the new tree. */
 	{	/* fixes1095 */
 		double t0 = html_reconv_now();
+		/* This boundary retires every box in the previous layout. Invalidate
+		 * focus, selection, and drag owners while that tree is still valid;
+		 * generation checks then make any missed/re-entrant raw owner fail
+		 * closed before dispatch can dereference it. */
+		html_invalidate_layout_interactions(c, g_reconvert_old_bctx);
 		html_reconvert_relink_objects(c);
 		html_reconv_ph_add(RECONV_PH_RELINK, t0);
 		t0 = html_reconv_now();
@@ -6458,14 +6469,19 @@ html_open(struct content *c,
 	html->ms_diag_frame_id = ms_diag_frame_get(bw);
 #endif
 	html->page = (html_content *) page;
+	html->visible_select_menu = NULL;
+	html->visible_select_menu_generation = html->layout_generation;
 
 	html->drag_type = HTML_DRAG_NONE;
 	html->drag_owner.no_owner = true;
+	html->drag_owner_generation = html->layout_generation;
+	html->focus_owner_generation = html->layout_generation;
 
 	/* text selection */
 	selection_init(html->sel);
 	html->selection_type = HTML_SELECTION_NONE;
 	html->selection_owner.none = true;
+	html->selection_owner_generation = html->layout_generation;
 
 	html_object_open_objects(html, bw);
 
@@ -6570,6 +6586,8 @@ static nserror html_close(struct content *c)
 static void html_clear_selection(struct content *c)
 {
 	html_content *html = (html_content *) c;
+	if (!html_interaction_selection_valid(html, "clear-selection"))
+		return;
 
 	switch (html->selection_type) {
 	case HTML_SELECTION_NONE:
@@ -6604,6 +6622,8 @@ static void html_clear_selection(struct content *c)
 static char *html_get_selection(struct content *c)
 {
 	html_content *html = (html_content *) c;
+	if (!html_interaction_selection_valid(html, "get-selection"))
+		return NULL;
 
 	switch (html->selection_type) {
 	case HTML_SELECTION_TEXTAREA:

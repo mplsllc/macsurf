@@ -37,7 +37,9 @@
 #ifndef OSTLS_TIME_H
 #define OSTLS_TIME_H
 
-#ifdef __MWERKS__
+#include "macsurf_runtime_profile.h"
+
+#if MACSURF_CLASSIC_RUNTIME
 #include <Types.h>      /* OSErr, UInt32 */
 #else
 /* Guard against duplicate typedefs when multiple ostls_*.h are
@@ -65,6 +67,16 @@ enum {
     kOSTLSTimeClockBefore2000 = 251
 };
 
+typedef struct OSTLSTimeDetails {
+    UInt32 local_mac_seconds;
+    long gmt_delta_seconds;
+    UInt32 utc_mac_seconds;
+    UInt32 unix_seconds;
+    UInt32 bearssl_days;
+    UInt32 bearssl_seconds;
+    OSErr result;
+} OSTLSTimeDetails;
+
 /*
  * Populate *days and *seconds from the current system clock.
  *
@@ -80,5 +92,8 @@ enum {
  * with a meaningless time base.
  */
 OSErr OSTLS_GetBearSSLTime(UInt32 *out_days, UInt32 *out_seconds);
+
+/* Bring-up diagnostics: same conversion with each epoch boundary retained. */
+OSErr OSTLS_GetBearSSLTimeDetails(OSTLSTimeDetails *details);
 
 #endif /* OSTLS_TIME_H */

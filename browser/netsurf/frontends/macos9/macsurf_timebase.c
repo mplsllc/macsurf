@@ -16,15 +16,17 @@
  * the exact frequency once at startup by spanning a TickCount boundary
  * (1/60.15 s = 16 628 us).
  *
- * All PPC assembly is inside #ifdef __MWERKS__ guards; Linux syntax checks
- * compile through the else branch which returns 0 / 0.0.
+ * Compiler identity selects the appropriate inline-assembly spelling.
+ * Native Classic PPC builds read the real time base; preflight and host
+ * syntax checks compile through the branch returning 0 / 0.0.
  *
  * C89, CW8-clean.  No inline, no // comments, no C99.
  */
 
 #include "macsurf_timebase.h"
+#include "macsurf_runtime_profile.h"
 
-#ifdef __MWERKS__
+#if MACSURF_CLASSIC_RUNTIME
 #include <DateTimeUtils.h>   /* GetDateTime */
 #include <Timer.h>           /* Microseconds, UnsignedWide */
 #include <Events.h>          /* TickCount */
@@ -54,12 +56,21 @@ static int           g_tb_calibrated = 0;
 macsurf_tb64 macsurf_tb_read(void)
 {
     macsurf_tb64 t;
-#ifdef __MWERKS__
+#if MACSURF_COMPILER_CODEWARRIOR
     register unsigned long hi, lo, hi2;
     do {
         asm { mftbu hi }
         asm { mftb  lo }
         asm { mftbu hi2 }
+    } while (hi != hi2);
+    t.hi = hi;
+    t.lo = lo;
+#elif MACSURF_COMPILER_MACMAKE_GCC
+    unsigned long hi, lo, hi2;
+    do {
+        __asm__ volatile ("mftbu %0" : "=r" (hi));
+        __asm__ volatile ("mftb %0"  : "=r" (lo));
+        __asm__ volatile ("mftbu %0" : "=r" (hi2));
     } while (hi != hi2);
     t.hi = hi;
     t.lo = lo;
@@ -80,7 +91,7 @@ macsurf_tb64 macsurf_tb_read(void)
  * ------------------------------------------------------------------ */
 void macsurf_tb_calibrate(void)
 {
-#ifdef __MWERKS__
+#if MACSURF_CLASSIC_RUNTIME
     long tc0;
     macsurf_tb64 tb_a, tb_b;
     unsigned long delta_lo;
@@ -89,7 +100,7 @@ void macsurf_tb_calibrate(void)
     if (g_tb_calibrated)
         return;
 
-#ifdef __MWERKS__
+#if MACSURF_CLASSIC_RUNTIME
     /* Wait for a clean tick boundary so we sample exactly one tick. */
     tc0 = TickCount();
     while (TickCount() == tc0) {}
@@ -158,7 +169,7 @@ unsigned long macsurf_tb_to_us(macsurf_tb64 start, macsurf_tb64 end)
  * ------------------------------------------------------------------ */
 double macsurf_tb_elapsed_ms(void)
 {
-#ifdef __MWERKS__
+#if MACSURF_CLASSIC_RUNTIME
     macsurf_tb64 now;
     unsigned long delta;
     if (!g_tb_calibrated || g_tb_ticks_per_us == 0)
@@ -188,7 +199,7 @@ double macsurf_tb_elapsed_ms(void)
  * ------------------------------------------------------------------ */
 double macsurf_date_get_now(void)
 {
-#ifdef __MWERKS__
+#if MACSURF_CLASSIC_RUNTIME
     unsigned long secs;
     UnsignedWide usecs;
     double epoch_ms;

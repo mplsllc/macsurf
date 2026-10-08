@@ -1,0 +1,1 @@
+Link Error   : undefined: 'exit' (code)Referenced from 'start' in mwcrt1.oLink Error   : undefined: 'errno' (non lazy ptr)Referenced from 'start' in mwcrt1.oLink Error   : undefined: 'atexit' (code)Referenced from 'start' in mwcrt1.oLink Error   : undefined: '__keymgr_dwarf2_register_sections' (code)Referenced from 'start' in mwcrt1.o

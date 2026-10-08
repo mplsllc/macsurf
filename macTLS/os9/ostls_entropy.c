@@ -34,6 +34,7 @@
  */
 
 #include "ostls_entropy.h"
+#include "macsurf_runtime_profile.h"
 #include "bearssl_hash.h"
 #include "ostls_log.h"
 
@@ -49,7 +50,7 @@ void OSTLS_StirEntropy(const void *data, unsigned long len);
 void OSTLS_CollectEntropy(void);
 unsigned long OSTLS_EntropySampleCount(void);
 
-#ifdef __MWERKS__
+#if MACSURF_CLASSIC_RUNTIME
 #include <Types.h>
 #include <Events.h>
 #include <Timer.h>
@@ -62,7 +63,7 @@ unsigned long OSTLS_EntropySampleCount(void);
 typedef uint32_t UInt32;
 typedef struct { UInt32 hi; UInt32 lo; } UnsignedWide;
 typedef struct { short v; short h; } Point;
-/* Non-CW8 stubs so the file parses under the Retro68 syntax check; no
+/* Retro68 preflight and host stubs; no
  * File Manager exists on Linux, so these no-op. Mirrors ostls_log.c. */
 typedef long OSStatus;
 typedef struct {
@@ -255,7 +256,7 @@ OSTLS_CollectEntropy(void)
     UnsignedWide usec;
     Point mouse;
 
-#ifdef __MWERKS__
+#if MACSURF_CLASSIC_RUNTIME
     ticks = (UInt32)TickCount();
     Microseconds(&usec);
     GetMouse(&mouse);
@@ -282,7 +283,7 @@ OSTLS_StirTimer(unsigned long hint)
     UInt32 ticks;
     UnsignedWide usec;
 
-#ifdef __MWERKS__
+#if MACSURF_CLASSIC_RUNTIME
     ticks = (UInt32)TickCount();
     Microseconds(&usec);
 #else
@@ -428,7 +429,7 @@ OSTLS_InjectEntropy(br_ssl_engine_context *eng)
      * even a caller that never ran CollectEntropy gets some live noise. */
     stackaddr = (unsigned long)(void *)&local_var;
     pool_update(&stackaddr, sizeof stackaddr);
-#ifdef __MWERKS__
+#if MACSURF_CLASSIC_RUNTIME
     Microseconds(&usec);
 #else
     usec.hi = 0; usec.lo = 0;
@@ -482,7 +483,7 @@ OSTLS_RandomBytes(void *out, unsigned long len)
 
     stackaddr = (unsigned long)(void *)&local_var;
     pool_update(&stackaddr, sizeof stackaddr);
-#ifdef __MWERKS__
+#if MACSURF_CLASSIC_RUNTIME
     Microseconds(&usec);
 #else
     usec.hi = 0; usec.lo = 0;

@@ -33,7 +33,9 @@
 #ifndef OSTLS_LOG_H
 #define OSTLS_LOG_H
 
-#ifdef __MWERKS__
+#include "macsurf_runtime_profile.h"
+
+#if MACSURF_CLASSIC_RUNTIME
 #include <Types.h>
 #else
 #ifndef OSTLS_OSERR_DEFINED

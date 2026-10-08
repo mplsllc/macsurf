@@ -15,6 +15,8 @@
  */
 
 #include "ostls_async.h"
+#include "macsurf_runtime_profile.h"
+#include "ostls_log.h"
 #include "ostls_b3_anchors.h"
 #include "ostls_time.h"
 #include "ostls_entropy.h"
@@ -29,7 +31,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#ifdef __MWERKS__
+#if MACSURF_CLASSIC_RUNTIME
 #include <Types.h>
 #include <Memory.h>            /* NewPtrClear, DisposePtr */
 #include <Events.h>            /* TickCount */
@@ -39,9 +41,8 @@
 extern OTClientContextPtr g_ostls_ot_context;
 #else
 /*
- * Non-CW8 Retro68 syntax-check stubs. Real linkage happens only on
- * CW8 against CarbonLib; these are enough to make the syntax check
- * happy on the Linux side.
+ * Retro68 preflight and host syntax-check stubs. Native macMAKE and CW8
+ * use Universal Interfaces and real CFM imports instead.
  */
 typedef long OTResult;
 typedef long OTEventCode;
@@ -302,6 +303,17 @@ struct OSTLSConnection {
  * a socket is opened. Built lazily at first use, never disposed (it lives as
  * long as the process needs OT). */
 static OTNotifyUPP g_ostls_notifier_upp = NULL;
+#if MACSURF_COMPILER_MACMAKE_GCC
+static int g_ostls_diag_log_init_attempted = 0;
+static OSErr g_ostls_diag_log_init_result = -1;
+/* Keep the bring-up trace bounded when a page opens many HTTPS resources.
+ * The first connection is enough to establish the clock/OT/handshake path. */
+static int g_ostls_diag_conn_claimed = 0;
+static OSTLSConnection *g_ostls_diag_conn = NULL;
+#define OSTLS_DIAG_CONN_SELECTED(conn) ((conn) == g_ostls_diag_conn)
+#else
+#define OSTLS_DIAG_CONN_SELECTED(conn) 1
+#endif
 
 static pascal void
 ostls_notifier(void *context, OTEventCode event,
@@ -487,6 +499,9 @@ OSTLS_Dispose(OSTLSConnection *conn)
     }
 
     conn->disposed = true;
+#if MACSURF_COMPILER_MACMAKE_GCC
+    if (conn == g_ostls_diag_conn) g_ostls_diag_conn = NULL;
+#endif
     DisposePtr((char *)conn);
 }
 
@@ -503,6 +518,10 @@ OSTLS_Start(OSTLSConnection *conn)
     OSErr time_err;
     UInt32 br_days;
     UInt32 br_seconds;
+    OSTLSTimeDetails time_details;
+    int diag_this_connection;
+
+    diag_this_connection = 1;
 
     if (conn == NULL || conn->disposed) {
         return (OSErr)kOSTLSAsync_BadArgs;
@@ -514,23 +533,57 @@ OSTLS_Start(OSTLSConnection *conn)
         return (OSErr)kOSTLSAsync_WrongState;
     }
 
+#if MACSURF_COMPILER_MACMAKE_GCC
+    if (!g_ostls_diag_conn_claimed) {
+        g_ostls_diag_conn_claimed = 1;
+        g_ostls_diag_conn = conn;
+    }
+    diag_this_connection = (conn == g_ostls_diag_conn);
+
+    if (!g_ostls_diag_log_init_attempted) {
+        g_ostls_diag_log_init_attempted = 1;
+        g_ostls_diag_log_init_result = OSTLS_LogInit();
+        OSTLS_LogLinef("macTLS diagnostics: log init=%d",
+                       (int)g_ostls_diag_log_init_result);
+    }
+#endif
+
     /* Validate the system clock before we kick off any TLS work --
      * a pre-2000 clock will make every cert fail validation later
      * and the user will see a useless "handshake failed" instead
      * of an actionable "set your clock" message. */
-    time_err = OSTLS_GetBearSSLTime(&br_days, &br_seconds);
+    time_err = OSTLS_GetBearSSLTimeDetails(&time_details);
+    br_days = time_details.bearssl_days;
+    br_seconds = time_details.bearssl_seconds;
+    if (diag_this_connection) {
+        OSTLS_LogLinef("macTLS time: local=%lu gmt_delta=%ld utc_mac=%lu unix=%lu bear_days=%lu bear_seconds=%lu result=%d",
+                       (unsigned long)time_details.local_mac_seconds,
+                       time_details.gmt_delta_seconds,
+                       (unsigned long)time_details.utc_mac_seconds,
+                       (unsigned long)time_details.unix_seconds,
+                       (unsigned long)br_days, (unsigned long)br_seconds,
+                       (int)time_err);
+    }
     if (time_err == kOSTLSTimeClockBefore2000) {
         conn->state = kOSTLSStateFailed;
         conn->os_err = (OSErr)kOSTLSAsync_ClockBefore2000;
+        if (diag_this_connection)
+            OSTLS_LogLinef("macTLS start: state=Failed clock result=%d",
+                           (int)conn->os_err);
         return (OSErr)kOSTLSAsync_ClockBefore2000;
     }
     if (time_err != kOSTLSTimeOK) {
         conn->state = kOSTLSStateFailed;
         conn->os_err = (OSErr)kOSTLSAsync_ClockBefore2000;
+        if (diag_this_connection)
+            OSTLS_LogLinef("macTLS start: state=Failed time result=%d",
+                           (int)time_err);
         return (OSErr)kOSTLSAsync_ClockBefore2000;
     }
 
     cfg = OTCreateConfiguration("tcp");
+    if (diag_this_connection)
+        OSTLS_LogLinef("macTLS OTCreateConfiguration result=%p", cfg);
     if (cfg == NULL || cfg == (OTConfigurationRef)-1L) {
         conn->state = kOSTLSStateFailed;
         conn->os_err = (OSErr)kOSTLSAsync_OTConfigFail;
@@ -549,6 +602,9 @@ OSTLS_Start(OSTLSConnection *conn)
                                          g_ostls_notifier_upp,
                                          conn,
                                          g_ostls_ot_context);
+    if (diag_this_connection)
+        OSTLS_LogLinef("macTLS OTAsyncOpenEndpointInContext result=%ld",
+                       (long)oterr);
     if (oterr != noErr) {
         conn->state = kOSTLSStateFailed;
         conn->os_err = (OSErr)kOSTLSAsync_OTOpenFail;
@@ -557,6 +613,8 @@ OSTLS_Start(OSTLSConnection *conn)
     }
 
     conn->state = kOSTLSStateConnecting;
+    if (diag_this_connection)
+        OSTLS_LogLine("macTLS state: Idle -> Connecting");
     conn->connect_phase = kConnectPhase_OpenInFlight;
     conn->start_ticks = (UInt32)TickCount();
     conn->started = true;
@@ -579,7 +637,7 @@ ostls_fail(OSTLSConnection *conn, OSErr os_err,
            OSStatus ot_err, int br_err)
 {
     /* Trap for the "ghost" 2009 error with ot=0. */
-    if (os_err == 2009 && ot_err == 0) {
+    if (os_err == 2009 && ot_err == 0 && OSTLS_DIAG_CONN_SELECTED(conn)) {
         OSTLS_LogLine("TRAP: ostls_fail called with os_err=2009 and ot=0");
     }
 
@@ -595,6 +653,9 @@ ostls_fail(OSTLSConnection *conn, OSErr os_err,
         return kOSTLSEventNone;
     }
     conn->state = kOSTLSStateFailed;
+    if (OSTLS_DIAG_CONN_SELECTED(conn))
+        OSTLS_LogLinef("macTLS state: ->Failed os=%d ot=%ld br=%d",
+                       (int)conn->os_err, (long)conn->ot_err, conn->br_err);
     return kOSTLSEventFailed;
 }
 
@@ -893,6 +954,9 @@ pump_connect_step(OSTLSConnection *conn, UInt32 *steps_used)
                               -1, 0);
         }
         conn->ep_open = true;
+        if (OSTLS_DIAG_CONN_SELECTED(conn))
+            OSTLS_LogLinef("macTLS OT open-complete result=%ld ep=%p",
+                           (long)conn->nf_last_result, conn->ep);
         conn->connect_phase = kConnectPhase_NeedsBind;
         (*steps_used)++;
         return kOSTLSEventNone;
@@ -906,6 +970,8 @@ pump_connect_step(OSTLSConnection *conn, UInt32 *steps_used)
         OTMemzero(&conn->bind_req, sizeof conn->bind_req);
         OTMemzero(&conn->bind_ret, sizeof conn->bind_ret);
         oterr = OTBind(conn->ep, NULL, NULL);
+        if (OSTLS_DIAG_CONN_SELECTED(conn))
+            OSTLS_LogLinef("macTLS OTBind result=%ld", (long)oterr);
         if (oterr != noErr && oterr != kOTNoError) {
             return ostls_fail(conn, (OSErr)kOSTLSAsync_OTBindFail,
                               oterr, 0);
@@ -938,6 +1004,8 @@ pump_connect_step(OSTLSConnection *conn, UInt32 *steps_used)
         conn->connect_call.addr.buf = (UInt8 *)&conn->dns_addr;
         conn->connect_call.addr.len = (short)dns_len;
         oterr = OTConnect(conn->ep, &conn->connect_call, NULL);
+        if (OSTLS_DIAG_CONN_SELECTED(conn))
+            OSTLS_LogLinef("macTLS OTConnect submit result=%ld", (long)oterr);
         if (oterr != noErr && oterr != kOTNoError &&
             oterr != kOTNoDataErr) {
             /* kOTNoDataErr after an async OTConnect means "in
@@ -960,6 +1028,8 @@ pump_connect_step(OSTLSConnection *conn, UInt32 *steps_used)
 
         /* Consume the connect event at app-time. */
         oterr = OTRcvConnect(conn->ep, NULL);
+        if (OSTLS_DIAG_CONN_SELECTED(conn))
+            OSTLS_LogLinef("macTLS OT connect-complete result=%ld", (long)oterr);
         if (oterr != noErr) {
             return ostls_fail(conn, (OSErr)kOSTLSAsync_OTConnectFail,
                               oterr, 0);
@@ -1002,6 +1072,8 @@ pump_connect_step(OSTLSConnection *conn, UInt32 *steps_used)
 
         /* Transition to handshaking. */
         conn->state = kOSTLSStateHandshaking;
+        if (OSTLS_DIAG_CONN_SELECTED(conn))
+            OSTLS_LogLine("macTLS state: Connecting -> Handshaking");
         {
             OSTLSEvent setup_ev = ostls_setup_bearssl(conn);
             if (setup_ev == kOSTLSEventFailed) return kOSTLSEventFailed;

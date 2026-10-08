@@ -55,6 +55,13 @@
 #include "content/content_factory.h"
 #include "macos9_reconvert.h"
 
+/* Temporary M7 startup-boundary trace; each marker is immediately flushed so
+ * the crash-only MacSurf log preserves the last completed QuickJS operation. */
+#define QJS_BOOT_MARK(label) do { \
+	macsurf_debug_log_writef("QJS_BOOT " label); \
+	macsurf_debug_log_flush(); \
+} while (0)
+
 extern int macsurf_ptr_is_heap(const void *);
 extern void html_content_set_diag_context(struct content *, unsigned long,
 	void *);
@@ -975,8 +982,15 @@ void macsurf_qjs__safe_eval(JSContext *qctx, const char *src)
 	 * js_fire_dom_ready dispatch jQuery-ready + XF init through here), so
 	 * it needs the runaway deadline too.  Internal setup evals are tiny and
 	 * never notice it. */
-	double prevdl = qjs_deadline_push((double)QJS_SCRIPT_TIMEOUT_MS);
+	double prevdl;
 	JSValue val;
+	JSValue exc;
+	size_t src_len;
+	macsurf_debug_log_writef("QJS_BOOT safe_eval enter ctx=%p src=%p",
+			(void *)qctx, (const void *)src);
+	macsurf_debug_log_flush();
+	prevdl = qjs_deadline_push((double)QJS_SCRIPT_TIMEOUT_MS);
+	QJS_BOOT_MARK("safe_eval after deadline push");
 
 	/* #265 - every event dispatch (js_fire_event / js_fire_dom_ready /
 	 * js_fire_window_load / script onload) is a fresh JS execution, so the
@@ -985,16 +999,28 @@ void macsurf_qjs__safe_eval(JSContext *qctx, const char *src)
 	 * failed dispatch still ends the previous execution. (C89: all
 	 * declarations above, so this call sits after them but before the
 	 * JS_Eval below.) */
+	QJS_BOOT_MARK("safe_eval before geom settle begin");
 	qjs_geom_settle_begin();
-	val = JS_Eval(qctx, src, strlen(src),
+	QJS_BOOT_MARK("safe_eval after geom settle begin");
+	src_len = strlen(src);
+	macsurf_debug_log_writef("QJS_BOOT safe_eval before JS_Eval len=%lu",
+			(unsigned long)src_len);
+	macsurf_debug_log_flush();
+	val = JS_Eval(qctx, src, src_len,
 			"<init>", JS_EVAL_TYPE_GLOBAL);
+	QJS_BOOT_MARK("safe_eval after JS_Eval");
 	qjs_deadline_pop(prevdl);
+	QJS_BOOT_MARK("safe_eval after deadline pop");
 	if (JS_IsException(val)) {
-		JSValue exc = JS_GetException(qctx);
+		QJS_BOOT_MARK("safe_eval before JS_GetException");
+		exc = JS_GetException(qctx);
+		QJS_BOOT_MARK("safe_eval after JS_GetException");
 		qjs_log_exc(qctx, exc, "init eval failed", "<init>");
 		JS_FreeValue(qctx, exc);
+		QJS_BOOT_MARK("safe_eval after JS_FreeValue exception");
 	}
 	JS_FreeValue(qctx, val);
+	QJS_BOOT_MARK("safe_eval leave");
 }
 
 static void qjs_page_dispatch_eval(struct jsthread *thread, const char *src,
@@ -15393,29 +15419,47 @@ static JSContext *qjs_build_context(struct jsheap *heap,
 		dom_document *document, struct content *content)
 {
 	JSContext *ctx;
+	QJS_BOOT_MARK("before JS_NewContextRaw");
 	ctx = JS_NewContextRaw(heap->rt);
+	macsurf_debug_log_writef("QJS_BOOT after JS_NewContextRaw ctx=%p", (void *)ctx);
+	macsurf_debug_log_flush();
 	if (ctx == NULL) return NULL;
 	/* This registration precedes every intrinsic/global install.  Some global
 	 * setup synchronously calls native code (__storageLoad), so wiring owner
 	 * state after qjs_build_context returns would still let it see another
 	 * realm during navigation. */
+	QJS_BOOT_MARK("before owner_register");
 	if (!qjs_owner_register(ctx, heap, document, content)) {
+		QJS_BOOT_MARK("owner_register failed");
 		JS_FreeContext(ctx);
 		return NULL;
 	}
+	QJS_BOOT_MARK("after owner_register");
 	MS_LOG("qjs intr: raw ctx ok");
-	MS_LOG("qjs intr: BaseObjects"); JS_AddIntrinsicBaseObjects(ctx);
-	MS_LOG("qjs intr: Date");        JS_AddIntrinsicDate(ctx);
-	MS_LOG("qjs intr: Eval");        JS_AddIntrinsicEval(ctx);
-	MS_LOG("qjs intr: RegExp");      JS_AddIntrinsicRegExp(ctx);
-	MS_LOG("qjs intr: JSON");        JS_AddIntrinsicJSON(ctx);
-	MS_LOG("qjs intr: Proxy");       JS_AddIntrinsicProxy(ctx);
-	MS_LOG("qjs intr: MapSet");      JS_AddIntrinsicMapSet(ctx);
-	MS_LOG("qjs intr: TypedArrays"); JS_AddIntrinsicTypedArrays(ctx);
-	MS_LOG("qjs intr: Promise");     JS_AddIntrinsicPromise(ctx);
-	MS_LOG("qjs intr: WeakRef");     JS_AddIntrinsicWeakRef(ctx);
-	MS_LOG("qjs intr: AToB");        JS_AddIntrinsicAToB(ctx);
-	MS_LOG("qjs intr: Performance"); JS_AddPerformance(ctx);
+	QJS_BOOT_MARK("before intrinsic BaseObjects"); JS_AddIntrinsicBaseObjects(ctx);
+	QJS_BOOT_MARK("after intrinsic BaseObjects");
+	QJS_BOOT_MARK("before intrinsic Date"); JS_AddIntrinsicDate(ctx);
+	QJS_BOOT_MARK("after intrinsic Date");
+	QJS_BOOT_MARK("before intrinsic Eval"); JS_AddIntrinsicEval(ctx);
+	QJS_BOOT_MARK("after intrinsic Eval");
+	QJS_BOOT_MARK("before intrinsic RegExp"); JS_AddIntrinsicRegExp(ctx);
+	QJS_BOOT_MARK("after intrinsic RegExp");
+	QJS_BOOT_MARK("before intrinsic JSON"); JS_AddIntrinsicJSON(ctx);
+	QJS_BOOT_MARK("after intrinsic JSON");
+	QJS_BOOT_MARK("before intrinsic Proxy"); JS_AddIntrinsicProxy(ctx);
+	QJS_BOOT_MARK("after intrinsic Proxy");
+	QJS_BOOT_MARK("before intrinsic MapSet"); JS_AddIntrinsicMapSet(ctx);
+	QJS_BOOT_MARK("after intrinsic MapSet");
+	QJS_BOOT_MARK("before intrinsic TypedArrays"); JS_AddIntrinsicTypedArrays(ctx);
+	QJS_BOOT_MARK("after intrinsic TypedArrays");
+	QJS_BOOT_MARK("before intrinsic Promise"); JS_AddIntrinsicPromise(ctx);
+	QJS_BOOT_MARK("after intrinsic Promise");
+	QJS_BOOT_MARK("before intrinsic WeakRef"); JS_AddIntrinsicWeakRef(ctx);
+	QJS_BOOT_MARK("after intrinsic WeakRef");
+	QJS_BOOT_MARK("before intrinsic AToB"); JS_AddIntrinsicAToB(ctx);
+	QJS_BOOT_MARK("after intrinsic AToB");
+	QJS_BOOT_MARK("before intrinsic Performance"); JS_AddPerformance(ctx);
+	QJS_BOOT_MARK("after intrinsic Performance");
 	MS_LOG("qjs intr: all done");
 
 	/* fixes1008 (1g) - UNHANDLED PROMISE REJECTIONS, made visible.
@@ -15430,12 +15474,20 @@ static JSContext *qjs_build_context(struct jsheap *heap,
 	 * LIFE-prefixed because the WORK channel is compiled out of shipping
 	 * builds; a diagnostic nobody can read is the trap that has already cost
 	 * this project four rounds. */
+	QJS_BOOT_MARK("before rejection tracker install");
 	JS_SetHostPromiseRejectionTracker(heap->rt,
 			qjs_promise_rejection_tracker, NULL);
+	QJS_BOOT_MARK("after rejection tracker install");
 
-	MS_LOG("qjs: setup_globals");   macsurf_qjs_setup_globals(ctx);
-	MS_LOG("qjs: browser_globals"); register_browser_globals(ctx);
-	MS_LOG("qjs: dom_install");     qjs_dom_install(ctx);
+	MS_LOG("qjs: setup_globals");
+	QJS_BOOT_MARK("before setup_globals"); macsurf_qjs_setup_globals(ctx);
+	QJS_BOOT_MARK("after setup_globals");
+	MS_LOG("qjs: browser_globals");
+	QJS_BOOT_MARK("before browser_globals"); register_browser_globals(ctx);
+	QJS_BOOT_MARK("after browser_globals");
+	MS_LOG("qjs: dom_install");
+	QJS_BOOT_MARK("before dom_install"); qjs_dom_install(ctx);
+	QJS_BOOT_MARK("after dom_install");
 	return ctx;
 }
 
@@ -15795,13 +15847,20 @@ static void qjs_module_registry_free(struct module_registry *reg)
 nserror js_newheap(int timeout, struct jsheap **out_heap)
 {
 	struct jsheap *heap;
+	QJS_BOOT_MARK("enter js_newheap");
 	if (out_heap == NULL) return NSERROR_BAD_PARAMETER;
 	*out_heap = NULL;
 	macsurf_qjs_audit_reset(); /* fixes1016 - audit each page fully */
+	QJS_BOOT_MARK("before calloc heap");
 	heap = (struct jsheap *)calloc(1, sizeof(*heap));
+	macsurf_debug_log_writef("QJS_BOOT after calloc heap=%p", (void *)heap);
+	macsurf_debug_log_flush();
 	if (heap == NULL) return NSERROR_NOMEM;
 
+	QJS_BOOT_MARK("before JS_NewRuntime2");
 	heap->rt = JS_NewRuntime2(&macsurf_qjs_mf, NULL);
+	macsurf_debug_log_writef("QJS_BOOT after JS_NewRuntime2 rt=%p", (void *)heap->rt);
+	macsurf_debug_log_flush();
 	if (heap->rt == NULL) { free(heap); return NSERROR_NOMEM; }
 
 	/* fixes590 -- ROOT CAUSE of the tinkerdifferent hard-freeze.
@@ -15835,12 +15894,16 @@ nserror js_newheap(int timeout, struct jsheap **out_heap)
 		extern long StackSpace(void);
 		long sp_room = StackSpace();       /* SP - ApplLimit, bytes */
 		long qmax = sp_room - (96L * 1024L); /* margin: non-JS frames + slop */
+		macsurf_debug_log_writef("QJS_BOOT StackSpace=%ld qmax=%ld", sp_room, qmax);
+		macsurf_debug_log_flush();
 		/* fixes593: StackSpace() reads ~107MB on real hw (big partition), so
 		 * the native stack was never the corruptor - set the guard to the real
 		 * headroom (no small cap, which would wrongly RangeError legit deep JS)
 		 * with a floor so basic JS still runs if the read is tiny. */
 		if (qmax < 24576L) qmax = 24576L;  /* floor so basic JS still runs */
+		QJS_BOOT_MARK("before JS_SetMaxStackSize");
 		JS_SetMaxStackSize(heap->rt, (size_t)qmax);
+		QJS_BOOT_MARK("after JS_SetMaxStackSize");
 		macsurf_debug_log_writef(
 			"qjs: stack guard=%ld (StackSpace=%ld)", qmax, sp_room);
 	}
@@ -15867,7 +15930,9 @@ nserror js_newheap(int timeout, struct jsheap **out_heap)
 	/* Real OS 9 hardware provides roughly 142 MB free at launch.  Preserve
 	 * about 46 MB for the DOM, decoded images, fetch/cache objects, and native
 	 * stack instead of allowing bytecode to consume the entire partition. */
+	QJS_BOOT_MARK("before JS_SetMemoryLimit");
 	JS_SetMemoryLimit(heap->rt, 96UL * 1024UL * 1024UL);
+	QJS_BOOT_MARK("after JS_SetMemoryLimit");
 
 	/* fixes593 - the heap-corruption freeze on heavy JS pages (tinkerdifferent:
 	 * all scripts still RUN through QuickJS, but a later malloc/free spins on a
@@ -15879,35 +15944,50 @@ nserror js_newheap(int timeout, struct jsheap **out_heap)
 	 * mid-load. Nothing about which JS runs changes; the per-navigation runtime
 	 * is torn down wholesale on nav, so uncollected cycles never accumulate.
 	 * (If this proves it, the real refcount bug gets fixed and GC re-armed.) */
+	QJS_BOOT_MARK("before JS_SetGCThreshold");
 	JS_SetGCThreshold(heap->rt, (size_t)0x40000000UL);  /* 1GB > 96MB cap */
+	QJS_BOOT_MARK("after JS_SetGCThreshold");
 	/* fixes1070 - record that the collector is OFF so the perf log says so.
 	 * Set beside the call it describes: a flag that can drift from the
 	 * threshold it reports is worse than no flag. See g_perf_gc_armed. */
 	g_perf_gc_armed = 0;
 
+	QJS_BOOT_MARK("before JS_SetInterruptHandler");
 	JS_SetInterruptHandler(heap->rt, qjs_interrupt_handler, NULL);
+	QJS_BOOT_MARK("after JS_SetInterruptHandler");
 
 	/* fixes1117b (#265) -- ES module loader. Registered on the
 	 * JSRuntime (not per-context) so it is available for every
 	 * context created from this runtime. */
+	QJS_BOOT_MARK("before calloc module registry");
 	heap->module_reg = (struct module_registry *)
 		calloc(1, sizeof(struct module_registry));
+	macsurf_debug_log_writef("QJS_BOOT after calloc module registry=%p",
+			(void *)heap->module_reg);
+	macsurf_debug_log_flush();
 	if (heap->module_reg != NULL) {
+		QJS_BOOT_MARK("before JS_SetModuleLoaderFunc");
 		JS_SetModuleLoaderFunc(heap->rt,
 			qjs_module_normalize,
 			qjs_module_loader,
 			(void *)heap->module_reg);
+		QJS_BOOT_MARK("after JS_SetModuleLoaderFunc");
 	}
 
 	/* Register element class before any context is created */
+	QJS_BOOT_MARK("before qjs_dom_init_class");
 	qjs_dom_init_class(heap->rt);
+	QJS_BOOT_MARK("after qjs_dom_init_class");
 
 	/* fixes530/532: the JS_NewContext intrinsic chain is expanded in
 	 * qjs_build_context with an MS_LOG breadcrumb before each intrinsic, so
 	 * the debug log's LAST "qjs intr: X" line before a crash names the exact
 	 * intrinsic that NULL-calls.  Equivalent to JS_NewContext (which is
 	 * literally JS_NewContextRaw followed by that same chain). */
+	QJS_BOOT_MARK("before qjs_build_context startup");
 	heap->ctx = qjs_build_context(heap, NULL, NULL);
+	macsurf_debug_log_writef("QJS_BOOT after qjs_build_context ctx=%p", (void *)heap->ctx);
+	macsurf_debug_log_flush();
 	if (heap->ctx == NULL) {
 		JS_FreeRuntime(heap->rt);
 		free(heap);
