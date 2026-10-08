@@ -170,6 +170,7 @@ static void qjs_task_pop(void)
 	}
 }
 
+static void js_media_state_discard_ctx(JSContext *ctx);
 #define QJS_IO_TIMER_TARGET_CAP 64
 #define QJS_IO_TIMER_EXPECT_CAP 64
 static unsigned long qjs_ctx_gen(JSContext *ctx);
@@ -4086,6 +4087,7 @@ static JSValue qjs_el_setAttribute_data(JSContext *ctx,
 	const char *name_cstr, *val_cstr;
 	dom_string *name_ds, *val_ds, *old_ds;
 	int attr_kind;	/* fixes926 */
+	int value_changed;
 
 	(void)this_val; (void)magic;
 	el = (dom_element *)qjs_get_node(this_val);
@@ -4113,10 +4115,17 @@ static JSValue qjs_el_setAttribute_data(JSContext *ctx,
 	qjs_mut_audit("setattr", (dom_node *)el, name_cstr, val_cstr);
 	if (name_ds && val_ds) {
 		(void)macsurf_dom_element_get_attribute(el, name_ds, &old_ds);
+		/* DOM still receives the write (and observers still see its normal
+		 * delivery), but an identical value cannot change the rendered tree.
+		 * Framework timer loops commonly re-apply aria/data/class values; do
+		 * not turn those no-op renderer writes into an O(document) reconvert. */
+		value_changed = (old_ds == NULL ||
+			strcmp(dom_string_data(old_ds), val_cstr) != 0);
 		macsurf_dom_element_set_attribute(el, name_ds, val_ds);
 		qjs_queue_attribute_mutation(ctx, this_val, name_cstr,
 				old_ds ? dom_string_data(old_ds) : NULL);
-		qjs_mark_dom_dirty(ctx, (void *) el, attr_kind);
+		if (value_changed)
+			qjs_mark_dom_dirty(ctx, (void *) el, attr_kind);
 	}
 	JS_FreeCString(ctx, name_cstr);
 	JS_FreeCString(ctx, val_cstr);
@@ -15949,6 +15958,8 @@ nserror js_newheap(int timeout, struct jsheap **out_heap)
 void js_destroyheap(struct jsheap *heap)
 {
 	if (heap == NULL) return;
+	if (heap->ctx != NULL)
+		js_media_state_discard_ctx(heap->ctx);
 	/* fixes854 (#283) - drop this heap's timer + XHR slots BEFORE the context
 	 * dies.  Both arenas are global while heaps are per-window/per-iframe, so
 	 * a closed iframe used to leave `live` slots behind holding JSValues into
@@ -16020,6 +16031,7 @@ nserror js_newthread(struct jsheap *heap, void *win_priv, void *doc_priv,
 	if (doc_priv != NULL) htmlc = (html_content *)doc_priv;
 	if (doc_priv != NULL && heap->ctx != NULL) {
 		JSContext *fresh;
+		js_media_state_discard_ctx(heap->ctx);
 		/* fixes1312 (#167, A3) - one real navigation, one nav_seq. Read
 		 * by the "LIFE js src" line and the FBCR __d wrapper so both
 		 * can be diffed nav-by-nav. */
@@ -17185,6 +17197,91 @@ void js_fire_mutation_batch(struct jsthread *thread)
 		MACSURF_JS_TASK_INTERNAL_NOTIFICATION);
 }
 
+/* The document owns its MediaQueryList registry. html_reformat only queues
+ * this work after publishing the new css_media values; the host checkpoint
+ * performs the JS-side check after layout and box-tree work have returned. */
+static struct jsthread *g_media_pending[16];
+static int g_media_pending_count;
+
+void js_media_state_changed(struct jsthread *thread)
+{
+	int i;
+	if (thread == NULL || thread->ctx == NULL) return;
+	for (i = 0; i < g_media_pending_count; i++)
+		if (g_media_pending[i] == thread) return;
+	if (g_media_pending_count < 16)
+		g_media_pending[g_media_pending_count++] = thread;
+}
+
+void js_media_state_checkpoint(void)
+{
+	static const char s_media_check_src[] =
+		"(function(){try{"
+		"if(typeof __msMediaCheck==='function')__msMediaCheck();"
+		"}catch(e){}})();";
+	int i;
+	for (i = 0; i < g_media_pending_count; i++) {
+		if (g_media_pending[i] != NULL && g_media_pending[i]->ctx != NULL)
+			macsurf_qjs__safe_eval(g_media_pending[i]->ctx,
+					s_media_check_src);
+	}
+	g_media_pending_count = 0;
+}
+
+static void js_media_state_discard_ctx(JSContext *ctx)
+{
+	int i, out = 0;
+	for (i = 0; i < g_media_pending_count; i++) {
+		if (g_media_pending[i] == NULL || g_media_pending[i]->ctx != ctx)
+			g_media_pending[out++] = g_media_pending[i];
+	}
+	g_media_pending_count = out;
+}
+
+/* fixes1096 - THE SLIDER PROBE, JS HALF.
+ *
+ * html.c's C-side probe (html_slider_probe) reads the DOM through libdom and
+ * can name what exists around .featured-slides; it cannot see what the
+ * PAGE'S OWN scripts see. This half runs in the page realm at the same probe
+ * points ("ready" / "done" / "reconvert" -- html.c splices the label in) and
+ * asks the questions only JS can: does jQuery exist, does jQuery.fn.slick,
+ * and what does document.querySelector answer for the theme's featured
+ * classes. A libdom walk and the engine's querySelector can disagree when
+ * script rebuilt the tree, which is itself a finding.
+ *
+ * Emitted through __msLife so the lines carry the LIFE prefix and survive the
+ * failures-only release filter; __msLife's per-navigation budget (60) covers
+ * this (2 lines per probe point, <=6 probe points per navigation).
+ * All reads, no mutations: safe to run at any probe point. */
+void js_fire_slider_probe(struct jsthread *thread, const char *when)
+{
+	static const char s_fmt[] =
+		"(function(){try{"
+		"if(typeof document==='undefined'||!document.querySelector)return;"
+		"var L='%s';"
+		"var fs=document.querySelector('.featured-slides');"
+		"var fg=document.querySelector('.featured-grid');"
+		"var si=document.querySelector('.slick-initialized');"
+		"var se=document.querySelector('section.featured');"
+		"__msLife('SLIDER DOM['+L+'] fs='+(fs?'PRESENT':'MISSING')"
+		" +' fg='+(fg?'PRESENT':'MISSING')"
+		" +' si='+(si?'PRESENT':'MISSING')"
+		" +' sec='+(se?'PRESENT kids='+se.children.length:'MISSING'));"
+		"if(typeof jQuery!=='undefined'&&jQuery.fn){"
+		"__msLife('SLIDER LIB['+L+'] jq='+typeof jQuery"
+		" +' slick='+typeof jQuery.fn.slick);"
+		"}else{"
+		"__msLife('SLIDER LIB['+L+'] jq='+typeof jQuery+' (no fn)');"
+		"}"
+		"}catch(e){}})();";
+	char src[1024];
+
+	if (thread == NULL || thread->ctx == NULL) return;
+	if (when == NULL) when = "?";
+	sprintf(src, s_fmt, when);
+	macsurf_qjs__safe_eval(thread->ctx, src);
+}
+
 /* fixes652: real-build definition of interaction.c's click bridge (Gate 5).
  * The js_stub.c copy is gated `#ifndef WITH_QUICKJS`, so with QuickJS ON the
  * symbol was undefined and interaction.c failed to link the moment it was
@@ -17586,6 +17683,10 @@ void macsurf_qjs_pump_all(void)
 			s_reconv_was_active = 0;
 		}
 	}
+	/* Rendering only marks media work pending. Deliver it once we are back at
+	 * the host checkpoint, outside html_reformat/layout and outside any box
+	 * replacement transaction. */
+	js_media_state_checkpoint();
 	/* fixes862 (#289 probe) - fixes861 shipped with NO observable marker, so
 	 * there was no way to tell from a log whether it was even in the build,
 	 * let alone whether a second (iframe) heap exists to pump. Log the heap

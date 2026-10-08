@@ -486,8 +486,10 @@ bool css_computed_style_is_paint_only_diff(
 	set_border_left_color(&tmp, type, c);
 	type = get_outline_color(a, &c);
 	set_outline_color(&tmp, type, c);
+	type = get_color(a, &c);
+	set_color(&tmp, type, c);
 
-	return css__arena_style_is_equal((struct css_computed_style *)a, &tmp);
+	return css__computed_style_semantic_equal(a, &tmp);
 }
 
 

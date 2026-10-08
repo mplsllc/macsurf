@@ -127,6 +127,9 @@ typedef struct html_content {
 
 	/** Whether a layout (reflow) is in progress */
 	bool reflowing;
+	/* Non-zero while layout/reformat publishes render state. Page JS may
+	 * queue semantic work but must not execute synchronously in this window. */
+	int render_transaction_depth;
 
 	/** Whether an initial layout has been done */
 	bool had_initial_layout;

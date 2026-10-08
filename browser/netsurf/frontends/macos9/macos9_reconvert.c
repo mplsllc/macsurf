@@ -225,6 +225,8 @@ extern int macos9_content_token_valid(struct content *c, unsigned long token);
 /* stabilization/reconvert-rework: class/style invalidations live in a
  * separate bounded queue. They can never be consumed by flush_now(), so a
  * geometry read cannot turn cosmetic churn into a whole-document rebuild. */
+
+static struct macos9_render_stats g_render_stats;
 #define RECONVERT_MAX_COSMETIC 32
 #define RECONVERT_COSMETIC_DEBOUNCE_MS 80
 struct macos9_cosmetic_pending {
@@ -257,6 +259,7 @@ macos9_cosmetic_add(struct content *c, void *node, int kind)
 	for (i = 0; i < RECONVERT_MAX_COSMETIC; i++) {
 		if (g_cosmetic[i].c == c && g_cosmetic[i].node == node &&
 		    g_cosmetic[i].kind == kind) {
+			g_render_stats.invalidations_deduped++;
 			g_cosmetic[i].token = macos9_content_token(c);
 			return;
 		}
@@ -289,6 +292,17 @@ macos9_cosmetic_add(struct content *c, void *node, int kind)
  */
 static unsigned long g_mut_counts[MACOS9_DOMMUT_SETATTR_STYLE + 1];
 static unsigned long g_mut_total = 0;
+
+/* stabilization/targeted-render: session render counters, read back through
+ * macos9_reconvert_render_stats() (the MSdg summary). Wired to this engine's
+ * real decision points: a cosmetic slot that applied is a targeted paint or
+ * cascade, and every html_reconvert_content() attempt is a full fallback. */
+
+void macos9_reconvert_render_stats(struct macos9_render_stats *stats)
+{
+	if (stats != NULL)
+		*stats = g_render_stats;
+}
 
 static long g_style_fast_attempt = 0;
 static long g_style_fast_commit = 0;
@@ -838,8 +852,11 @@ macos9_reconvert_flush_now(void *cv)
 		g_sync_r_budget++; g_sync_declined++; return 0;
 	}
 
+	g_render_stats.batches_processed++;
 	in_flush = 1;
 	t0 = macos9_micros();
+	g_render_stats.full_fallback++;
+	g_render_stats.render_document++;
 	rc = html_reconvert_content(c);	/* SYNCHRONOUS -- see fixes903 */
 	in_flush = 0;
 
@@ -940,9 +957,23 @@ macos9_process_cosmetic_pending(void)
 			continue;
 		}
 		rc = html_reconvert_fast_style(c, g_cosmetic[i].node);
-		if (rc != 0)
+		if (rc == 0) {
+			if (g_cosmetic[i].kind == MACOS9_DOMMUT_SETATTR_CLASS) {
+				g_render_stats.targeted_inherited++;
+				g_render_stats.render_style++;
+			} else {
+				g_render_stats.targeted_paint++;
+				g_render_stats.render_paint++;
+			}
+		}
+		if (rc != 0) {
 			rc = html_reconvert_fast_inherited_color(c,
 				g_cosmetic[i].node);
+			if (rc == 0) {
+				g_render_stats.targeted_inherited++;
+				g_render_stats.render_style++;
+			}
+		}
 		/* Geometry/topology differences intentionally do NOT fall back to
 		 * html_reconvert_content(). The DOM remains authoritative and a later
 		 * structural rebuild incorporates the change. */
@@ -1000,6 +1031,8 @@ macos9_reconvert_cb(void *p)
 				macos9_reconvert_cb, p);
 		return;
 	}
+
+	g_render_stats.batches_processed++;
 
 	/* fixes874 (#303) - rebuild the contents that actually MUTATED, not
 	 * whatever the front window happens to hold. See the pending-set comment
@@ -1165,6 +1198,8 @@ macos9_reconvert_cb(void *p)
 			busy = 1;
 			continue;
 		}
+		g_render_stats.full_fallback++;
+		g_render_stats.render_document++;
 		rc = html_reconvert_content(c);	/* 0 = queued, !=0 = busy */
 		macsurf_debug_log_writef(
 			"LIFE reconvert: html_reconvert_content rc=%d c=%p", rc,
@@ -1282,6 +1317,8 @@ macos9_js_mark_dom_dirty_node(struct content *c, void *node, int kind)
 	 * fixes843 below) unless a future round wires an explicit override. */
 	if (!g_reconvert_enabled)
 		return;
+
+	g_render_stats.mutations_received++;
 
 #ifdef MACSURF_RECONVERT_DISABLED
 	/* DIAGNOSTIC A/B EXPERIMENT - CONTROL_RECONVERT_OFF.
@@ -1430,8 +1467,10 @@ static void macos9_reconvert_schedule_pending(void)
 	extern int macos9_sched_is_queued(void (*callback)(void *p), void *p);
 	if (macos9_reconvert_pending_count() == 0)
 		return;
-	if (!macos9_sched_is_queued(macos9_reconvert_cb, NULL))
+	if (!macos9_sched_is_queued(macos9_reconvert_cb, NULL)) {
+		g_render_stats.batches_queued++;
 		(void)macos9_schedule(g_reconvert_debounce_ms, macos9_reconvert_cb, NULL);
+	}
 }
 
 void macos9_reconvert_js_task_complete(unsigned long task_id)

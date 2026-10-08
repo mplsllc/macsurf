@@ -40,6 +40,11 @@ unsigned char js_fire_script_load(jsthread *thread, struct dom_node *node,
  * getElementsByTagName("script") fallback both come up empty - which kills the
  * bundle on its own prologue, before any application code. */
 void js_set_current_script(jsthread *thread, struct dom_node *node);
+/* fixes1096  -  slider DOM probe: eval a JS-side probe in the page realm,
+ * emitting LIFE lines through __msLife. Called from html.c's
+ * html_slider_probe at the ready/done/reconvert points. Implemented in
+ * macsurf_qjs.c. */
+void js_fire_slider_probe(jsthread *thread, const char *when);
 /* fixes1235 (#167)  -  deliver a batch of MutationObserver records after a
  * reconvert completes successfully. Rides the EXISTING debounce/floor
  * reconvert already self-limits (called once from html_reconvert_done, the
@@ -59,6 +64,12 @@ int js_realm_valid_for_content(jsthread *thread, struct content *content,
 		unsigned long generation);
 int js_thread_valid_for_content(jsthread *thread, unsigned long thread_token,
 		struct content *content, unsigned long realm_generation);
+/* Re-evaluate per-document MediaQueryLists after layout has published a new
+ * css_media viewport state. Implemented by the QuickJS frontend. */
+void js_media_state_changed(jsthread *thread);
+/* Deliver media-query changes at the host checkpoint, after rendering has
+ * returned to the event loop. */
+void js_media_state_checkpoint(void);
 #else
 
 #ifndef NETSURF_JAVASCRIPT_JS_H_

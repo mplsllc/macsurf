@@ -70,9 +70,9 @@ enum macos9_dommut_kind {
  * mutations  -  that is where layout would change), or NULL if unknown. `kind` is
  * a macos9_dommut_kind.
  *
- * Precision is best-effort and degrades safely: if two DISTINCT nodes mutate
- * before the debounce fires, the slot drops to "multiple" and forgets the node,
- * which simply means later phases fall back to the full rebuild we do today.
+ * Up to 32 distinct (node, kind) pairs remain precise in each document batch.
+ * Duplicate pairs share a reference. Unknown nodes and overflow require one
+ * full fallback; multiple known nodes do not lose precision.
  */
 void macos9_js_mark_dom_dirty_node(struct content *c, void *node, int kind);
 
@@ -80,5 +80,35 @@ void macos9_js_mark_dom_dirty_node(struct content *c, void *node, int kind);
  * i.e. "something changed, no idea what". Kept so any caller that cannot name
  * the node still works, and always yields the full rebuild. */
 void macos9_js_mark_dom_dirty(struct content *c);
+
+/* Session counters, read through MSdg summary. */
+struct macos9_render_stats {
+    long mutations_received;
+    long invalidations_deduped;
+    long batches_queued;
+    long batches_processed;
+    long targeted_paint;
+    long targeted_inherited;
+    long full_fallback;
+    long batch_overflow;
+    long rerun_batches;
+    long mutations_during_processing;
+    long render_none;
+    long render_paint;
+    long render_style;
+    long render_layout;
+    long render_subtree;
+    long render_document;
+    long full_structural;
+    long full_text;
+    long full_layout_style;
+    long full_unknown_attr;
+    long full_global_style;
+    long full_imprecise;
+    long full_overflow;
+    long full_generation;
+    long full_other;
+};
+void macos9_reconvert_render_stats(struct macos9_render_stats *stats);
 
 #endif /* MACOS9_RECONVERT_H */
