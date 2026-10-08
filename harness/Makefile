@@ -20,7 +20,7 @@
 ROOT   := $(abspath ..)
 NS     := $(ROOT)/browser/netsurf
 LIBDIR := $(ROOT)/browser
-QJS    := $(ROOT)/quickjs-macos9
+QJS    := $(ROOT)/browser/libquickjs
 OBJ    := obj
 
 CC     := gcc

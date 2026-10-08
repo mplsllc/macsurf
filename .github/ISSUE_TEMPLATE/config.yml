@@ -1,8 +1,0 @@
-blank_issues_enabled: false
-contact_links:
-  - name: Questions and general discussion
-    url: https://github.com/mplsllc/macsurf/discussions
-    about: Please use GitHub Discussions for questions, ideas, show-and-tell, and general chat. Reserve issues for actionable bugs and feature requests.
-  - name: Project website
-    url: https://macsurf.org
-    about: macsurf.org has screenshots, download links, and the project story.
